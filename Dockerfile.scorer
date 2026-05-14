@@ -1,0 +1,34 @@
+FROM python:3.11-slim-bookworm AS base
+
+ARG JOSH_JAR_URL=https://joshsim.org/dist/main/joshsim-fat.jar
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      openjdk-17-jre-headless \
+      ca-certificates \
+      curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Josh CLI: download fat jar, capture sha256 as the pinning record, install a
+# `josh` wrapper on PATH. Rolling main build; the sha256 is the reproducibility
+# anchor.
+RUN mkdir -p /opt/josh \
+    && curl -fSL "$JOSH_JAR_URL" -o /opt/josh/joshsim-fat.jar \
+    && sha256sum /opt/josh/joshsim-fat.jar > /opt/josh/joshsim-fat.jar.sha256 \
+    && cat /opt/josh/joshsim-fat.jar.sha256
+
+RUN printf '#!/usr/bin/env bash\nset -euo pipefail\nif [ "${1:-}" = "--version" ] || [ "${1:-}" = "-v" ]; then\n  cat /opt/josh/joshsim-fat.jar.sha256\n  exit 0\nfi\nexec java -jar /opt/josh/joshsim-fat.jar "$@"\n' > /usr/local/bin/josh \
+    && chmod +x /usr/local/bin/josh
+
+# Python scientific stack.
+COPY config/requirements.txt /opt/requirements.txt
+RUN pip install --no-cache-dir -r /opt/requirements.txt
+
+COPY entrypoint-scorer.sh /opt/entrypoint-scorer.sh
+RUN chmod +x /opt/entrypoint-scorer.sh
+
+# Phase 2 will uncomment once harness/ exists.
+# COPY harness /opt/harness
+
+WORKDIR /sandbox
