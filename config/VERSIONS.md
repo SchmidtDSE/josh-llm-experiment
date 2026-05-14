@@ -1,28 +1,35 @@
 # Pinned tool versions
 
-These are the tooling pins baked into [Dockerfile.base](../Dockerfile.base),
-[Dockerfile.scorer](../Dockerfile.scorer), and
-[Dockerfile.sandbox](../Dockerfile.sandbox). Changes here trigger a fresh
-batch tag; do not edit mid-experiment.
+Changes here trigger a fresh experimental batch; do not edit mid-experiment.
 
-| Tool          | Version                                                    | Source |
-| ------------- | ---------------------------------------------------------- | ------ |
-| Python        | 3.11 (slim-trixie)                                         | `python:3.11-slim-trixie` Docker image, used by `Dockerfile.base`. |
-| OpenJDK       | Eclipse Temurin 17 (JRE)                                   | Adoptium apt repo, package `temurin-17-jre`. Trixie dropped distro-provided openjdk-17; Adoptium fills the gap and pins us to the same upstream the user-facing Josh project recommends. |
-| opencode      | 1.14.50                                                    | `https://opencode.ai/install --version 1.14.50` (sandbox image only). |
-| OpenShell     | 0.0.36                                                     | `uv tool install openshell==0.0.36` (sandbox image only). Wheels require glibc 2.39+ which is what drove the trixie choice. |
-| Josh CLI      | rolling main, sha256 `ef5f7ef9dc0bffbe2ed79c80fd6c0813db8120eb74bbf995cbc694c0de248984` | `https://joshsim.org/dist/main/joshsim-fat.jar`. SchmidtDSE/josh has no tagged releases; the sha256 of the prod fat jar captured at image build time is the pinning record. |
+## Host-side (orchestration layer)
 
-Python package pins live in [requirements.txt](requirements.txt).
+Installed by [`scripts/install-host.sh`](../scripts/install-host.sh). The host
+runs OpenShell directly — OpenShell is the agent sandbox boundary, so wrapping
+it in another container layer would double-sandbox for no benefit.
 
-## Image hierarchy
+| Tool      | Version  | Source                                                     |
+| --------- | -------- | ---------------------------------------------------------- |
+| uv        | latest   | `curl -LsSf https://astral.sh/uv/install.sh \| sh`         |
+| OpenShell | 0.0.36   | `uv tool install openshell==0.0.36`                        |
+| opencode  | 1.14.50  | `https://opencode.ai/install --version 1.14.50`            |
 
-```
-Dockerfile.base    → fortree-base    (Python 3.11 + Temurin 17 + Josh CLI + scientific stack)
-Dockerfile.scorer  → fortree-scorer  (fortree-base + entrypoint-scorer.sh)
-Dockerfile.sandbox → fortree-sandbox (fortree-base + uv + openshell + opencode + entrypoint-sandbox.sh)
-```
+The agent-runtime layer (Python 3.11, JDK 17, Josh CLI, scientific deps) is
+deferred to phase 3 — that is where the OpenShell sandbox policy starts
+exposing those tools to the agent process.
 
-Build order: `base` first, then the two leaves in either order. The scorer
-inherits the same environment the sandbox uses to run agent-produced code, so
-reference and agent code execute under identical Python/Java/Josh.
+## Scorer image ([Dockerfile.scorer](../Dockerfile.scorer))
+
+Runs with `--network=none` + read-only workspace mount. Self-contained;
+independent of host versions.
+
+| Tool        | Version                                                              | Source |
+| ----------- | -------------------------------------------------------------------- | ------ |
+| Python      | 3.11 (slim-bookworm)                                                 | `python:3.11-slim-bookworm` Docker image. |
+| OpenJDK     | 17 (distro)                                                          | bookworm `openjdk-17-jre-headless`. |
+| Josh CLI    | rolling main, sha256 `ef5f7ef9dc0bffbe2ed79c80fd6c0813db8120eb74bbf995cbc694c0de248984` | `https://joshsim.org/dist/main/joshsim-fat.jar`. |
+| Python pkgs | see [requirements.txt](requirements.txt).                            | pip. |
+
+The scorer's Python and Java pins match what `scripts/install-host.sh` will
+install on the host in phase 3, so scoring re-runs see the same library
+behaviour the agent's `./run.sh` produced.
