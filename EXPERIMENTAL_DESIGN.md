@@ -4,9 +4,9 @@ The methodology behind the experiment described in [README.md](README.md). For i
 
 > **Status (phase 1 complete).** This document describes the full
 > experimental design as a forward-looking spec. The image and host
-> setup are built; the prompt rungs, scoring harness, sandbox policy,
-> orchestration, and per-run manifests are still to come. Sections
-> below describe the target shape unless noted otherwise.
+> setup are built; the prompt rungs, scoring harness, observation
+> layer, orchestration, and per-run manifests are still to come.
+> Sections below describe the target shape unless noted otherwise.
 
 This is the AI-evaluation experiment reported in our USRSE'26 submission on the [Josh][josh] vegetation modeling platform.
 
@@ -47,35 +47,34 @@ expected outputs.
 
 ## Stack
 
-Three off-the-shelf pieces, chosen to minimize what the harness
-itself has to own:
+Two off-the-shelf pieces, chosen to minimize what the harness itself
+has to own:
 
-- **[NVIDIA OpenShell][openshell]** provides the agent sandbox.
-  Policy-driven network filtering, Landlock-enforced filesystem
-  isolation, an unprivileged process namespace, and a logging proxy
-  with host- and path-level matching. opencode is a first-class
-  supported agent. Alpha software, pinned by version. We use
-  OpenShell's [docker compute driver][openshell-docker] so the agent
-  container is the same image we use for scoring — no env drift
-  between agent and scorer.
-- **[opencode][opencode]** runs the agent inside the sandbox.
-  `opencode run` is invoked non-interactively per phase. It is
-  installed into our image (via npm, layered on top of the community
-  sandbox base) rather than installed on the host.
+- **[opencode][opencode]** runs the agent inside the `fortree` Docker
+  container. `opencode run` is invoked non-interactively per phase.
+  Its `read`, `write`, `edit`, `glob`, `grep`, `bash`, and `webfetch`
+  tool scopes are the soft policy boundary: bash is whitelisted to a
+  small set of read-only inspection commands plus the agent's own
+  `./run.sh`, and `webfetch` is restricted to an explicit host
+  allowlist (the documentation hosts and OpenRouter).
 - **[OpenRouter][or]** is the inference gateway. A single API key
   covers the model panel; the OpenRouter slug pins the model.
 
-The image inherits the OpenShell-Community [base sandbox
-image][openshell-base] (pinned by tag) so that NVIDIA's supervisor
-readiness contract (users, sshd, network tooling, etc.) is satisfied
-by construction, and layers on Java 17, the Josh CLI, the pinned
-Python 3.11 scientific stack, and an opencode version override. See
-[`config/VERSIONS.md`](config/VERSIONS.md) for what's pinned where,
-and [`Dockerfile`](Dockerfile) for the layering.
+The agent container runs on its own Docker bridge network with a
+`dnsmasq` sidecar configured to log every DNS query. The DNS log is
+the passive tripwire: any host the agent reaches — regardless of
+whether the request came from `webfetch`, the agent-authored
+`./run.sh`, or any other code path — produces a record in the
+per-run log. Combined with opencode's per-tool trajectory log, this
+gives observability of what the agent fetched without operating a
+TLS-intercepting proxy.
 
-[openshell]: https://docs.nvidia.com/openshell/
-[openshell-docker]: https://docs.nvidia.com/openshell/latest/reference/sandbox-compute-drivers#docker-driver
-[openshell-base]: https://github.com/NVIDIA/OpenShell-Community/tree/main/sandboxes/base
+The same image is used for the scoring pass with `--network=none`
+and a read-only workspace mount, so the agent's `./run.sh` and the
+scoring re-run see byte-identical Python, Java, Josh, and library
+versions. See [`config/VERSIONS.md`](config/VERSIONS.md) for what's
+pinned, and [`Dockerfile`](Dockerfile) for the image layering.
+
 [opencode]: https://opencode.ai/
 [or]: https://openrouter.ai/
 
@@ -153,37 +152,37 @@ below).
 ## Run flow
 
 A full **run** (one (model × rung × target × run_id) cell) consists
-of five orchestrated steps spanning two opencode invocations inside
-a single OpenShell sandbox, plus two validation passes by a separate
-scoring container.
+of five orchestrated steps spanning two opencode invocations against
+a single per-run Docker bridge network, plus two validation passes
+by a separate scoring container.
 
-The sandbox is created with `openshell sandbox create --from
-fortree:latest --policy ./config/openshell-policy.yaml` at step 1 (the
-docker driver pulls our pinned image) and kept alive across steps 1–5
-so that step 4's recovery prompt sees step 1's workspace. It is torn
-down after step 5.
+The agent network and dnsmasq sidecar are brought up at step 1 and
+kept alive across steps 1–5 so that step 4's recovery prompt sees
+step 1's workspace and the full DNS log accumulates across both
+agent phases. The network and sidecar are torn down after step 5.
 
 The scoring container runs the **same** `fortree` image under plain
-Docker — no OpenShell, `--network=none`, read-only mount of the
-sandbox workspace. Using one image for both roles guarantees the agent's
-`./run.sh` and the scoring re-run see byte-identical Python, Java, Josh,
-and library versions.
+Docker, `--network=none`, with a read-only mount of the agent
+workspace. Using one image for both roles guarantees the agent's
+`./run.sh` and the scoring re-run see byte-identical Python, Java,
+Josh, and library versions.
 
 ### Step 1: Initial prompt
 
 The orchestrator validates env vars (`OPENROUTER_API_KEY`, `MODEL`,
-`RUNG`, `TARGET`, `RUN_ID`), creates an OpenShell sandbox with the
-pinned policy, and invokes opencode inside it.
+`RUNG`, `TARGET`, `RUN_ID`), creates a per-run Docker bridge network,
+starts the dnsmasq sidecar on it with query logging enabled, and
+runs `opencode run` non-interactively against the rendered config
+inside the `fortree` image, bound to that network.
 
-`opencode run` is invoked non-interactively with the prompt for the
-selected rung. The prompt **names the target framework** ("implement
-this using Josh" or "implement this using Mesa") so that
-tool-conformance can be measured as a separate signal in step 2.
+The prompt **names the target framework** ("implement this using
+Josh" or "implement this using Mesa") so that tool-conformance can
+be measured as a separate signal in step 2.
 
 The agent reads, writes, edits, greps, and may invoke `./run.sh` to
-self-validate. Documentation is available locally at `./docs/`.
-Installed Python and Java package source is readable on disk. The
-agent has no network access.
+self-validate. Installed Python and Java package source is readable
+on disk. Network access is constrained by opencode's `webfetch`
+allowlist and observed by the dnsmasq sidecar.
 
 **The agent's stopping condition is its own.** When opencode signals
 completion, the orchestrator captures the trajectory log and shuts
@@ -246,9 +245,9 @@ container exits.
 
 ### Step 4: Feedback prompt and recovery attempt
 
-The orchestrator invokes opencode a second time inside the **same**
-OpenShell sandbox used in step 1, this time with a **recovery
-prompt**. The recovery prompt:
+The orchestrator invokes opencode a second time against the **same**
+workspace and the **same** per-run bridge network used in step 1,
+this time with a **recovery prompt**. The recovery prompt:
 
 - References the same workspace (the agent sees its prior
   implementation, exactly as it left it).
@@ -260,10 +259,9 @@ prompt**. The recovery prompt:
 - Uses the same prompt-style guidance as the original rung,
   preserving the rung's detail level.
 
-The agent has the same sandbox policy and constraints as step 1.
-OpenShell's `network_policies` are hot-reloadable, but we do not
-modify them between phases — the policy is locked at step 1 and
-left alone.
+The opencode tool allowlist and the dnsmasq sidecar configuration
+are the same as step 1 — the policy and observation layer are locked
+at step 1 and left alone for the duration of the run.
 
 If step 3 produced a passing result, step 4 is skipped entirely.
 The recovery phase is only triggered when there is something to
@@ -335,66 +333,75 @@ archived artifacts can supplement post-hoc.
 | `entropy_bits_oneshot`       | step 3       | float   | Token-level Shannon entropy of the generated code, computed with a fixed generic BPE tokenizer. |
 | `entropy_bits_recovery`      | step 5       | float   | Same, post-recovery. |
 | `wall_time_seconds`          | step 1 / 4   | float   | End-to-end agent time per phase. Reported, not used for scoring (provider latency confounds). |
-| `docs_bytes_total`           | step 1 / 4   | int     | Total bytes served by the egress proxy during the agent phase. |
-| `docs_distinct_paths`        | step 1 / 4   | int     | Count of distinct doc URLs the agent fetched. |
+| `webfetch_request_count`     | step 1 / 4   | int     | Count of `webfetch` tool invocations from opencode's trajectory log. |
+| `docs_distinct_paths`        | step 1 / 4   | int     | Count of distinct doc URLs the agent fetched via `webfetch`. |
 | `docs_paths_josh`            | step 1 / 4   | int     | Distinct paths within `joshsim.org`. |
 | `docs_paths_mesa`            | step 1 / 4   | int     | Distinct paths within `mesa.readthedocs.io`. |
 | `docs_paths_python_stdlib`   | step 1 / 4   | int     | Distinct paths within `docs.python.org`. |
 | `docs_paths_scientific`      | step 1 / 4   | int     | Distinct paths within numpy/scipy/pandas/xarray/netCDF4 docs (combined). |
 | `docs_paths_by_category`     | step 1 / 4   | dict    | Counts per category tag (`reference`, `example`, `tutorial`, `api`, `general`) per host. |
+| `dns_distinct_hosts`         | step 1 / 4   | int     | Count of distinct hostnames queried, from the dnsmasq DNS log. |
+| `dns_unexpected_hosts`       | step 1 / 4   | list    | Hostnames queried that are NOT in the documentation/OpenRouter allowlist. Tripwire signal. |
+
+The path-level metrics (`docs_*`) come from opencode's trajectory
+log — every `webfetch` invocation records its URL. The host-level
+metrics (`dns_*`) come from the dnsmasq sidecar's query log and
+catch any non-`webfetch` egress attempt (e.g., a Python script the
+agent wrote calling `urllib.request.urlopen`).
 
 The pre-registered acceptance ranges live in
 [`spec/acceptance_ranges.json`](spec/acceptance_ranges.json) and were
 committed before any experimental runs. **Do not modify this file
 after experiments begin.** Git history is the audit trail.
 
-## Sandbox policy
+## Egress observability and isolation
 
-All agent-phase isolation will live in a single OpenShell policy file
-at [`config/openshell-policy.yaml`](config/openshell-policy.yaml)
-*(planned, phase 4)*. The policy pins three concerns:
+Two layers, both committed to Git and frozen for the headline
+experiment.
 
-- **Filesystem isolation** via Landlock. Read-only mounts of `/usr`,
-  `/lib`, `/etc` (inside the container); read-write access only to
-  `/sandbox` (the agent workspace) and `/tmp`.
-- **Process isolation.** The agent runs as the unprivileged
-  `sandbox` user/group that the community-base image creates. The
-  OpenShell supervisor runs as root inside the container to set up
-  namespaces, Landlock, and seccomp, then drops privileges into
-  `sandbox` before launching opencode. Seccomp filters block
-  dangerous syscalls automatically.
-- **Network policy.** All outbound traffic from the sandbox is
-  forced through OpenShell's gateway proxy, which auto-detects TLS
-  and applies host- and path-level matching from the policy.
+### Policy layer: opencode tool allowlists
 
-The static (filesystem, process) and dynamic (network) sections are
-both committed to Git and frozen for the headline experiment.
+opencode's per-tool configuration in
+[`config/opencode.template.json`](config/opencode.template.json)
+*(planned, phase 3)* is the only thing the agent's own runtime sees
+as a constraint:
 
-### Pre-installed environment
+- `write` and `edit` scoped to the workspace.
+- `bash` whitelisted to a small set of read-only inspection commands
+  plus the agent-authored `./run.sh`.
+- `webfetch` restricted to the documentation host allowlist below
+  plus `openrouter.ai`.
 
-Pinned at image build time in [`Dockerfile`](Dockerfile) and
-[`config/requirements.txt`](config/requirements.txt). No `pip install`,
-no `apt-get install` during the agent phase:
+This is the **soft** layer: opencode self-enforces. It works as long
+as the agent uses opencode's tool surface as intended. It does not
+defend against indirect egress (e.g., the agent writing a `./run.sh`
+that itself calls `urllib`).
 
-- Python 3.11 with pinned versions of: mesa, numpy, pandas, scipy,
-  xarray, netCDF4, rasterio, tiktoken — installed into
-  `/opt/fortree-venv` since the inherited community-base image's
-  default Python is 3.12.
-- Eclipse Temurin / OpenJDK 17.
-- The Josh CLI as a wrapper around `joshsim-fat.jar`, sha256-pinned
-  at build time (SchmidtDSE/josh has no tagged releases).
-- opencode 1.14.50 (overrides the community-base default of 1.2.18
-  via `npm install -g`).
+### Observation layer: dnsmasq DNS log
 
-Exact pins in [`config/VERSIONS.md`](config/VERSIONS.md).
+A `dnsmasq` sidecar runs on the agent's per-run Docker bridge
+network with query logging enabled. Configured in
+[`orchestration/dnsmasq.conf`](orchestration/dnsmasq.conf)
+*(planned, phase 4)*. Every DNS query the agent container emits is
+logged with hostname, timestamp, and resolution. The agent
+container is launched with `--dns <sidecar-ip>` so all DNS resolution
+flows through it.
 
-### Network policy: doc access
+This is the **passive** layer: it does not block, only logs.
+Coverage is host-level (no path detail) but is independent of which
+process inside the container initiated the request — `./run.sh`,
+opencode's `webfetch`, an agent-authored Python script, anything.
+The DNS log is the evidence record: if the agent ever resolves a
+host that isn't in the allowlist, it appears in the per-run
+`dns.log` and is surfaced as `dns_unexpected_hosts` in the manifest.
 
-The `network_policies` block in
-[`config/openshell-policy.yaml`](config/openshell-policy.yaml)
-encodes the allowlist. One entry per documentation host, all using
-`protocol: rest` so OpenShell's gateway terminates TLS and produces
-per-request log entries:
+Hard-layer egress filtering (a TLS-intercepting CONNECT proxy or
+equivalent) is reserved as a future option, layered on only if
+observation reveals enough leaks to warrant blocking. The current
+design treats the dnsmasq log as the tripwire — anomalies in it
+trigger investigation rather than silent run failure.
+
+### Documentation host allowlist
 
 | Host                                | Purpose |
 | ----------------------------------- | ------- |
@@ -413,26 +420,21 @@ blog hosts, PyPI's metadata pages. The agent can read installed
 package source on disk, which is a strict superset of what
 github.com source-browse would provide.
 
-The gateway logs every request — host, full path, response size,
-timestamp, calling binary — and emits OCSF JSON. The orchestrator
-captures these logs per run.
+### Model API host
 
-### Network policy: model API
-
-A separate `network_policies` entry whitelists `openrouter.ai` so
-that opencode can reach the inference gateway. This entry is
-distinguished from the docs allowlist in the policy file and
-excluded from `docs_*` metrics; OpenRouter traffic is recorded
-under its own metric (`api_request_count`, `api_bytes`).
+`openrouter.ai` is a separate entry in the opencode `webfetch`
+allowlist so that the inference call can be made. It is excluded
+from `docs_*` metrics in the post-hoc analysis; OpenRouter traffic
+is recorded under its own counters (`prompt_tokens`,
+`completion_tokens`) sourced from the OpenRouter response itself.
 
 ### Category tags for documentation hosts
 
-OpenShell's policy schema does not carry a category-tag field per
-host or path. The mapping from URL to category — `reference`,
-`example`, `tutorial`, `api`, `general` — lives in
+The mapping from URL to category — `reference`, `example`,
+`tutorial`, `api`, `general` — lives in
 [`config/docs_categories.yaml`](config/docs_categories.yaml), a
 sidecar file consumed only at analysis time. The orchestrator
-joins it to the OpenShell access log post-hoc to produce
+joins it to opencode's trajectory log post-hoc to produce
 `docs_paths_by_category` in the run manifest.
 
 ### Asymmetry, acknowledged
@@ -442,22 +444,37 @@ gallery; Josh has tutorial pages and `llms-full.txt`. This is not
 an apples-to-apples comparison. The asymmetry is a real reflection
 of where each tool is in its lifecycle, and the run-level traffic
 logs make the imbalance visible in the data rather than hiding it.
-The discussion section of the paper will acknowldege this directly.
+The discussion section of the paper will acknowledge this directly.
 
 ### Scoring phase network
 
 The scoring phase runs in a separate plain-Docker container with
-`--network=none`. OpenShell is not used for scoring — there is no
-agent to sandbox.
+`--network=none`. The dnsmasq sidecar is not part of the scoring
+pass — there is no agent to observe.
 
 ### Reading installed package source
 
 The agent can `cat $(python -c "import mesa; print(mesa.__file__)")`
-and follow imports. The OpenShell policy permits read access to
-`/usr/lib/python3.11/site-packages` as part of the baseline
-read-only mount. This mirrors realistic RSE behavior and is
-symmetric across targets. The sidecar does not call this out
-explicitly; the agent discovers it if it tries.
+and follow imports. The system Python's `site-packages` directory is
+readable inside the container. This mirrors realistic RSE behavior
+and is symmetric across targets.
+
+### Pre-installed environment
+
+Pinned at image build time in [`Dockerfile`](Dockerfile) and
+[`config/requirements.txt`](config/requirements.txt). No `pip install`,
+no `apt-get install` during the agent phase:
+
+- Python 3.11 with pinned versions of: mesa, numpy, pandas, scipy,
+  xarray, netCDF4, rasterio, tiktoken — installed into the system
+  Python from `python:3.11-slim-bookworm`.
+- Eclipse Temurin / OpenJDK 17.
+- The Josh CLI as a wrapper around `joshsim-fat.jar`, sha256-pinned
+  at build time (SchmidtDSE/josh has no tagged releases).
+- opencode 1.14.50, installed via the upstream installer and
+  symlinked into `/usr/local/bin`.
+
+Exact pins in [`config/VERSIONS.md`](config/VERSIONS.md).
 
 ## Tool palette
 
@@ -467,28 +484,26 @@ which the orchestrator renders per run. The configured tools are:
 
 | Tool        | Scope |
 | ----------- | ----- |
-| `read`      | Workspace, installed package source, and `./docs/INDEX.md`. |
+| `read`      | Workspace, installed package source. |
 | `write`     | Workspace only. |
 | `edit`      | Workspace only. |
-| `glob`      | Workspace and `./docs/`. |
-| `grep`      | Workspace, `./docs/`, and installed package source. |
+| `glob`      | Workspace. |
+| `grep`      | Workspace, installed package source. |
 | `bash`      | Read-only inspection commands and `./run.sh`. The agent may invoke `./run.sh` freely to self-test. |
+| `webfetch`  | Documentation host allowlist plus `openrouter.ai`. |
 
-The OpenShell policy file backs these with kernel-level enforcement.
-opencode's tool restrictions are the soft layer; OpenShell's
-Landlock + network policy + seccomp + unprivileged user is the
-hard layer. If opencode were ever to leak — e.g., by invoking
-`python` directly despite the bash whitelist — the OpenShell layer
-would still block disk writes outside the workspace, network calls
-outside the policy, and any privileged syscall.
+These tool scopes are the policy. There is no kernel-level
+enforcement of disk writes or syscalls in this design — opencode's
+self-enforcement plus the unprivileged container is the boundary.
+The dnsmasq DNS log is the evidence record that allows us to detect
+when that boundary is breached, even if we do not block the breach
+in flight.
 
-Explicitly blocked at the OpenShell layer:
-
-- Package installation: any binary attempting to reach `pypi.org`
-  or `files.pythonhosted.org` is denied by the network policy
-  (neither host is in the allowlist).
-- Direct internet access outside the documentation and OpenRouter
-  allowlists.
+Egress paths that are NOT covered by opencode's `webfetch`
+allowlist (e.g., the agent writes a Python script that calls
+`urllib.request.urlopen`) will still be **visible** in the dnsmasq
+log via the resolved hostname, surfaced as `dns_unexpected_hosts`
+in the manifest. They will not be **blocked**.
 
 ## Stopping conditions
 
@@ -521,12 +536,14 @@ paper:
 - "Relevant LOC" definition is judgement-encoded once, in
   [`harness/loc.py`](harness/loc.py); a different operationalization
   could shift numbers.
-- OpenShell is alpha software; behavior may differ between versions.
-  The pinned version is recorded in the manifest and in this README.
-  If a breaking change forces an upgrade mid-experiment, that batch
-  is invalidated. A fallback to a frozen local docs mirror without
-  OpenShell is documented in
-  [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) as a contingency.
+- The egress boundary is opencode's self-enforced tool allowlist
+  (soft) with a dnsmasq DNS log as the passive observation layer.
+  Indirect egress paths (e.g., an agent-authored `./run.sh` calling
+  `urllib`) are not blocked in this design; they are observable in
+  the DNS log and reported as `dns_unexpected_hosts`. The validity
+  argument depends on the pilot showing these signals stay clean.
+  Hard-layer filtering can be added later if observation reveals
+  meaningful leaks.
 - Several methodological choices are still open and will affect
   what the experiment can claim. See
   [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md).

@@ -8,16 +8,16 @@ This repository runs the AI-evaluation experiments reported in our
 USRSE'26 submission on the [Josh][josh] vegetation modeling platform.
 This README covers installation and execution; see
 [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md) for the hypothesis,
-prompt-detail ladder, scoring methodology, sandbox-policy rationale, and
-threats to validity.
+prompt-detail ladder, scoring methodology, egress-observability
+rationale, and threats to validity.
 
 > **Status (phase 1 complete).** The harness is being built out in
 > phases; [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) is the
 > source of truth for what is done and what is still to do. As of
 > phase 1, the unified `fortree` Docker image builds and validates on
 > a local host; the scoring harness, orchestration scripts, prompts
-> rungs 1–5, and OpenShell policy are not yet in the repo. References
-> below marked *(planned)* describe the target shape.
+> rungs 1–5, and observation layer are not yet in the repo.
+> References below marked *(planned)* describe the target shape.
 
 [josh]: https://joshsim.org/
 
@@ -32,17 +32,17 @@ are present on the current branch.
 ├── README.md                     # This file (install + run)
 ├── EXPERIMENTAL_DESIGN.md        # Methodology, scoring, threats to validity
 ├── IMPLEMENTATION_PLAN.md        # Phase plan + current build status
-├── Dockerfile                    # Unified fortree image (sandbox + scorer)
+├── Dockerfile                    # Unified fortree image (agent + scorer)
 ├── entrypoint-scorer.sh          # Dispatches to harness/run_metrics.py
 ├── .env.example                  # Copy to .env; OPENROUTER_API_KEY lives there
 ├── scripts/
-│   └── install_josh.sh           # Installs Josh CLI inside the image
+│   ├── install_josh.sh           # Installs Josh CLI inside the image
+│   └── install_opencode.sh       # Installs opencode inside the image
 ├── config/
-│   ├── VERSIONS.md               # Pinned tool versions (host + image)
+│   ├── VERSIONS.md               # Pinned tool versions
 │   ├── requirements.txt          # Pinned Python deps
 │   ├── models.yaml               # (planned) short-name → OpenRouter ID map
 │   ├── opencode.template.json    # (planned) per-run opencode config template
-│   ├── openshell-policy.yaml     # (planned) frozen sandbox policy
 │   └── docs_categories.yaml      # (planned) URL → category tag, analysis-time
 ├── data/                         # Climate inputs (Tulare County, FGOALS-g3 / SSP2-4.5)
 │   ├── precip_tulare_annual.nc
@@ -56,9 +56,8 @@ are present on the current branch.
 │   ├── rung5_master.md           # (planned)
 │   └── recovery_template.md      # (planned)
 ├── spec/                         # (planned, phase 2) — ForeverTree spec + acceptance ranges
-├── docs/                         # (planned, phase 4) — in-workspace navigation aids
 ├── harness/                      # (planned, phase 2) — scoring entry point + runners + validators
-├── orchestration/                # (planned, phase 3+) — launch_run.sh, launch_batch.sh, etc.
+├── orchestration/                # (planned, phase 3+) — launch_run.sh, launch_batch.sh, dnsmasq.conf
 └── results/                      # (planned, phase 5) — per-run JSON manifests
 ```
 
@@ -66,10 +65,7 @@ are present on the current branch.
 
 ### Prerequisites
 
-The host needs Docker, [uv][uv], and a pinned OpenShell. The harness uses
-OpenShell's [docker compute driver][openshell-docker] so the agent runs
-inside our own image — the same image the scorer uses, no env drift
-between them. Install each manually:
+The host needs Docker and [uv][uv]. Install each manually:
 
 ```sh
 # 1. Docker daemon (system-specific).
@@ -78,17 +74,12 @@ between them. Install each manually:
 # 2. uv — Astral's single-binary Python tool installer.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 3. OpenShell (pinned). Treat upgrades as breaking; rerun the
-#    experiment from scratch.
-uv tool install openshell==0.0.36
-
-# 4. Build the unified fortree image. Used both as the agent sandbox
-#    base (via openshell sandbox create --from) and as the scorer.
+# 3. Build the unified fortree image. Used both as the agent runtime
+#    and as the --network=none scorer.
 docker build -t fortree:latest .
 ```
 
 [uv]: https://docs.astral.sh/uv/
-[openshell-docker]: https://docs.nvidia.com/openshell/latest/reference/sandbox-compute-drivers#docker-driver
 
 ### Image-only sanity checks (works today)
 
@@ -114,15 +105,14 @@ docker run --rm --env-file .env fortree:latest printenv OPENROUTER_API_KEY
   --run-id "$(uuidgen)"
 ```
 
-`launch_run.sh` will wrap the five-step flow: it calls
-`openshell sandbox create --from fortree:latest --policy
-./config/openshell-policy.yaml` to spin up a sandbox on the pinned
-image (via OpenShell's docker compute driver), invokes opencode
-inside it for step 1, runs the conformance and validation harnesses
-against the sandbox workspace, invokes opencode again for the
-recovery step if needed, and runs the final validation. It captures
-the OpenShell access log, all opencode trajectories, and the harness
-output, and appends a row to `results/manifest.jsonl`.
+`launch_run.sh` will wrap the five-step flow: it brings up a per-run
+Docker bridge network with a dnsmasq sidecar (query logging on),
+runs opencode inside the pinned `fortree` image bound to that
+network for step 1, runs the conformance and validation harnesses
+against the workspace, invokes opencode again for the recovery step
+if needed, and runs the final validation. It captures the dnsmasq
+DNS log, all opencode trajectories, and the harness output, and
+appends a row to `results/manifest.jsonl`.
 
 ### Full experimental cell *(planned, phase 5)*
 
@@ -134,9 +124,11 @@ output, and appends a row to `results/manifest.jsonl`.
   --runs 3
 ```
 
-`launch_batch.sh` will spawn `RUNS` parallel orchestrated runs (each
-covering all five steps) with fresh `RUN_ID`s and wait for all to
-complete.
+`launch_batch.sh` will fan out `RUNS` parallel `launch_run.sh`
+invocations locally via `xargs -P` (or GNU `parallel`) with fresh
+`RUN_ID`s, each on its own bridge network. Runs are
+network-I/O-bound on OpenRouter latency rather than CPU-bound on
+the host, so single-machine parallelism is the default.
 
 ### Full sweep *(planned, phase 6+)*
 
@@ -191,18 +183,15 @@ listed here so the variable contract is visible from the start.
 ## Authentication
 
 A single OpenRouter API key covers the entire model panel.
-`OPENROUTER_API_KEY` is passed to the sandbox at creation time by
-the orchestrator *(planned, phase 3)* and reaches opencode via its
-rendered `opencode.json`. Today the variable is loaded from a
-gitignored `.env` and passed to the image with `docker run --env-file`;
-phase 3 wires it through `openshell sandbox create`.
+`OPENROUTER_API_KEY` is loaded from a gitignored `.env` and passed to
+the agent container with `docker run --env-file .env`. opencode
+reads it from its rendered `opencode.json` *(planned, phase 3)*.
 
-opencode will be configured to use OpenRouter as its only provider;
-the rendered config will pin the resolved OpenRouter model slug per
-run. The OpenShell network policy *(planned, phase 4)* will allowlist
+opencode is configured to use OpenRouter as its only provider; the
+rendered config pins the resolved OpenRouter model slug per run.
+The `WebFetch` tool allowlist *(planned, phase 3)* permits
 `openrouter.ai` alongside the documentation hosts so the inference
-call can be made out of the sandbox. No other provider hosts are
-reachable.
+call can be made out of the container.
 
 Sample rendered `opencode.json` *(target shape for phase 3)*:
 
@@ -225,6 +214,14 @@ Sample rendered `opencode.json` *(target shape for phase 3)*:
         "bash":  {
           "enabled": true,
           "allow": ["./run.sh", "ls", "cat", "head", "tail", "find", "wc", "tree"]
+        },
+        "webfetch": {
+          "enabled": true,
+          "allow_hosts": [
+            "joshsim.org", "mesa.readthedocs.io", "docs.python.org",
+            "numpy.org", "docs.scipy.org", "pandas.pydata.org",
+            "docs.xarray.dev", "unidata.github.io", "openrouter.ai"
+          ]
         }
       }
     }
@@ -232,38 +229,29 @@ Sample rendered `opencode.json` *(target shape for phase 3)*:
 }
 ```
 
-The opencode tool-restriction schema is the soft layer; the
-OpenShell policy is the hard layer. If a model is ever added that
-isn't on OpenRouter, the orchestrator will need to render a
-different provider block *and* update the OpenShell network policy
-to allowlist that provider's host. Doing both is a deliberate,
-visible change in two version-controlled files.
+opencode's tool allowlists are the policy layer; the dnsmasq sidecar
+on the agent's bridge network is the passive tripwire that records
+every DNS query the container makes, so any host the agent reaches
+shows up in the per-run log regardless of which tool triggered it.
 
 ## Reproducibility
 
-- Pinned OpenShell, opencode, Josh, and Python-stack versions in
+- Pinned opencode, Josh, and Python-stack versions in
   [`config/VERSIONS.md`](config/VERSIONS.md). Upgrade requires a fresh
   experimental batch.
-- Pinned unified [`Dockerfile`](Dockerfile) (used both as agent sandbox
-  base via OpenShell's docker driver and as the `--network=none`
-  scorer), tagged per batch.
-- The Dockerfile inherits from a SHA-pinned tag of NVIDIA's community
-  sandbox base (`ghcr.io/nvidia/openshell-community/sandboxes/base`)
-  so the OpenShell supervisor's readiness contract stays in lockstep
-  with whatever OpenShell version we pin.
+- Pinned unified [`Dockerfile`](Dockerfile) (used both as agent
+  runtime and as the `--network=none` scorer), tagged per batch.
 - Josh CLI sha256 captured at image build time (no tagged releases
   upstream).
 - Pinned model IDs in `config/models.yaml` *(planned, phase 3)*. Drift
   will be logged when a provider returns a different `model_id` than
   requested.
-- Frozen `config/openshell-policy.yaml` for the headline experiment
-  *(planned, phase 4)*.
 - Pre-registered acceptance ranges committed to Git before any runs
   *(planned, phase 2)*.
 - Per-run manifests in `results/manifest.jsonl` will be append-only
   and committed *(planned, phase 5)*. Each entry will record the
   prompt rung, model, target, resolved model ID, OpenRouter cost,
-  all metrics, OpenShell access log URI, and S3 URIs for the
+  all metrics, dnsmasq DNS log path, and S3 URIs for the
   artifacts.
 - Prompt files versioned in Git; any change forces a new batch tag.
 
