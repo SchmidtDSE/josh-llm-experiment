@@ -11,10 +11,15 @@ FROM python:3.11-slim-bookworm AS fortree
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      openjdk-17-jre-headless \
       ca-certificates \
       curl \
+      gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# Java 21 (Eclipse Temurin) for the Josh CLI. The rolling joshsim-fat.jar
+# targets class file v63, so Java 17 (max v61) won't load it.
+COPY scripts/install_java.sh /tmp/install_java.sh
+RUN /tmp/install_java.sh && rm /tmp/install_java.sh
 
 # Josh CLI: rolling main fat jar, sha256 pinned at build time.
 COPY scripts/install_josh.sh /tmp/install_josh.sh

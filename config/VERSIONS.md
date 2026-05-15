@@ -17,7 +17,7 @@ Built from [Dockerfile](../Dockerfile).
 | Tool        | Version                                                              | Source |
 | ----------- | -------------------------------------------------------------------- | ------ |
 | Base        | `python:3.11-slim-bookworm`                                          | Docker Hub. |
-| OpenJDK     | 17 (Bookworm distro `openjdk-17-jre-headless`)                       | apt. |
+| Java        | Eclipse Temurin 21 JRE                                               | Adoptium apt repo (`packages.adoptium.net`) via [scripts/install_java.sh](../scripts/install_java.sh). Pinned by major version; auto-updated within 21.x. |
 | Josh CLI    | rolling main, sha256 `ef5f7ef9dc0bffbe2ed79c80fd6c0813db8120eb74bbf995cbc694c0de248984` | `https://joshsim.org/dist/main/joshsim-fat.jar` via [scripts/install_josh.sh](../scripts/install_josh.sh). |
 | Python      | 3.11 (from the base image).                                          | Docker Hub. |
 | Python pkgs | see [requirements.txt](requirements.txt).                            | pip into system Python. |
