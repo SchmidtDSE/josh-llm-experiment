@@ -61,17 +61,16 @@ Landed on `phase-1-env-bootstrap` (PR #2 → `dev`).
 - `README.md` "Host prerequisites" section — manual install steps for Docker, uv, openshell. No install script.
 - `.gitignore` and [`.env.example`](.env.example) — secret-passing pattern (`docker run --env-file .env ...`) tested.
 
-**Validation gate (passed)**
-- `docker build -t fortree:latest .` succeeds.
-- `docker run --rm fortree:latest python -c "import mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken; print('ok')"` → `ok`.
-- `docker run --rm fortree:latest josh --version` → pinned sha256 `ef5f7ef9…`.
-- `docker run --rm fortree:latest opencode --version` → `1.14.50`.
-- `docker run --rm --network=none fortree:latest python -c "print('offline')"` → `offline`.
-- `docker run --rm --env-file .env fortree:latest printenv OPENROUTER_API_KEY` returns the value.
-- `openshell gateway start --plaintext --port 18080` deploys a local gateway on the codespace (k3s-backed).
-- `openshell sandbox create --from . --name test --auto-providers -- josh --version` builds our Dockerfile, pushes the resulting image to the gateway, and allocates a sandbox slot — image-side flow is correct.
+**Validation gate**
+Gates 1–6 (image-side) all pass:
+- `docker build -t fortree:dev .` succeeds.
+- `docker run --rm fortree:dev python -c "import sys; print(sys.version_info[:2]); import mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken; print('ok')"` → `py (3, 11)` + `ok`.
+- `docker run --rm fortree:dev josh --version` → pinned sha256 `ef5f7ef9…`.
+- `docker run --rm fortree:dev opencode --version` → `1.14.50` (overrides base's 1.2.18).
+- `docker run --rm --network=none fortree:dev python -c "print('offline')"` → `offline`.
+- `docker run --rm --env-file .env fortree:dev printenv OPENROUTER_API_KEY` returns the value.
 
-**Partial validation, deferred to phase 3**: with `openshell` 0.0.36 the CLI's `gateway start` deploys a **k3s-based** gateway, not the docker-driver gateway described in NVIDIA's reference docs (the docker-driver wiring lives in `openshell-gateway` which is not shipped in the pypi distribution). Under k3s, sandbox provisioning waits for a pod-readiness contract our minimal image doesn't satisfy yet (community base ships sshd + specific user setup; ours doesn't). The image is valid as a Docker image; we'll resolve the sandbox-readiness gap in phase 3 by either (a) layering on the community-base structure or (b) building `openshell-gateway` directly from source to use the documented docker driver. Either approach reuses the image we just built; nothing about the image needs to change.
+Gate 7 (OpenShell sandbox-create) **deferred to a larger-disk host**: the path A′ image satisfies OpenShell's pod-readiness contract by construction (we inherit it from NVIDIA's community base). What blocks codespace validation is purely disk: the image is 7.3 GB, the community-base + cluster images add another 5 GB, and k3s's containerd storage tips the codespace's 32 GB partition into `DiskPressure` before the sandbox pod becomes Ready. The same `openshell sandbox create --from .` invocation should work cleanly on any host with ~30 GB+ of free disk; on the codespace we can build and validate the image, but not run the k3s sandbox under it.
 
 ## Phase 2 — Scorer-only loop (no agents)
 
