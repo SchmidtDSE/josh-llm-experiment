@@ -37,7 +37,8 @@ A grid of patches; ten trees per patch; growth driven by external
 temperature and precipitation data with a quadratic temperature
 response, a logistic precipitation response, and a small Gaussian
 multiplicative noise term. Full specification in
-[`spec/ForeverTree.md`](spec/ForeverTree.md).
+[`prompts/BASE_PROMPT.md`](prompts/BASE_PROMPT.md) (the rung-5 master)
+plus the boilerplate footer at [`prompts/environment_sidecar.md`](prompts/environment_sidecar.md).
 
 ForeverTree was chosen because it is small enough to be tractable for
 small models, includes external geospatial data (which exercises the
@@ -350,7 +351,7 @@ catch any non-`webfetch` egress attempt (e.g., a Python script the
 agent wrote calling `urllib.request.urlopen`).
 
 The pre-registered acceptance ranges live in
-[`spec/acceptance_ranges.json`](spec/acceptance_ranges.json) and were
+[`harness/acceptance_ranges.json`](harness/acceptance_ranges.json) and were
 committed before any experimental runs. **Do not modify this file
 after experiments begin.** Git history is the audit trail.
 

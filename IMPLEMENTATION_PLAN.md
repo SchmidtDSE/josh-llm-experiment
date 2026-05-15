@@ -42,7 +42,7 @@ invocation modes:
 Decisions:
 - **Version pins.** Python 3.11 / OpenJDK 17 / `opencode==1.14.50` inside the image. See [config/VERSIONS.md](config/VERSIONS.md).
 - **Single image, no host-side runtime install.** Python, Java, Josh, scientific deps, opencode all in the image. The host only needs Docker and uv.
-- **Acceptance ranges.** User authors [spec/acceptance_ranges.json](spec/acceptance_ranges.json) themselves and commits before any agent runs.
+- **Acceptance ranges.** User authors [harness/acceptance_ranges.json](harness/acceptance_ranges.json) themselves and commits before any agent runs.
 
 ## Branching workflow
 
@@ -73,19 +73,19 @@ Landed on `phase-1-env-bootstrap` (PR #2 → `dev`).
 
 ## Phase 2 — Scorer-only loop (no agents)
 
-**Spec/data files to author**
-- [spec/ForeverTree.md](spec/ForeverTree.md) — copy of `prompts/BASE_PROMPT.md`, repurposed as the canonical spec (the prompt file is for agents; the spec is for humans/the harness).
-- [spec/harness_contract.md](spec/harness_contract.md) — defines what generated code must produce: `./run.sh`, `./output/results.csv` columns (`cell_id, lat, lon, year, meanAge, meanHeight, temperature, precipitation`), units, schema.
-- [spec/acceptance_ranges.json](spec/acceptance_ranges.json) — **user provides**. Plan holds a placeholder file marked `TODO: user-authored` until that lands.
-- [spec/environment_sidecar.md](spec/environment_sidecar.md) — the env description shown to the agent in phase 3+.
+**Config files to author**
+- [harness/CONTRACT.md](harness/CONTRACT.md) — defines what generated code must produce: `./run.sh`, `./output/results.csv` columns (`cell_id, lat, lon, year, meanAge, meanHeight, temperature, precipitation`), units, schema. Harness-internal; not shown to the agent. The agent sees [prompts/environment_sidecar.md](prompts/environment_sidecar.md), which carries the same contract in agent-facing form.
+- [harness/acceptance_ranges.json](harness/acceptance_ranges.json) — **user authors before this phase begins.** Read by `harness/validators/acceptance.py`.
+- [prompts/environment_sidecar.md](prompts/environment_sidecar.md) — the boilerplate footer appended to every rung's prompt. Carries the runtime env description, the external-input data file paths/units, and the CSV output contract in agent-facing prose.
 
 **Harness code to author**
 - [harness/run_metrics.py](harness/run_metrics.py) — top-level scorer entry point; invokes runner, validators, computes loc + entropy, emits JSON record.
-- [harness/runners/josh_runner.py](harness/runners/josh_runner.py), [harness/runners/mesa_runner.py](harness/runners/mesa_runner.py) — invoke `./run.sh` for each target; capture exit code, stdout, stderr, wall time.
+- [harness/runner.py](harness/runner.py) — invokes `./run.sh`; captures exit code, stdout, stderr, wall time. Single file, target-agnostic per Plan-agent design.
 - [harness/validators/output_schema.py](harness/validators/output_schema.py) — CSV existence + column shape check.
-- [harness/validators/acceptance.py](harness/validators/acceptance.py) — range check against `spec/acceptance_ranges.json`.
+- [harness/validators/acceptance.py](harness/validators/acceptance.py) — range check against [harness/acceptance_ranges.json](harness/acceptance_ranges.json).
 - [harness/loc.py](harness/loc.py) — relevant-LOC computation (strip comments, blanks, boilerplate, imports; identical rules per target).
 - [harness/entropy.py](harness/entropy.py) — token-level Shannon entropy with a fixed BPE tokenizer (e.g. `tiktoken` `cl100k_base` pinned).
+- [harness/_files.py](harness/_files.py) — shared file-enumeration helper used by loc.py + entropy.py.
 
 **Reference implementations (test fixtures, never agent training data)**
 - `reference/josh/` — hand-written `.josh` + `.jshd` for ForeverTree.
@@ -156,7 +156,7 @@ The plan is complete when:
 
 Phase 1: [Dockerfile](Dockerfile), [scripts/install_josh.sh](scripts/install_josh.sh), [entrypoint-scorer.sh](entrypoint-scorer.sh), [config/requirements.txt](config/requirements.txt), [config/VERSIONS.md](config/VERSIONS.md), `.env`, `.gitignore`, README "Host prerequisites" section.
 
-Phase 2: [spec/ForeverTree.md](spec/ForeverTree.md), [spec/acceptance_ranges.json](spec/acceptance_ranges.json), [spec/harness_contract.md](spec/harness_contract.md), [spec/environment_sidecar.md](spec/environment_sidecar.md), [harness/run_metrics.py](harness/run_metrics.py), [harness/runners/josh_runner.py](harness/runners/josh_runner.py), [harness/runners/mesa_runner.py](harness/runners/mesa_runner.py), [harness/validators/output_schema.py](harness/validators/output_schema.py), [harness/validators/acceptance.py](harness/validators/acceptance.py), [harness/loc.py](harness/loc.py), [harness/entropy.py](harness/entropy.py), `reference/josh/`, `reference/mesa/`.
+Phase 2: [prompts/environment_sidecar.md](prompts/environment_sidecar.md), [harness/CONTRACT.md](harness/CONTRACT.md), [harness/acceptance_ranges.json](harness/acceptance_ranges.json), [harness/run_metrics.py](harness/run_metrics.py), [harness/runner.py](harness/runner.py), [harness/validators/output_schema.py](harness/validators/output_schema.py), [harness/validators/acceptance.py](harness/validators/acceptance.py), [harness/loc.py](harness/loc.py), [harness/entropy.py](harness/entropy.py), [harness/_files.py](harness/_files.py), `reference/josh/`, `reference/mesa/`.
 
 Phase 3: [prompts/rung1_minimal.md](prompts/rung1_minimal.md), [prompts/rung5_master.md](prompts/rung5_master.md), [config/models.yaml](config/models.yaml), [config/opencode.template.json](config/opencode.template.json), [config/docs_categories.yaml](config/docs_categories.yaml), [orchestration/launch_run.sh](orchestration/launch_run.sh).
 
@@ -175,5 +175,5 @@ Phase 5: [prompts/recovery_template.md](prompts/recovery_template.md), [orchestr
 ## Open items the user owns
 
 - Provide `OPENROUTER_API_KEY` (used from phase 3 onward).
-- Author [spec/acceptance_ranges.json](spec/acceptance_ranges.json) before phase 3 begins (technically before any agent runs).
+- Author [harness/acceptance_ranges.json](harness/acceptance_ranges.json) before phase 3 begins (technically before any agent runs). _Initial v0 ranges committed in PR #3._
 - Confirm or override the default assumption that Claude authors the hand-coded `reference/josh/` and `reference/mesa/` implementations.
