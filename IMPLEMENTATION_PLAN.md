@@ -70,7 +70,17 @@ Gates 1–6 (image-side) all pass:
 - `docker run --rm --network=none fortree:dev python -c "print('offline')"` → `offline`.
 - `docker run --rm --env-file .env fortree:dev printenv OPENROUTER_API_KEY` returns the value.
 
-Gate 7 (OpenShell sandbox-create) **deferred to a larger-disk host**: the path A′ image satisfies OpenShell's pod-readiness contract by construction (we inherit it from NVIDIA's community base). What blocks codespace validation is purely disk: the image is 7.3 GB, the community-base + cluster images add another 5 GB, and k3s's containerd storage tips the codespace's 32 GB partition into `DiskPressure` before the sandbox pod becomes Ready. The same `openshell sandbox create --from .` invocation should work cleanly on any host with ~30 GB+ of free disk; on the codespace we can build and validate the image, but not run the k3s sandbox under it.
+Gate 7 (OpenShell sandbox-create) **deferred to a larger-disk host**: the path A′ image satisfies OpenShell's pod-readiness contract by construction (we inherit it from NVIDIA's community base). What blocks codespace validation is purely disk. The image is 7.3 GB; pushed to the gateway compressed it's 2.0 GB; the gateway then extracts it back to ~7 GB inside k3s's containerd snapshot store. Two retry attempts on the codespace (first attempt, then a `docker system prune -af` + rebuild) both ended with the same explicit error from the gateway:
+
+```
+× ctr images import exited with code 1
+ctr: failed to extract layer (sha256:8551a3ca…)
+to overlayfs as "extract-…":
+write /var/lib/rancher/k3s/.../snapshots/70/fs/root/.local/share/claude/versions/2.1.140:
+no space left on device
+```
+
+The codespace's 32 GB partition cannot hold the fortree image + community base + cluster image + k3s extraction simultaneously. The same `openshell sandbox create --from .` should work cleanly on any host with ~50 GB+ free; on the codespace we can build and validate the image, but not run a sandbox under it. Deferred to phase 3 on a real local machine.
 
 ## Phase 2 — Scorer-only loop (no agents)
 
