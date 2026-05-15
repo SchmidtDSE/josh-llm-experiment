@@ -6,6 +6,8 @@
 
 We will stair-step the build so that each phase produces a demonstrable artifact that validates the foundation for the next phase, rather than building monolithically and running once at the end. **Scope of this plan is phases 1–5 only** — env bootstrap through a single successful 5-step orchestrated run for one (model × rung × target) cell. The pilot sweep and headline sweep get their own subsequent plans, after pilot data is in hand and prompts can be frozen.
 
+The plan validates the end-to-end opencode path first under opencode's own tool allowlists plus passive observation (trajectory log + DNS tripwire). A hard-layer egress proxy (OpenShell or equivalent) is out of scope for phases 1–5.
+
 ## Architecture
 
 One Docker image, used two ways, wired together by a bash orchestrator:
@@ -13,8 +15,7 @@ One Docker image, used two ways, wired together by a bash orchestrator:
 ```
 host:
 ├── docker daemon
-├── uv (manual install per README)
-└── openshell CLI + gateway (uv tool install openshell)
+└── uv (manual install per README)
 
 fortree image (Dockerfile):
 ├── Python 3.11 + scientific stack (mesa, numpy, pandas, scipy,
@@ -26,19 +27,21 @@ fortree image (Dockerfile):
 └── (later phases) /opt/harness/    ← scoring code
 
 invocation modes:
-- sandbox:  openshell sandbox create --from fortree:<tag> -- opencode ...
-            (gateway bind-mounts the supervisor binary in;
-             supervisor enforces Landlock + seccomp + egress proxy + OCSF logs)
+- agent:    docker run --rm --env-file .env
+              -v ./runs/<run-id>:/sandbox
+              --dns <dnsmasq-sidecar-ip>
+              fortree:<tag> opencode run --config /opt/opencode.json ...
+            (opencode's WebFetch + bash allowlists are the soft policy;
+             a dnsmasq sidecar on the docker bridge logs all DNS queries
+             as a passive tripwire for non-allowlisted hosts)
 - scorer:   docker run --rm --network=none
               -v ./runs/<run-id>:/sandbox
               fortree:<tag> /opt/entrypoint-scorer.sh --target <josh|mesa>
 ```
 
-The OpenShell [docker compute driver](https://docs.nvidia.com/openshell/latest/reference/sandbox-compute-drivers#docker-driver) is the key piece: it lets us BYO image instead of using OpenShell's community sandbox base. The supervisor still runs inside the container and enforces every protection layer OpenShell normally would — the docker driver is a *compute backend* choice, not a security relaxation.
-
 Decisions:
-- **Version pins.** Python 3.11 / OpenJDK 17 inside the image; `openshell==0.0.36` on the host; `opencode==1.14.50` inside the image. See [config/VERSIONS.md](config/VERSIONS.md).
-- **Single image, no host-side runtime install.** Python, Java, Josh, scientific deps, opencode all in the image. The host only needs Docker, uv, openshell.
+- **Version pins.** Python 3.11 / OpenJDK 17 / `opencode==1.14.50` inside the image. See [config/VERSIONS.md](config/VERSIONS.md).
+- **Single image, no host-side runtime install.** Python, Java, Josh, scientific deps, opencode all in the image. The host only needs Docker and uv.
 - **Acceptance ranges.** User authors [spec/acceptance_ranges.json](spec/acceptance_ranges.json) themselves and commits before any agent runs.
 
 ## Branching workflow
@@ -52,35 +55,21 @@ Decisions:
 Landed on `phase-1-env-bootstrap` (PR #2 → `dev`).
 
 **What's in the repo**
-- [`Dockerfile`](Dockerfile) — unified image. `python:3.11-slim-bookworm` + distro `openjdk-17-jre-headless` + Josh CLI + pinned scientific stack + opencode 1.14.50 + scorer entrypoint stub. Build: `docker build -t fortree:latest .`.
+- [`Dockerfile`](Dockerfile) — unified image, `FROM ghcr.io/nvidia/openshell-community/sandboxes/base:db19652` + `openjdk-17-jre-headless` + Josh CLI + Python 3.11 venv at `/opt/fortree-venv` with the pinned scientific stack + opencode 1.14.50 (override of base's 1.2.18) + scorer entrypoint stub. Build: `docker build -t fortree:latest .`.
 - [`scripts/install_josh.sh`](scripts/install_josh.sh) — downloads the prod fat jar, records its sha256, drops the `/usr/local/bin/josh` wrapper. Invoked from the Dockerfile but callable standalone.
-- [`scripts/install_opencode.sh`](scripts/install_opencode.sh) — pinned opencode install via the upstream installer, symlinked into `/usr/local/bin/opencode`.
 - [`entrypoint-scorer.sh`](entrypoint-scorer.sh) — stub that defers to `harness/run_metrics.py` (lands in phase 2); exits `64` with a clear error until then.
 - [`config/requirements.txt`](config/requirements.txt) — pinned Python deps.
 - [`config/VERSIONS.md`](config/VERSIONS.md) — pin record (host + image split).
-- `README.md` "Host prerequisites" section — manual install steps for Docker, uv, openshell. No install script.
+- `README.md` "Host prerequisites" section — manual install steps for Docker and uv. No install script.
 - `.gitignore` and [`.env.example`](.env.example) — secret-passing pattern (`docker run --env-file .env ...`) tested.
 
 **Validation gate**
-Gates 1–6 (image-side) all pass:
 - `docker build -t fortree:dev .` succeeds.
 - `docker run --rm fortree:dev python -c "import sys; print(sys.version_info[:2]); import mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken; print('ok')"` → `py (3, 11)` + `ok`.
 - `docker run --rm fortree:dev josh --version` → pinned sha256 `ef5f7ef9…`.
-- `docker run --rm fortree:dev opencode --version` → `1.14.50` (overrides base's 1.2.18).
+- `docker run --rm fortree:dev opencode --version` → `1.14.50`.
 - `docker run --rm --network=none fortree:dev python -c "print('offline')"` → `offline`.
 - `docker run --rm --env-file .env fortree:dev printenv OPENROUTER_API_KEY` returns the value.
-
-Gate 7 (OpenShell sandbox-create) **deferred to a larger-disk host**: the path A′ image satisfies OpenShell's pod-readiness contract by construction (we inherit it from NVIDIA's community base). What blocks codespace validation is purely disk. The image is 7.3 GB; pushed to the gateway compressed it's 2.0 GB; the gateway then extracts it back to ~7 GB inside k3s's containerd snapshot store. Two retry attempts on the codespace (first attempt, then a `docker system prune -af` + rebuild) both ended with the same explicit error from the gateway:
-
-```
-× ctr images import exited with code 1
-ctr: failed to extract layer (sha256:8551a3ca…)
-to overlayfs as "extract-…":
-write /var/lib/rancher/k3s/.../snapshots/70/fs/root/.local/share/claude/versions/2.1.140:
-no space left on device
-```
-
-The codespace's 32 GB partition cannot hold the fortree image + community base + cluster image + k3s extraction simultaneously. The same `openshell sandbox create --from .` should work cleanly on any host with ~50 GB+ free; on the codespace we can build and validate the image, but not run a sandbox under it. Deferred to phase 3 on a real local machine.
 
 ## Phase 2 — Scorer-only loop (no agents)
 
@@ -110,36 +99,33 @@ The codespace's 32 GB partition cannot hold the fortree image + community base +
 
 **Why before agents**: validates spec wording, acceptance numbers, netCDF→grid→CSV alignment, and the entire scoring chain with zero LLM variance. If the scorer disagrees with hand-written correct code, no agent run is interpretable.
 
-## Phase 3 — Single agent call, NO OpenShell policy yet
+## Phase 3 — Single agent call, end-to-end
 
 **Files to author**
 - [prompts/rung1_minimal.md](prompts/rung1_minimal.md) and [prompts/rung5_master.md](prompts/rung5_master.md), derived from [prompts/BASE_PROMPT.md](prompts/BASE_PROMPT.md). Rungs 2–4 deferred until pilot phase. Both include the fixed boilerplate footer (run.sh contract, CSV schema) per README's "Every prompt shares a fixed boilerplate footer".
 - [config/models.yaml](config/models.yaml) — short-name → OpenRouter ID map per the README table (claude, gemma, kimi, minimax, mistral).
-- [config/opencode.template.json](config/opencode.template.json) — rendered per run with `${OPENROUTER_API_KEY}`, `${RESOLVED_MODEL_ID}`, `${WORKSPACE}` substituted.
+- [config/opencode.template.json](config/opencode.template.json) — rendered per run with `${OPENROUTER_API_KEY}`, `${RESOLVED_MODEL_ID}`, `${WORKSPACE}` substituted. Tool palette per README: `read`, `write` (workspace-scoped), `edit` (workspace-scoped), `glob`, `grep`, `bash` (whitelist: `./run.sh`, `ls`, `cat`, `head`, `tail`, `find`, `wc`, `tree`), and `WebFetch` with an explicit host allowlist (the documentation hosts from README's network-policy table plus `openrouter.ai`).
 - [config/docs_categories.yaml](config/docs_categories.yaml) — URL→category map; used post-hoc by phase-5 manifest builder, but commit now.
-- [orchestration/launch_run.sh](orchestration/launch_run.sh) — minimal version: `docker run` the `fortree` image *without* engaging OpenShell (so it's just opencode inside a plain container). Renders opencode.json, writes into the bind-mounted workspace under `./runs/<run-id>/`. No host-side runtime install needed — everything is in the image.
+- [orchestration/launch_run.sh](orchestration/launch_run.sh) — `docker run` the `fortree` image with `--env-file .env`, bind-mounting `./runs/<run-id>/` into `/sandbox`, invoking opencode against the rendered config. Captures opencode's trajectory log to `./runs/<run-id>/trajectory.jsonl`.
 
 **Validation gate**
-- `MODEL=claude RUNG=5 TARGET=mesa RUN_ID=$(uuidgen) ./orchestration/launch_run.sh` produces a workspace containing a Mesa Python module + `run.sh`. Manual eyeball: prompt rendered, OpenRouter call succeeded, files present.
+- `MODEL=claude RUNG=5 TARGET=mesa RUN_ID=$(uuidgen) ./orchestration/launch_run.sh` produces a workspace containing a Mesa Python module + `run.sh`. Manual eyeball: prompt rendered, OpenRouter call succeeded, files present, trajectory log captured.
 - Feed that workspace to the scorer (`docker run --network=none ... fortree:latest /opt/entrypoint-scorer.sh --target mesa`); end-to-end agent→score works.
 - Repeat with `TARGET=josh` to exercise the Josh path.
 
-**Why before sandboxing**: separates auth/prompt/opencode failures from OpenShell policy failures. OpenShell debugging is harder than opencode debugging; do not compound problem surfaces.
+This is the de-risk gate: prove a single (model, rung, target) cell can be driven prompt → opencode → workspace → scorer → metric record without any sandboxing layer in the way.
 
-## Phase 4 — Single agent call, under OpenShell policy
+## Phase 4 — Observation layer and local parallelism
 
 **Files to author**
-- [config/openshell-policy.yaml](config/openshell-policy.yaml) — Landlock fs mounts (RO `/usr`, `/lib`, `/etc` *inside the container*; RW `/sandbox` workspace, plus `/tmp`); seccomp baseline; `network_policies` entries for each documentation host listed in the README's network-policy table plus `openrouter.ai`. Reference `/usr/local/bin/opencode` and `/usr/local/bin/josh` as the agent binaries.
-- [docs/INDEX.md](docs/INDEX.md) — pre-built navigation entry points to whitelisted hosts; baked into the image at a known path or bind-mounted in.
-- Update [orchestration/launch_run.sh](orchestration/launch_run.sh): the agent invocation becomes `openshell sandbox create --from fortree:latest --policy ./config/openshell-policy.yaml -- opencode run ...`. OpenShell's gateway does the `docker run` and injects the supervisor; we don't manage caps or mounts manually.
-- Capture the OpenShell access log per run; the orchestrator copies it into `./runs/<run-id>/openshell.log` after the sandbox is torn down.
+- [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf) — dnsmasq config with query logging enabled; runs as a sidecar container on a per-run docker bridge network.
+- Update [orchestration/launch_run.sh](orchestration/launch_run.sh): create a per-run docker network, start the dnsmasq sidecar, point the agent container at it via `--dns`, copy the DNS log to `./runs/<run-id>/dns.log` on teardown.
+- [orchestration/launch_batch.sh](orchestration/launch_batch.sh) — fan out N concurrent `launch_run.sh` invocations with fresh `RUN_ID`s via `xargs -P` or GNU `parallel`. Each run gets its own bridge network, sidecar, and workspace dir.
 
 **Validation gate**
-- Inside the sandbox: `touch /etc/test` fails; `touch /sandbox/scratch` succeeds.
-- `curl joshsim.org` succeeds; `curl github.com` fails; `curl openrouter.ai` succeeds.
-- Re-run the phase-3 prompt under the policy. Same workspace shape emerges. OpenShell access log captures the doc fetches with host/path detail.
-
-**Why simpler than the original arch-A phase 4**: the docker driver handles cap-add, AppArmor, supervisor placement, and policy delivery automatically. We just write the policy YAML and hand the image to the gateway.
+- A single agent run produces a non-empty `dns.log` containing the allowlisted host(s) the agent reached during code generation.
+- A deliberately-broken opencode config that lets the agent reach `stackoverflow.com` produces a `dns.log` entry for it — confirms the tripwire fires.
+- `./orchestration/launch_batch.sh --model claude --rung 5 --target josh --runs 4` runs four concurrent agent invocations to completion, each with its own isolated workspace and DNS log.
 
 ## Phase 5 — Full 5-step orchestrated run, one cell
 
@@ -148,7 +134,7 @@ The codespace's 32 GB partition cannot hold the fortree image + community base +
 - [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py) — fills the template from the step-3 JSON record. Strict: surfaces only the binary outcomes, never the acceptance numbers (README "Does not include the acceptance ranges or any new information about correctness criteria").
 - [harness/conformance.py](harness/conformance.py) — step 2 mechanical check: greps for `import mesa` / `from mesa` / Mesa base-class instantiation on Mesa runs; for Josh, looks for `*.josh` files, `*.jshd`, and `josh parse` exit zero on the produced files.
 - [harness/conformance_fuzzy.py](harness/conformance_fuzzy.py) — optional, gated by `SKIP_FUZZY_CONFORMANCE`; deferable but stub it so the manifest schema is complete.
-- [harness/docs_log.py](harness/docs_log.py) — parses the OpenShell access log into the `docs_*` metric fields per README's metrics table, joining with `config/docs_categories.yaml`.
+- [harness/docs_log.py](harness/docs_log.py) — joins opencode's trajectory log (WebFetch URLs) with the dnsmasq DNS log to produce the `docs_*` metric fields per README's metrics table, categorized via `config/docs_categories.yaml`.
 - [results/manifest.jsonl](results/manifest.jsonl) — empty, committed; the orchestrator appends per-run JSON records.
 - Update [orchestration/launch_run.sh](orchestration/launch_run.sh) to implement all five steps end-to-end and append the manifest row.
 
@@ -163,27 +149,28 @@ The codespace's 32 GB partition cannot hold the fortree image + community base +
 The plan is complete when:
 - `./orchestration/launch_run.sh` runs to completion for at least three cells: (claude, rung5, mesa), (claude, rung5, josh), and a recovery-triggering (claude, rung1, mesa).
 - Each writes a manifest row with all metric fields populated.
-- All artifacts (workspace, opencode trajectory log, OpenShell access log, scorer JSON, manifest row) are recoverable post-hoc from `./runs/<run-id>/`.
+- All artifacts (workspace, opencode trajectory log, dnsmasq DNS log, scorer JSON, manifest row) are recoverable post-hoc from `./runs/<run-id>/`.
 - The reference implementations under `reference/{josh,mesa}/` still pass scoring (regression check that no harness change broke the scorer).
 
 ## Critical files to be created (summary)
 
-Phase 1: [Dockerfile](Dockerfile), [scripts/install_josh.sh](scripts/install_josh.sh), [scripts/install_opencode.sh](scripts/install_opencode.sh), [entrypoint-scorer.sh](entrypoint-scorer.sh), [config/requirements.txt](config/requirements.txt), [config/VERSIONS.md](config/VERSIONS.md), `.env`, `.gitignore`, README "Host prerequisites" section.
+Phase 1: [Dockerfile](Dockerfile), [scripts/install_josh.sh](scripts/install_josh.sh), [entrypoint-scorer.sh](entrypoint-scorer.sh), [config/requirements.txt](config/requirements.txt), [config/VERSIONS.md](config/VERSIONS.md), `.env`, `.gitignore`, README "Host prerequisites" section.
 
 Phase 2: [spec/ForeverTree.md](spec/ForeverTree.md), [spec/acceptance_ranges.json](spec/acceptance_ranges.json), [spec/harness_contract.md](spec/harness_contract.md), [spec/environment_sidecar.md](spec/environment_sidecar.md), [harness/run_metrics.py](harness/run_metrics.py), [harness/runners/josh_runner.py](harness/runners/josh_runner.py), [harness/runners/mesa_runner.py](harness/runners/mesa_runner.py), [harness/validators/output_schema.py](harness/validators/output_schema.py), [harness/validators/acceptance.py](harness/validators/acceptance.py), [harness/loc.py](harness/loc.py), [harness/entropy.py](harness/entropy.py), `reference/josh/`, `reference/mesa/`.
 
 Phase 3: [prompts/rung1_minimal.md](prompts/rung1_minimal.md), [prompts/rung5_master.md](prompts/rung5_master.md), [config/models.yaml](config/models.yaml), [config/opencode.template.json](config/opencode.template.json), [config/docs_categories.yaml](config/docs_categories.yaml), [orchestration/launch_run.sh](orchestration/launch_run.sh).
 
-Phase 4: [config/openshell-policy.yaml](config/openshell-policy.yaml), [docs/INDEX.md](docs/INDEX.md), updates to [orchestration/launch_run.sh](orchestration/launch_run.sh).
+Phase 4: [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf), [orchestration/launch_batch.sh](orchestration/launch_batch.sh), updates to [orchestration/launch_run.sh](orchestration/launch_run.sh).
 
 Phase 5: [prompts/recovery_template.md](prompts/recovery_template.md), [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py), [harness/conformance.py](harness/conformance.py), [harness/conformance_fuzzy.py](harness/conformance_fuzzy.py), [harness/docs_log.py](harness/docs_log.py), [results/manifest.jsonl](results/manifest.jsonl).
 
 ## Deferred to subsequent plans (explicitly out of scope)
 
 - Prompt rungs 2–4 (write during the pilot phase, after rung1+rung5 prove the template).
-- `orchestration/launch_batch.sh`, `orchestration/collect_results.py` (pilot tooling).
+- `orchestration/collect_results.py` (pilot tooling).
+- Hard-layer egress enforcement (OpenShell policy, mitmproxy, or equivalent). Phases 1–5 rely on opencode's tool allowlists plus the dnsmasq tripwire.
 - [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) and [LICENSE](LICENSE) — referenced by README but not on the critical path for phases 1–5.
-- The headline 150-generation sweep — needs off-host infra, post-pilot prompt freeze, and a tagged batch.
+- The headline 150-generation sweep — needs post-pilot prompt freeze and a tagged batch.
 
 ## Open items the user owns
 
