@@ -1,0 +1,18 @@
+{
+  "schema_version": "phase2-v1",
+  "target_year": 2034,
+
+  "_note_target_year": "Simulation runs years 2024 through 2034 inclusive (11 output rows per cell). 'Year 10' is the eleventh row, calendar year 2034. Phase-2b's validator filters the CSV to year == target_year and computes the metrics below.",
+
+  "height_year10": {
+    "_metric": "Mean (across all cells) of meanHeight column at year == target_year.",
+    "lo_m": 0,
+    "hi_m": 11
+  },
+
+  "occupancy_year10": {
+    "_metric": "Mean tree count per cell at year == target_year.",
+    "lo_count": 9.9,
+    "hi_count": 10.1
+  }
+}
