@@ -1,6 +1,12 @@
 # Experimental design — ForeverTree LLM Experiments
 
-The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the running list of unresolved methodological questions, see [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md).
+The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the running list of unresolved methodological questions, see [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) *(planned)*; for build status see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+
+> **Status (phase 1 complete).** This document describes the full
+> experimental design as a forward-looking spec. The image and host
+> setup are built; the prompt rungs, scoring harness, sandbox policy,
+> orchestration, and per-run manifests are still to come. Sections
+> below describe the target shape unless noted otherwise.
 
 This is the AI-evaluation experiment reported in our USRSE'26 submission on the [Josh][josh] vegetation modeling platform.
 
@@ -48,13 +54,28 @@ itself has to own:
   Policy-driven network filtering, Landlock-enforced filesystem
   isolation, an unprivileged process namespace, and a logging proxy
   with host- and path-level matching. opencode is a first-class
-  supported agent. Alpha software, pinned by version.
+  supported agent. Alpha software, pinned by version. We use
+  OpenShell's [docker compute driver][openshell-docker] so the agent
+  container is the same image we use for scoring — no env drift
+  between agent and scorer.
 - **[opencode][opencode]** runs the agent inside the sandbox.
-  `opencode run` is invoked non-interactively per phase.
+  `opencode run` is invoked non-interactively per phase. It is
+  installed into our image (via npm, layered on top of the community
+  sandbox base) rather than installed on the host.
 - **[OpenRouter][or]** is the inference gateway. A single API key
   covers the model panel; the OpenRouter slug pins the model.
 
+The image inherits the OpenShell-Community [base sandbox
+image][openshell-base] (pinned by tag) so that NVIDIA's supervisor
+readiness contract (users, sshd, network tooling, etc.) is satisfied
+by construction, and layers on Java 17, the Josh CLI, the pinned
+Python 3.11 scientific stack, and an opencode version override. See
+[`config/VERSIONS.md`](config/VERSIONS.md) for what's pinned where,
+and [`Dockerfile`](Dockerfile) for the layering.
+
 [openshell]: https://docs.nvidia.com/openshell/
+[openshell-docker]: https://docs.nvidia.com/openshell/latest/reference/sandbox-compute-drivers#docker-driver
+[openshell-base]: https://github.com/NVIDIA/OpenShell-Community/tree/main/sandboxes/base
 [opencode]: https://opencode.ai/
 [or]: https://openrouter.ai/
 
@@ -136,14 +157,17 @@ of five orchestrated steps spanning two opencode invocations inside
 a single OpenShell sandbox, plus two validation passes by a separate
 scoring container.
 
-The sandbox is created with `openshell sandbox create --policy
-./config/openshell-policy.yaml` at step 1 and kept alive across
-steps 1–5 so that step 4's recovery prompt sees step 1's
-workspace. It is torn down after step 5.
+The sandbox is created with `openshell sandbox create --from
+fortree:latest --policy ./config/openshell-policy.yaml` at step 1 (the
+docker driver pulls our pinned image) and kept alive across steps 1–5
+so that step 4's recovery prompt sees step 1's workspace. It is torn
+down after step 5.
 
-The scoring container (`fortree-scorer`) is plain Docker — it does
-not use OpenShell. It runs with `--network=none` and a read-only
-mount of the sandbox workspace.
+The scoring container runs the **same** `fortree` image under plain
+Docker — no OpenShell, `--network=none`, read-only mount of the
+sandbox workspace. Using one image for both roles guarantees the agent's
+`./run.sh` and the scoring re-run see byte-identical Python, Java, Josh,
+and library versions.
 
 ### Step 1: Initial prompt
 
@@ -204,9 +228,9 @@ populated post-hoc.
 
 ### Step 3: Validation (one-shot scoring)
 
-The orchestrator starts `fortree-scorer` against the workspace
-volume, mounted read-only except for a writable `./results/`
-directory. The scoring harness
+The orchestrator starts a plain `docker run --network=none` of the
+`fortree` image against the workspace volume, mounted read-only
+except for a writable `./results/` directory. The scoring harness
 ([`harness/run_metrics.py`](harness/run_metrics.py)) runs:
 
 - Invoke `./run.sh` with the standard input data. Capture exit
@@ -326,16 +350,19 @@ after experiments begin.** Git history is the audit trail.
 
 ## Sandbox policy
 
-All agent-phase isolation lives in a single OpenShell policy file at
-[`config/openshell-policy.yaml`](config/openshell-policy.yaml). The
-policy pins three concerns:
+All agent-phase isolation will live in a single OpenShell policy file
+at [`config/openshell-policy.yaml`](config/openshell-policy.yaml)
+*(planned, phase 4)*. The policy pins three concerns:
 
 - **Filesystem isolation** via Landlock. Read-only mounts of `/usr`,
-  `/lib`, `/etc`; read-write access only to `/workspaces/josh-llm-experiment` (the agent
-  workspace) and `/tmp`.
-- **Process isolation.** The agent runs as an unprivileged
-  `sandbox` user/group. Root is rejected by OpenShell on principle.
-  Seccomp filters block dangerous syscalls automatically.
+  `/lib`, `/etc` (inside the container); read-write access only to
+  `/sandbox` (the agent workspace) and `/tmp`.
+- **Process isolation.** The agent runs as the unprivileged
+  `sandbox` user/group that the community-base image creates. The
+  OpenShell supervisor runs as root inside the container to set up
+  namespaces, Landlock, and seccomp, then drops privileges into
+  `sandbox` before launching opencode. Seccomp filters block
+  dangerous syscalls automatically.
 - **Network policy.** All outbound traffic from the sandbox is
   forced through OpenShell's gateway proxy, which auto-detects TLS
   and applies host- and path-level matching from the policy.
@@ -345,16 +372,21 @@ both committed to Git and frozen for the headline experiment.
 
 ### Pre-installed environment
 
-Pinned at sandbox image build time. No `pip install`, no
-`apt-get install` during the agent phase:
+Pinned at image build time in [`Dockerfile`](Dockerfile) and
+[`config/requirements.txt`](config/requirements.txt). No `pip install`,
+no `apt-get install` during the agent phase:
 
 - Python 3.11 with pinned versions of: mesa, numpy, pandas, scipy,
-  xarray, netCDF4, rasterio.
-- OpenJDK 17.
-- The Josh CLI at a pinned version.
+  xarray, netCDF4, rasterio, tiktoken — installed into
+  `/opt/fortree-venv` since the inherited community-base image's
+  default Python is 3.12.
+- Eclipse Temurin / OpenJDK 17.
+- The Josh CLI as a wrapper around `joshsim-fat.jar`, sha256-pinned
+  at build time (SchmidtDSE/josh has no tagged releases).
+- opencode 1.14.50 (overrides the community-base default of 1.2.18
+  via `npm install -g`).
 
-Exact versions in [`config/requirements.txt`](config/requirements.txt)
-and the sandbox image definition.
+Exact pins in [`config/VERSIONS.md`](config/VERSIONS.md).
 
 ### Network policy: doc access
 
