@@ -1,0 +1,9 @@
+.claude
+.env
+.env.local
+
+runs/
+results/manifest.jsonl.tmp
+*.pyc
+__pycache__/
+.DS_Store
