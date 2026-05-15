@@ -74,9 +74,8 @@ Landed on `phase-1-env-bootstrap` (PR #2 → `dev`).
 ## Phase 2 — Scorer-only loop (no agents)
 
 **Config files to author**
-- [harness/CONTRACT.md](harness/CONTRACT.md) — defines what generated code must produce: `./run.sh`, `./output/results.csv` columns (`cell_id, lat, lon, year, meanAge, meanHeight, temperature, precipitation`), units, schema. Harness-internal; not shown to the agent. The agent sees [prompts/environment_sidecar.md](prompts/environment_sidecar.md), which carries the same contract in agent-facing form.
+- [prompts/SIDECAR.md](prompts/SIDECAR.md) — the boilerplate footer appended to every rung's prompt. Carries the runtime env description, the external-input data file paths/units, and the `./run.sh` + `./output/results.csv` contract in agent-facing prose. This is the single source of truth for the contract; the harness validator code (phase 2b) enforces what it describes.
 - [harness/acceptance_ranges.json](harness/acceptance_ranges.json) — **user authors before this phase begins.** Read by `harness/validators/acceptance.py`.
-- [prompts/environment_sidecar.md](prompts/environment_sidecar.md) — the boilerplate footer appended to every rung's prompt. Carries the runtime env description, the external-input data file paths/units, and the CSV output contract in agent-facing prose.
 
 **Harness code to author**
 - [harness/run_metrics.py](harness/run_metrics.py) — top-level scorer entry point; invokes runner, validators, computes loc + entropy, emits JSON record.
@@ -156,7 +155,7 @@ The plan is complete when:
 
 Phase 1: [Dockerfile](Dockerfile), [scripts/install_josh.sh](scripts/install_josh.sh), [entrypoint-scorer.sh](entrypoint-scorer.sh), [config/requirements.txt](config/requirements.txt), [config/VERSIONS.md](config/VERSIONS.md), `.env`, `.gitignore`, README "Host prerequisites" section.
 
-Phase 2: [prompts/environment_sidecar.md](prompts/environment_sidecar.md), [harness/CONTRACT.md](harness/CONTRACT.md), [harness/acceptance_ranges.json](harness/acceptance_ranges.json), [harness/run_metrics.py](harness/run_metrics.py), [harness/runner.py](harness/runner.py), [harness/validators/output_schema.py](harness/validators/output_schema.py), [harness/validators/acceptance.py](harness/validators/acceptance.py), [harness/loc.py](harness/loc.py), [harness/entropy.py](harness/entropy.py), [harness/_files.py](harness/_files.py), `reference/josh/`, `reference/mesa/`.
+Phase 2: [prompts/SIDECAR.md](prompts/SIDECAR.md), [harness/acceptance_ranges.json](harness/acceptance_ranges.json), [harness/run_metrics.py](harness/run_metrics.py), [harness/runner.py](harness/runner.py), [harness/validators/output_schema.py](harness/validators/output_schema.py), [harness/validators/acceptance.py](harness/validators/acceptance.py), [harness/loc.py](harness/loc.py), [harness/entropy.py](harness/entropy.py), [harness/_files.py](harness/_files.py), `reference/josh/`, `reference/mesa/`.
 
 Phase 3: [prompts/rung1_minimal.md](prompts/rung1_minimal.md), [prompts/rung5_master.md](prompts/rung5_master.md), [config/models.yaml](config/models.yaml), [config/opencode.template.json](config/opencode.template.json), [config/docs_categories.yaml](config/docs_categories.yaml), [orchestration/launch_run.sh](orchestration/launch_run.sh).
 

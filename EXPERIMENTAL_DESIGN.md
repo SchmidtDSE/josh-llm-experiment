@@ -38,7 +38,7 @@ temperature and precipitation data with a quadratic temperature
 response, a logistic precipitation response, and a small Gaussian
 multiplicative noise term. Full specification in
 [`prompts/BASE_PROMPT.md`](prompts/BASE_PROMPT.md) (the rung-5 master)
-plus the boilerplate footer at [`prompts/environment_sidecar.md`](prompts/environment_sidecar.md).
+plus the boilerplate footer at [`prompts/SIDECAR.md`](prompts/SIDECAR.md).
 
 ForeverTree was chosen because it is small enough to be tractable for
 small models, includes external geospatial data (which exercises the

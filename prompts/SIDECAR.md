@@ -1,6 +1,6 @@
-# Environment sidecar — appended to every rung's prompt
+# Sidecar — appended to every rung's prompt
 
-This text describes the runtime environment your code runs in and the file contract your output must satisfy. It is the fixed boilerplate footer attached to every rung.
+This text describes the runtime environment your code runs in, the external inputs available, and the file contract your output must satisfy. It is the fixed boilerplate footer attached to every rung.
 
 ---
 
