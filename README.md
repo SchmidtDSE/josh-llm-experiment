@@ -533,15 +533,29 @@ left in the workspace.
 
 ### Prerequisites
 
-```sh
-# Pinned OpenShell version. Treat upgrades as breaking; rerun the
-# experiment from scratch.
-uv tool install openshell==<pinned-version>
+The host needs Docker, [uv][uv], and a pinned OpenShell. The harness uses
+OpenShell's [docker compute driver][openshell-docker] so the agent runs
+inside our own image — the same image the scorer uses, no env drift
+between them. Install each manually:
 
-# Build the sandbox base image and the scoring image.
-docker build -f Dockerfile.sandbox -t fortree-sandbox .
-docker build -f Dockerfile.scorer  -t fortree-scorer  .
+```sh
+# 1. Docker daemon (system-specific).
+#    https://docs.docker.com/engine/install/
+
+# 2. uv — Astral's single-binary Python tool installer.
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 3. OpenShell (pinned). Treat upgrades as breaking; rerun the
+#    experiment from scratch.
+uv tool install openshell==0.0.36
+
+# 4. Build the unified fortree image. Used both as the agent sandbox
+#    base (via openshell sandbox create --from) and as the scorer.
+docker build -t fortree:latest .
 ```
+
+[uv]: https://docs.astral.sh/uv/
+[openshell-docker]: https://docs.nvidia.com/openshell/latest/reference/sandbox-compute-drivers#docker-driver
 
 ### One-off local run
 

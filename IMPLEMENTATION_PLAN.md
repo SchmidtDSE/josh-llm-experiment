@@ -8,24 +8,37 @@ We will stair-step the build so that each phase produces a demonstrable artifact
 
 ## Architecture
 
-Two execution surfaces, wired together by a bash orchestrator:
+One Docker image, used two ways, wired together by a bash orchestrator:
 
 ```
-host ── openshell + opencode + uv  ── agent phase
-   │    (plus phase-3 runtime:        (writes ./runs/<run-id>/)
-   │     Python 3.11, JDK 17, Josh,
-   │     scientific deps)
-   │
-   └─── docker run --network=none ── scoring phase
-        fortree-scorer image          (validates output, scores)
+host:
+├── docker daemon
+├── uv (manual install per README)
+└── openshell CLI + gateway (uv tool install openshell)
+
+fortree image (Dockerfile):
+├── Python 3.11 + scientific stack (mesa, numpy, pandas, scipy,
+│                                   xarray, netCDF4, rasterio, tiktoken)
+├── OpenJDK 17 (distro openjdk-17-jre-headless)
+├── /usr/local/bin/josh             ← wrapper around joshsim-fat.jar
+├── /usr/local/bin/opencode         ← pinned agent binary
+├── /opt/entrypoint-scorer.sh       ← invoked in scorer mode
+└── (later phases) /opt/harness/    ← scoring code
+
+invocation modes:
+- sandbox:  openshell sandbox create --from fortree:<tag> -- opencode ...
+            (gateway bind-mounts the supervisor binary in;
+             supervisor enforces Landlock + seccomp + egress proxy + OCSF logs)
+- scorer:   docker run --rm --network=none
+              -v ./runs/<run-id>:/sandbox
+              fortree:<tag> /opt/entrypoint-scorer.sh --target <josh|mesa>
 ```
 
-- **Host** — OpenShell, opencode, and uv are installed directly. OpenShell is the agent sandbox boundary (Landlock + namespace + seccomp + network proxy); it runs on the host because that is what it is for. From phase 3 onward, the host also carries the agent-runtime layer (Python 3.11, JDK 17, Josh CLI, scientific deps) — the policy file makes those tools visible to the sandboxed agent process.
-- **Scorer Docker image** — `python:3.11-slim-bookworm` + distro `openjdk-17` + Josh CLI + the same scientific deps the host has. Runs with `--network=none` and a read-only mount of the agent's workspace. Self-contained, independent of host versions. The scorer is the *only* Docker artifact.
+The OpenShell [docker compute driver](https://docs.nvidia.com/openshell/latest/reference/sandbox-compute-drivers#docker-driver) is the key piece: it lets us BYO image instead of using OpenShell's community sandbox base. The supervisor still runs inside the container and enforces every protection layer OpenShell normally would — the docker driver is a *compute backend* choice, not a security relaxation.
 
-Decisions already made:
-- **Version pins.** README's Python 3.11 / OpenJDK 17 / `openshell==0.0.36` / `opencode==1.14.50` pins hold on both the host and the scorer image; see [config/VERSIONS.md](config/VERSIONS.md).
-- **Sandbox.** OpenShell on host, no Docker around it. Wrapping a sandbox in a sandbox added cap-add complexity for no security gain.
+Decisions:
+- **Version pins.** Python 3.11 / OpenJDK 17 inside the image; `openshell==0.0.36` on the host; `opencode==1.14.50` inside the image. See [config/VERSIONS.md](config/VERSIONS.md).
+- **Single image, no host-side runtime install.** Python, Java, Josh, scientific deps, opencode all in the image. The host only needs Docker, uv, openshell.
 - **Acceptance ranges.** User authors [spec/acceptance_ranges.json](spec/acceptance_ranges.json) themselves and commits before any agent runs.
 
 ## Branching workflow
@@ -39,22 +52,26 @@ Decisions already made:
 Landed on `phase-1-env-bootstrap` (PR #2 → `dev`).
 
 **What's in the repo**
-- [`scripts/install-host.sh`](scripts/install-host.sh) — installs `uv`, `openshell==0.0.36`, `opencode==1.14.50` on the host (one-time per machine). Idempotent; safe to re-run.
-- [`Dockerfile.scorer`](Dockerfile.scorer) — `python:3.11-slim-bookworm` + distro `openjdk-17-jre-headless` + pinned scientific stack + Josh CLI wrapper (around the prod fat jar at `https://joshsim.org/dist/main/joshsim-fat.jar`, sha256 pinned at build time).
-- [`config/requirements.txt`](config/requirements.txt) — pinned Python deps (mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken).
-- [`config/VERSIONS.md`](config/VERSIONS.md) — pin record for everything, host-side and image-side.
+- [`Dockerfile`](Dockerfile) — unified image. `python:3.11-slim-bookworm` + distro `openjdk-17-jre-headless` + Josh CLI + pinned scientific stack + opencode 1.14.50 + scorer entrypoint stub. Build: `docker build -t fortree:latest .`.
+- [`scripts/install_josh.sh`](scripts/install_josh.sh) — downloads the prod fat jar, records its sha256, drops the `/usr/local/bin/josh` wrapper. Invoked from the Dockerfile but callable standalone.
+- [`scripts/install_opencode.sh`](scripts/install_opencode.sh) — pinned opencode install via the upstream installer, symlinked into `/usr/local/bin/opencode`.
 - [`entrypoint-scorer.sh`](entrypoint-scorer.sh) — stub that defers to `harness/run_metrics.py` (lands in phase 2); exits `64` with a clear error until then.
+- [`config/requirements.txt`](config/requirements.txt) — pinned Python deps.
+- [`config/VERSIONS.md`](config/VERSIONS.md) — pin record (host + image split).
+- `README.md` "Host prerequisites" section — manual install steps for Docker, uv, openshell. No install script.
 - `.gitignore` and [`.env.example`](.env.example) — secret-passing pattern (`docker run --env-file .env ...`) tested.
 
 **Validation gate (passed)**
-- `./scripts/install-host.sh` runs to completion; `uv --version`, `openshell --version`, `opencode --version` return pinned values.
-- `docker build -f Dockerfile.scorer -t fortree-scorer .` succeeds.
-- `docker run --rm fortree-scorer python -c "import mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken; print('ok')"` → `ok`.
-- `docker run --rm fortree-scorer josh --version` → pinned sha256 `ef5f7ef9…`.
-- `docker run --rm --network=none fortree-scorer python -c "print('offline')"` → `offline` (scorer's production posture).
-- `docker run --rm --env-file .env fortree-scorer printenv OPENROUTER_API_KEY` returns the value.
+- `docker build -t fortree:latest .` succeeds.
+- `docker run --rm fortree:latest python -c "import mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken; print('ok')"` → `ok`.
+- `docker run --rm fortree:latest josh --version` → pinned sha256 `ef5f7ef9…`.
+- `docker run --rm fortree:latest opencode --version` → `1.14.50`.
+- `docker run --rm --network=none fortree:latest python -c "print('offline')"` → `offline`.
+- `docker run --rm --env-file .env fortree:latest printenv OPENROUTER_API_KEY` returns the value.
+- `openshell gateway start --plaintext --port 18080` deploys a local gateway on the codespace (k3s-backed).
+- `openshell sandbox create --from . --name test --auto-providers -- josh --version` builds our Dockerfile, pushes the resulting image to the gateway, and allocates a sandbox slot — image-side flow is correct.
 
-**Open from this phase**: VS Code IDE flagged a high-severity vulnerability somewhere in the scorer image's transitive deps; suggest running `trivy image fortree-scorer` before merge. Not blocking.
+**Partial validation, deferred to phase 3**: with `openshell` 0.0.36 the CLI's `gateway start` deploys a **k3s-based** gateway, not the docker-driver gateway described in NVIDIA's reference docs (the docker-driver wiring lives in `openshell-gateway` which is not shipped in the pypi distribution). Under k3s, sandbox provisioning waits for a pod-readiness contract our minimal image doesn't satisfy yet (community base ships sshd + specific user setup; ours doesn't). The image is valid as a Docker image; we'll resolve the sandbox-readiness gap in phase 3 by either (a) layering on the community-base structure or (b) building `openshell-gateway` directly from source to use the documented docker driver. Either approach reuses the image we just built; nothing about the image needs to change.
 
 ## Phase 2 — Scorer-only loop (no agents)
 
@@ -78,43 +95,42 @@ Landed on `phase-1-env-bootstrap` (PR #2 → `dev`).
 - Default authorship: Claude writes both in the execution session unless the user objects.
 
 **Validation gate**
-- `docker run --rm --network=none -v reference/mesa:/sandbox fortree-scorer /opt/entrypoint-scorer.sh --target mesa` → `did_run=true`, height/occupancy in range.
+- `docker run --rm --network=none -v reference/mesa:/sandbox fortree:latest /opt/entrypoint-scorer.sh --target mesa` → `did_run=true`, height/occupancy in range.
 - Same for `reference/josh` (with `--target josh`).
 - Deliberately broken variants (wrong CSV schema, NaN heights, missing years, NaN-only precip) flip the expected bool flags. The scorer is the system under test here, not the references.
 
 **Why before agents**: validates spec wording, acceptance numbers, netCDF→grid→CSV alignment, and the entire scoring chain with zero LLM variance. If the scorer disagrees with hand-written correct code, no agent run is interpretable.
 
-## Phase 3 — Single agent call, NO sandbox
+## Phase 3 — Single agent call, NO OpenShell policy yet
 
 **Files to author**
 - [prompts/rung1_minimal.md](prompts/rung1_minimal.md) and [prompts/rung5_master.md](prompts/rung5_master.md), derived from [prompts/BASE_PROMPT.md](prompts/BASE_PROMPT.md). Rungs 2–4 deferred until pilot phase. Both include the fixed boilerplate footer (run.sh contract, CSV schema) per README's "Every prompt shares a fixed boilerplate footer".
 - [config/models.yaml](config/models.yaml) — short-name → OpenRouter ID map per the README table (claude, gemma, kimi, minimax, mistral).
 - [config/opencode.template.json](config/opencode.template.json) — rendered per run with `${OPENROUTER_API_KEY}`, `${RESOLVED_MODEL_ID}`, `${WORKSPACE}` substituted.
 - [config/docs_categories.yaml](config/docs_categories.yaml) — URL→category map; used post-hoc by phase-5 manifest builder, but commit now.
-- Extend [scripts/install-host.sh](scripts/install-host.sh) with the agent-runtime layer: Python 3.11, OpenJDK 17 (Adoptium Temurin), Josh CLI, scientific deps pinned to match the scorer image. This is what the agent's `./run.sh` will execute against during the agent phase.
-- [orchestration/launch_run.sh](orchestration/launch_run.sh) — minimal version: invokes `opencode run` on the host *without* engaging OpenShell yet. Renders opencode.json, writes the agent's workspace under `./runs/<run-id>/`. No Docker on the agent side; Docker is invoked only for the scorer.
+- [orchestration/launch_run.sh](orchestration/launch_run.sh) — minimal version: `docker run` the `fortree` image *without* engaging OpenShell (so it's just opencode inside a plain container). Renders opencode.json, writes into the bind-mounted workspace under `./runs/<run-id>/`. No host-side runtime install needed — everything is in the image.
 
 **Validation gate**
 - `MODEL=claude RUNG=5 TARGET=mesa RUN_ID=$(uuidgen) ./orchestration/launch_run.sh` produces a workspace containing a Mesa Python module + `run.sh`. Manual eyeball: prompt rendered, OpenRouter call succeeded, files present.
-- Feed that workspace to `fortree-scorer` from phase 2; end-to-end agent→score works.
+- Feed that workspace to the scorer (`docker run --network=none ... fortree:latest /opt/entrypoint-scorer.sh --target mesa`); end-to-end agent→score works.
 - Repeat with `TARGET=josh` to exercise the Josh path.
 
-**Why before sandboxing**: separates auth/prompt/opencode failures from OpenShell failures. OpenShell debugging is much harder; do not compound problem surfaces.
+**Why before sandboxing**: separates auth/prompt/opencode failures from OpenShell policy failures. OpenShell debugging is harder than opencode debugging; do not compound problem surfaces.
 
-## Phase 4 — Single agent call, INSIDE OpenShell sandbox
+## Phase 4 — Single agent call, under OpenShell policy
 
 **Files to author**
-- [config/openshell-policy.yaml](config/openshell-policy.yaml) — Landlock fs mounts (RO `/usr`, `/lib`, `/etc` on the host; RW `./runs/<run-id>/` as the agent workspace, plus `/tmp`); unprivileged sandbox user; seccomp baseline; `network_policies` entries for each documentation host listed in the README's network-policy table plus `openrouter.ai`.
-- [docs/INDEX.md](docs/INDEX.md) — pre-built navigation entry points to whitelisted hosts; exposed RO via the policy.
-- Update [orchestration/launch_run.sh](orchestration/launch_run.sh): the agent invocation becomes `openshell sandbox create --policy ./config/openshell-policy.yaml && openshell exec -- opencode run ...`. The sandbox is created on the host, kept alive across the one-shot and recovery phases, then torn down.
-- Capture the OpenShell access log per run; the orchestrator copies it into `./runs/<run-id>/openshell.log`.
+- [config/openshell-policy.yaml](config/openshell-policy.yaml) — Landlock fs mounts (RO `/usr`, `/lib`, `/etc` *inside the container*; RW `/sandbox` workspace, plus `/tmp`); seccomp baseline; `network_policies` entries for each documentation host listed in the README's network-policy table plus `openrouter.ai`. Reference `/usr/local/bin/opencode` and `/usr/local/bin/josh` as the agent binaries.
+- [docs/INDEX.md](docs/INDEX.md) — pre-built navigation entry points to whitelisted hosts; baked into the image at a known path or bind-mounted in.
+- Update [orchestration/launch_run.sh](orchestration/launch_run.sh): the agent invocation becomes `openshell sandbox create --from fortree:latest --policy ./config/openshell-policy.yaml -- opencode run ...`. OpenShell's gateway does the `docker run` and injects the supervisor; we don't manage caps or mounts manually.
+- Capture the OpenShell access log per run; the orchestrator copies it into `./runs/<run-id>/openshell.log` after the sandbox is torn down.
 
 **Validation gate**
-- `openshell exec touch /etc/test` fails; `openshell exec touch ./runs/<run-id>/scratch` succeeds.
-- `openshell exec curl joshsim.org` succeeds; `openshell exec curl github.com` fails; `openshell exec curl openrouter.ai` succeeds.
-- Re-run the phase-3 prompt under OpenShell. Same workspace shape emerges. OpenShell access log captures the doc fetches.
+- Inside the sandbox: `touch /etc/test` fails; `touch /sandbox/scratch` succeeds.
+- `curl joshsim.org` succeeds; `curl github.com` fails; `curl openrouter.ai` succeeds.
+- Re-run the phase-3 prompt under the policy. Same workspace shape emerges. OpenShell access log captures the doc fetches with host/path detail.
 
-**Host resource note**: do not start the scorer Docker container while an OpenShell sandbox is still alive. The orchestrator tears the sandbox down before running the scorer.
+**Why simpler than the original arch-A phase 4**: the docker driver handles cap-add, AppArmor, supervisor placement, and policy delivery automatically. We just write the policy YAML and hand the image to the gateway.
 
 ## Phase 5 — Full 5-step orchestrated run, one cell
 
@@ -143,11 +159,11 @@ The plan is complete when:
 
 ## Critical files to be created (summary)
 
-Phase 1: [Dockerfile.scorer](Dockerfile.scorer), [entrypoint-scorer.sh](entrypoint-scorer.sh), [scripts/install-host.sh](scripts/install-host.sh), [config/requirements.txt](config/requirements.txt), [config/VERSIONS.md](config/VERSIONS.md), `.env`, `.gitignore`.
+Phase 1: [Dockerfile](Dockerfile), [scripts/install_josh.sh](scripts/install_josh.sh), [scripts/install_opencode.sh](scripts/install_opencode.sh), [entrypoint-scorer.sh](entrypoint-scorer.sh), [config/requirements.txt](config/requirements.txt), [config/VERSIONS.md](config/VERSIONS.md), `.env`, `.gitignore`, README "Host prerequisites" section.
 
 Phase 2: [spec/ForeverTree.md](spec/ForeverTree.md), [spec/acceptance_ranges.json](spec/acceptance_ranges.json), [spec/harness_contract.md](spec/harness_contract.md), [spec/environment_sidecar.md](spec/environment_sidecar.md), [harness/run_metrics.py](harness/run_metrics.py), [harness/runners/josh_runner.py](harness/runners/josh_runner.py), [harness/runners/mesa_runner.py](harness/runners/mesa_runner.py), [harness/validators/output_schema.py](harness/validators/output_schema.py), [harness/validators/acceptance.py](harness/validators/acceptance.py), [harness/loc.py](harness/loc.py), [harness/entropy.py](harness/entropy.py), `reference/josh/`, `reference/mesa/`.
 
-Phase 3: [prompts/rung1_minimal.md](prompts/rung1_minimal.md), [prompts/rung5_master.md](prompts/rung5_master.md), [config/models.yaml](config/models.yaml), [config/opencode.template.json](config/opencode.template.json), [config/docs_categories.yaml](config/docs_categories.yaml), [orchestration/launch_run.sh](orchestration/launch_run.sh), extensions to [scripts/install-host.sh](scripts/install-host.sh) for the agent-runtime layer.
+Phase 3: [prompts/rung1_minimal.md](prompts/rung1_minimal.md), [prompts/rung5_master.md](prompts/rung5_master.md), [config/models.yaml](config/models.yaml), [config/opencode.template.json](config/opencode.template.json), [config/docs_categories.yaml](config/docs_categories.yaml), [orchestration/launch_run.sh](orchestration/launch_run.sh).
 
 Phase 4: [config/openshell-policy.yaml](config/openshell-policy.yaml), [docs/INDEX.md](docs/INDEX.md), updates to [orchestration/launch_run.sh](orchestration/launch_run.sh).
 
