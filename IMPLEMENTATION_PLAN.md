@@ -6,14 +6,27 @@
 
 We will stair-step the build so that each phase produces a demonstrable artifact that validates the foundation for the next phase, rather than building monolithically and running once at the end. **Scope of this plan is phases 1–5 only** — env bootstrap through a single successful 5-step orchestrated run for one (model × rung × target) cell. The pilot sweep and headline sweep get their own subsequent plans, after pilot data is in hand and prompts can be frozen.
 
+## Architecture
+
+Two execution surfaces, wired together by a bash orchestrator:
+
+```
+host ── openshell + opencode + uv  ── agent phase
+   │    (plus phase-3 runtime:        (writes ./runs/<run-id>/)
+   │     Python 3.11, JDK 17, Josh,
+   │     scientific deps)
+   │
+   └─── docker run --network=none ── scoring phase
+        fortree-scorer image          (validates output, scores)
+```
+
+- **Host** — OpenShell, opencode, and uv are installed directly. OpenShell is the agent sandbox boundary (Landlock + namespace + seccomp + network proxy); it runs on the host because that is what it is for. From phase 3 onward, the host also carries the agent-runtime layer (Python 3.11, JDK 17, Josh CLI, scientific deps) — the policy file makes those tools visible to the sandboxed agent process.
+- **Scorer Docker image** — `python:3.11-slim-bookworm` + distro `openjdk-17` + Josh CLI + the same scientific deps the host has. Runs with `--network=none` and a read-only mount of the agent's workspace. Self-contained, independent of host versions. The scorer is the *only* Docker artifact.
+
 Decisions already made:
-- **Version pins.** Keep README's Python 3.11 / OpenJDK 17 on both the host (agent runtime) and the scorer image. Whatever the codespace host happens to ship is irrelevant.
-- **Sandbox.** OpenShell is the agent sandbox boundary; runs on the host. No plain-Docker fallback — block until OpenShell installs cleanly on the host. The originally proposed Docker-wrapping-OpenShell design was dropped as redundant: OpenShell already provides namespace + Landlock + seccomp isolation, and Docker on top adds caps complexity for no security gain.
+- **Version pins.** README's Python 3.11 / OpenJDK 17 / `openshell==0.0.36` / `opencode==1.14.50` pins hold on both the host and the scorer image; see [config/VERSIONS.md](config/VERSIONS.md).
+- **Sandbox.** OpenShell on host, no Docker around it. Wrapping a sandbox in a sandbox added cap-add complexity for no security gain.
 - **Acceptance ranges.** User authors [spec/acceptance_ranges.json](spec/acceptance_ranges.json) themselves and commits before any agent runs.
-- **Two execution surfaces, not one.**
-  - **Host** — OpenShell, opencode, uv, plus (from phase 3 onward) the agent-runtime layer (Python 3.11, JDK 17, Josh CLI, scientific deps). The host install script ([scripts/install-host.sh](scripts/install-host.sh)) is the install path; this replaces the earlier "everything in one container" approach.
-  - **Scorer Docker image** — `python:3.11-slim-bookworm` + JDK 17 + Josh CLI + scientific deps. Runs with `--network=none` and a read-only mount of the agent's workspace. Self-contained; independent of host versions. The scorer is the only Docker artifact.
-  - The bash orchestrator wires the two together: it calls `openshell sandbox create` on the host, runs opencode under it, then `docker run --network=none fortree-scorer` on the resulting workspace.
 
 ## Branching workflow
 
@@ -21,34 +34,27 @@ Decisions already made:
 - `dev` — integration branch. Phase feature branches PR into `dev`.
 - `phase-N-<short-name>` — one branch per phase (e.g. `phase-1-env-bootstrap`). Closes via PR into `dev` once the phase's validation gate passes.
 
-## Phase 1 — Env bootstrap
+## Phase 1 — Env bootstrap *(complete)*
 
-**Host work**
-- Confirm `docker --version` works.
-- Create `.env` containing `OPENROUTER_API_KEY=...`; add `.env` to `.gitignore`.
-- Pin and document version numbers for: opencode, openshell, Josh CLI in [config/VERSIONS.md](config/VERSIONS.md).
-- [`scripts/install-host.sh`](scripts/install-host.sh) installs `uv`, `openshell==0.0.36`, `opencode==1.14.50` on the host. Run it once per machine.
+Landed on `phase-1-env-bootstrap` (PR #2 → `dev`).
 
-**Build [Dockerfile.scorer](Dockerfile.scorer)**
-- Base: `python:3.11-slim-bookworm`.
-- Add `openjdk-17-jre-headless` from the distro repo.
-- Install pinned [config/requirements.txt](config/requirements.txt): mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken (for entropy.py).
-- Install the pinned Josh CLI (jar + wrapper script on PATH).
-- [entrypoint-scorer.sh](entrypoint-scorer.sh) dispatches to `harness/run_metrics.py`.
-- `docker build -f Dockerfile.scorer -t fortree-scorer .`.
+**What's in the repo**
+- [`scripts/install-host.sh`](scripts/install-host.sh) — installs `uv`, `openshell==0.0.36`, `opencode==1.14.50` on the host (one-time per machine). Idempotent; safe to re-run.
+- [`Dockerfile.scorer`](Dockerfile.scorer) — `python:3.11-slim-bookworm` + distro `openjdk-17-jre-headless` + pinned scientific stack + Josh CLI wrapper (around the prod fat jar at `https://joshsim.org/dist/main/joshsim-fat.jar`, sha256 pinned at build time).
+- [`config/requirements.txt`](config/requirements.txt) — pinned Python deps (mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken).
+- [`config/VERSIONS.md`](config/VERSIONS.md) — pin record for everything, host-side and image-side.
+- [`entrypoint-scorer.sh`](entrypoint-scorer.sh) — stub that defers to `harness/run_metrics.py` (lands in phase 2); exits `64` with a clear error until then.
+- `.gitignore` and [`.env.example`](.env.example) — secret-passing pattern (`docker run --env-file .env ...`) tested.
 
-The scorer is the *only* Docker artifact. There is no separate sandbox image: the agent runs directly on the host under OpenShell, which is itself the sandbox boundary. Wrapping OpenShell in Docker would double-sandbox.
-
-**Validation gate (phase 1 closes when all pass)**
-- `./scripts/install-host.sh` runs to completion on a fresh host.
-- `uv --version`, `openshell --version`, `opencode --version` all return pinned values on the host.
+**Validation gate (passed)**
+- `./scripts/install-host.sh` runs to completion; `uv --version`, `openshell --version`, `opencode --version` return pinned values.
 - `docker build -f Dockerfile.scorer -t fortree-scorer .` succeeds.
-- `docker run --rm fortree-scorer python -c "import mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken; print('ok')"` prints `ok`.
-- `docker run --rm fortree-scorer josh --version` prints the pinned sha256.
-- `docker run --rm --network=none fortree-scorer python -c "print('offline')"` confirms the scorer runs with no network — that is its production posture.
-- `.env` exists, is gitignored, and `docker run --rm --env-file .env fortree-scorer printenv OPENROUTER_API_KEY` returns a value. (This validates the secret-passing pattern phases 3+ depend on.)
+- `docker run --rm fortree-scorer python -c "import mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken; print('ok')"` → `ok`.
+- `docker run --rm fortree-scorer josh --version` → pinned sha256 `ef5f7ef9…`.
+- `docker run --rm --network=none fortree-scorer python -c "print('offline')"` → `offline` (scorer's production posture).
+- `docker run --rm --env-file .env fortree-scorer printenv OPENROUTER_API_KEY` returns the value.
 
-**Why first**: phases 2–5 all depend on either the scorer image or the host orchestration tooling. Surface install pain here, not later.
+**Open from this phase**: VS Code IDE flagged a high-severity vulnerability somewhere in the scorer image's transitive deps; suggest running `trivy image fortree-scorer` before merge. Not blocking.
 
 ## Phase 2 — Scorer-only loop (no agents)
 
@@ -72,8 +78,8 @@ The scorer is the *only* Docker artifact. There is no separate sandbox image: th
 - Default authorship: Claude writes both in the execution session unless the user objects.
 
 **Validation gate**
-- `docker run --rm -v reference/mesa:/sandbox fortree-scorer` → `did_run=true`, height/occupancy in range.
-- Same for `reference/josh`.
+- `docker run --rm --network=none -v reference/mesa:/sandbox fortree-scorer /opt/entrypoint-scorer.sh --target mesa` → `did_run=true`, height/occupancy in range.
+- Same for `reference/josh` (with `--target josh`).
 - Deliberately broken variants (wrong CSV schema, NaN heights, missing years, NaN-only precip) flip the expected bool flags. The scorer is the system under test here, not the references.
 
 **Why before agents**: validates spec wording, acceptance numbers, netCDF→grid→CSV alignment, and the entire scoring chain with zero LLM variance. If the scorer disagrees with hand-written correct code, no agent run is interpretable.
@@ -156,7 +162,6 @@ Phase 5: [prompts/recovery_template.md](prompts/recovery_template.md), [orchestr
 
 ## Open items the user owns
 
-- Provide `OPENROUTER_API_KEY`.
+- Provide `OPENROUTER_API_KEY` (used from phase 3 onward).
 - Author [spec/acceptance_ranges.json](spec/acceptance_ranges.json) before phase 3 begins (technically before any agent runs).
 - Confirm or override the default assumption that Claude authors the hand-coded `reference/josh/` and `reference/mesa/` implementations.
-- Pin the OpenShell version and Josh CLI version (Claude can propose latest-stable; user signs off).
