@@ -35,14 +35,14 @@ The model is intentionally not intended to be a realistic ecological forecast bu
 | Parameter        | Default value                                    |
 |------------------|--------------------------------------------------|
 | Patch edge length| 1 km                                             |
-| Bounding box low | 33.7° latitude, −115.4° longitude                |
-| Bounding box high| 34.0° latitude, −116.4° longitude                |
+| Bounding box low | 35.80° latitude, −119.52° longitude              |
+| Bounding box high| 36.73° latitude, −117.98° longitude              |
 
 ### Temporal domain
 
 - Each simulation step represents **one calendar year**.
 - The simulation runs from a configurable start step to a configurable end
-  step (e.g. step 0 through step 10, representing years 2025–2035).
+  step (e.g. step 0 through step 10, representing years 2024–2034).
 - The implementing engine is expected to evaluate every patch and every
   agent within a patch exactly once per step.
 
@@ -81,30 +81,6 @@ All trees start with `age` of 0 years and `height` of 0 m. However, per step, th
 - `height` increases by an amount called `newGrowth` ($\Delta h$), which depends on the climate at the tree's patch this step. See Section 5.
 
 ForeverTrees in this specification do **not** die, reproduce, or move. In other words, the population on each patch is fixed for the entire run.
-
-<br>
-
-## External Inputs
-
-Two external data sources are required. Both must provide one value per (cell, step) pair across the full spatial and temporal extent of the simulation.
-
-| Input            | Native unit       | Used as     |
-|------------------|-------------------|-------------|
-| Air temperature  | Kelvin (K)        | Drives the temperature impact on growth. |
-| Precipitation    | mm/year (see note)| Drives the precipitation impact on growth. |
-
-
-
-For this task, two netCDF files containing data from Tulare County, California via [Cal-Adapt](https://cal-adapt.org/) are provided:
-
-- data/precip_tulare_annual.nc
-- data/maxtemp_tulare_annual.nc
-
-The data comes from the FGOALS-g3 climate model under the SSP2-4.5 emissions scenario (2015-2100). The FGOALS-g3 climate model outputs report precipitation as a flux in kg m⁻² s⁻¹. Because 1 kg of water spread over 1 m² is equivalent to 1 mm of depth, the conversion to mm/year is^[31,536,000 = seconds in a 365-day year]:
-
-```
-precipitation_mm_per_year = precipitation_kgm2s * 31_536_000
-```
 
 <br>
 

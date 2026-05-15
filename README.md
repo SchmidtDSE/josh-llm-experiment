@@ -48,15 +48,16 @@ are present on the current branch.
 │   ├── precip_tulare_annual.nc
 │   └── maxtemp_tulare_annual.nc
 ├── prompts/
-│   ├── BASE_PROMPT.md            # Full ForeverTree spec (becomes rung 5 + spec/)
+│   ├── BASE_PROMPT.md            # Full ForeverTree spec (becomes rung 5)
+│   ├── SIDECAR.md                # Boilerplate footer appended to every rung
 │   ├── rung1_minimal.md          # (planned)
 │   ├── rung2_basic.md            # (planned)
 │   ├── rung3_specified.md        # (planned)
 │   ├── rung4_detailed.md         # (planned)
 │   ├── rung5_master.md           # (planned)
 │   └── recovery_template.md      # (planned)
-├── spec/                         # (planned, phase 2) — ForeverTree spec + acceptance ranges
-├── harness/                      # (planned, phase 2) — scoring entry point + runners + validators
+├── harness/                      # acceptance_ranges.json today;
+│                                 # scoring entry point + runners + validators planned, phase 2b
 ├── orchestration/                # (planned, phase 3+) — launch_run.sh, launch_batch.sh, dnsmasq.conf
 └── results/                      # (planned, phase 5) — per-run JSON manifests
 ```

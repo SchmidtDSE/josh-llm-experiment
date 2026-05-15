@@ -19,10 +19,6 @@ cat "$JOSH_HOME/joshsim-fat.jar.sha256"
 cat > /usr/local/bin/josh <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-v" ]; then
-  cat /opt/josh/joshsim-fat.jar.sha256
-  exit 0
-fi
 exec java -jar /opt/josh/joshsim-fat.jar "$@"
 WRAPPER
 chmod +x /usr/local/bin/josh
