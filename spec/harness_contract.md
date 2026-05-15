@@ -1,6 +1,6 @@
 # Harness contract — what generated code must produce
 
-The scoring harness invokes generated code through a fixed contract. Both reference implementations and agent-generated code adhere to it; deviations are caught by [harness/validators/output_schema.py](../harness/validators/output_schema.py) *(planned, phase 2b)* and surfaced as `csv_schema_ok=false` in the scorer's JSON record.
+> **This file is consumed by the harness for validation. It is NOT shown to the agent under any rung.** The agent-facing version of the output contract lives in [prompts/environment_sidecar.md](../prompts/environment_sidecar.md). The two must stay in sync on column names, types, units, and the eleven-year row count.
 
 ## Workspace layout
 
@@ -9,7 +9,7 @@ At the moment the scorer runs, the workspace at `/sandbox` looks like:
 ```
 /sandbox/
 ├── run.sh                              # generated; executable
-├── <generated source files>            # .py and/or .josh + .jshd
+├── <generated source files>            # whatever the implementation requires
 ├── data/
 │   ├── precip_tulare_annual.nc         # mounted by the orchestrator
 │   └── maxtemp_tulare_annual.nc        # mounted by the orchestrator
@@ -44,10 +44,6 @@ UTF-8, comma-separated, header row required. One row per (cell, simulation year)
 ## Simulation duration
 
 Ten growth steps covering eleven years inclusive: **2024 through 2034**. Eleven rows per cell, one per year (the year-0 row records the initial state at age 0 / height 0 / step-0 climate; subsequent rows record state after each growth step).
-
-## Grid
-
-The orchestrator passes in the two netCDF files at `./data/`; the implementation derives the grid from the data extent intersected with the BBox specified in the [spec](ForeverTree.md). The actual data covers `lat [35.80°, 36.73°]`, `lon [−119.52°, −117.98°]` — full Tulare County coverage at the BBox in the spec.
 
 ## What "success" means
 

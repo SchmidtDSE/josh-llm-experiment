@@ -84,30 +84,6 @@ ForeverTrees in this specification do **not** die, reproduce, or move. In other 
 
 <br>
 
-## External Inputs
-
-Two external data sources are required. Both must provide one value per (cell, step) pair across the full spatial and temporal extent of the simulation.
-
-| Input            | Native unit       | Used as     |
-|------------------|-------------------|-------------|
-| Air temperature  | Kelvin (K)        | Drives the temperature impact on growth. |
-| Precipitation    | mm/year (see note)| Drives the precipitation impact on growth. |
-
-
-
-For this task, two netCDF files containing data from Tulare County, California via [Cal-Adapt](https://cal-adapt.org/) are provided:
-
-- data/precip_tulare_annual.nc
-- data/maxtemp_tulare_annual.nc
-
-The data comes from the FGOALS-g3 climate model under the SSP2-4.5 emissions scenario (2015-2100). The FGOALS-g3 climate model outputs report precipitation as a flux in kg m⁻² s⁻¹. Because 1 kg of water spread over 1 m² is equivalent to 1 mm of depth, the conversion to mm/year is^[31,536,000 = seconds in a 365-day year]:
-
-```
-precipitation_mm_per_year = precipitation_kgm2s * 31_536_000
-```
-
-<br>
-
 ## Growth Model
 
 For each tree, each step, the height ($h$) is:
