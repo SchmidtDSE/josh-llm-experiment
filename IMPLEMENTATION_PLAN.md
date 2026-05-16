@@ -149,9 +149,11 @@ Validation gates:
 
 This is the de-risk gate: prove a single (model, rung, target) cell can be driven prompt → opencode → workspace → scorer → metric record without any sandboxing layer in the way.
 
-## Phase 4 — Observation layer, local parallelism, durable artifact upload
+## Phase 4 — Observation layer, local parallelism, durable upload, CI + local-LLM path
 
 **Files to author**
+
+*Observation + parallelism + upload (as before)*
 - [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf) — dnsmasq config with query logging enabled; runs as a sidecar container on a per-run docker bridge network.
 - Update [orchestration/launch_run.sh](orchestration/launch_run.sh): create a per-run docker network, start the dnsmasq sidecar, point the agent container at it via `--dns`, copy the DNS log to `./runs/<run-id>/dns.log` on teardown. **Also**: after the scorer step, invoke `orchestration/upload_run.sh` to archive the run dir.
 - [orchestration/launch_batch.sh](orchestration/launch_batch.sh) — fan out N concurrent `launch_run.sh` invocations with fresh `RUN_ID`s via `xargs -P` or GNU `parallel`. Each run gets its own bridge network, sidecar, and workspace dir.
@@ -160,12 +162,27 @@ This is the de-risk gate: prove a single (model, rung, target) cell can be drive
 - [config/VERSIONS.md](config/VERSIONS.md) — pin the `mc` version (sha256).
 - [.env.example](.env.example) — add `MINIO_ENDPOINT=https://storage.googleapis.com`, `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `BATCH_TAG`. Required from Phase 4 onward; supersedes the placeholder `RESULTS_BUCKET` from earlier README drafts. `MINIO_*` naming is for project consistency — the bucket itself is GCS via S3 interop, not a MinIO server.
 
+*CI + local-LLM (Ollama) path*
+
+Motivation: OpenRouter integration tests cost real money per run and gate replication behind a paid API; a reviewer wanting to inspect the methodology should be able to run an end-to-end agent test locally and in CI without an account or key. opencode 1.14.50 supports Ollama natively via its OpenAI-compatible wrapper — no new agent dependency, only config + a workflow.
+
+- [.github/workflows/smoke.yml](.github/workflows/smoke.yml) — runs on every push and every PR to `dev`/`main`. Builds `fortree:scorer`, then for each fixture under `reference/golden/` and `reference/broken/*/`: bind-mounts into a temp dir, runs `/opt/entrypoint-scorer.sh --target mesa`, parses stdout JSON, asserts the expected `csv_schema_ok` value and a substring match in `csv_schema_errors[0]`. Fully deterministic, no model. ~3–5 min wall-clock dominated by the cached docker build.
+- [.github/workflows/integration-ollama.yml](.github/workflows/integration-ollama.yml) — `workflow_dispatch` only. Inputs: `model` (default `ollama-qwen-coder-7b`), `rung` (default `5`), `target` (default `mesa`). Steps: build `fortree:agent` + `fortree:scorer`, start `ollama/ollama:latest` as a service container, `docker exec ollama ollama pull qwen2.5-coder:7b`, run `MODEL=$model RUNG=$rung TARGET=$target OLLAMA_HOST=http://ollama:11434 ./orchestration/launch_run.sh`, score the workspace, render a Markdown report via `orchestration/generate_run_report.py`, upload `runs/$RUN_ID/` as a workflow artifact. Expected wall-clock 5–10 min.
+- [orchestration/generate_run_report.py](orchestration/generate_run_report.py) — reads a finished `runs/<RUN_ID>/` directory and emits a single Markdown `report.md`. Sections: run metadata (model/target/rung/wall_time), the full rendered prompt inside a `<details>` block, a workspace inventory with each file's content (`<details>`-wrapped, truncated to ~2 KB; full files are in the artifact tarball), trajectory summary as an ordered list of tool calls with their inputs, the last assistant text, and a scorer-results table. The canonical artifact for reviewers wanting to inspect what a model produced without re-running.
+- [config/opencode.template.json](config/opencode.template.json) — add an `ollama` entry to the `provider` block alongside `openrouter` (`{ "options": { "baseURL": "{env:OLLAMA_HOST}/v1" } }`). opencode auto-selects the provider from the model slug's prefix (`ollama/...` → ollama). No orchestrator change.
+- [config/models.yaml](config/models.yaml) — add ollama-prefixed short names: `ollama-qwen-coder-7b: ollama/qwen2.5-coder:7b` and `ollama-qwen-coder-1_5b: ollama/qwen2.5-coder:1.5b` (fallback for resource-constrained environments). Underscore inside numeric tokens because YAML coerces `1.5` to float.
+- [.env.example](.env.example) — add `OLLAMA_HOST=http://localhost:11434` (default for host-local ollama; CI overrides to `http://ollama:11434`).
+- [README.md](README.md) — "Running the integration test locally" subsection covering: install ollama, `ollama pull qwen2.5-coder:7b`, `MODEL=ollama-qwen-coder-7b ... ./orchestration/launch_run.sh`, and platform-specific `OLLAMA_HOST` overrides (`host.docker.internal` for Docker Desktop on macOS, sidecar container on Linux).
+
 **Validation gate**
 - A single agent run produces a non-empty `dns.log` containing the allowlisted host(s) the agent reached during code generation.
 - A deliberately-broken opencode config that lets the agent reach `stackoverflow.com` produces a `dns.log` entry for it — confirms the tripwire fires.
 - `./orchestration/launch_batch.sh --model claude --rung 5 --target josh --runs 4` runs four concurrent agent invocations to completion, each with its own isolated workspace and DNS log.
 - After a single agent run, `mc ls $alias/${MINIO_BUCKET}/${BATCH_TAG}/<RUN_ID>/` lists every file from the local `runs/<RUN_ID>/` directory.
 - A run with deliberately-broken HMAC credentials records `upload_status=failed` in `run_meta.json` and the run itself still completes (upload is opportunistic, not gating).
+- `gh workflow run smoke.yml` (or pushing any branch) completes green; all five fixture assertions pass.
+- `gh workflow run integration-ollama.yml -f model=ollama-qwen-coder-1_5b -f rung=5 -f target=mesa` completes regardless of the `did_run` outcome, produces an artifact bundle including `report.md`, and `harness_errors=[]` in the scorer record.
+- Local-dev regression: `MODEL=ollama-qwen-coder-7b RUNG=5 TARGET=mesa RUN_ID=$(uuidgen) ./orchestration/launch_run.sh` against a host ollama produces a populated workspace with no OpenRouter API key set.
 
 ## Phase 5 — Full 5-step orchestrated run, one cell
 
@@ -213,7 +230,7 @@ Phase 2: [prompts/SIDECAR.md](prompts/SIDECAR.md), [harness/acceptance_ranges.js
 
 Phase 3: [prompts/rung1_minimal.md](prompts/rung1_minimal.md), [prompts/rung5_master.md](prompts/rung5_master.md), [config/models.yaml](config/models.yaml), [config/opencode.template.json](config/opencode.template.json), [config/docs_categories.yaml](config/docs_categories.yaml), [orchestration/launch_run.sh](orchestration/launch_run.sh).
 
-Phase 4: [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf), [orchestration/launch_batch.sh](orchestration/launch_batch.sh), [orchestration/upload_run.sh](orchestration/upload_run.sh), updates to [orchestration/launch_run.sh](orchestration/launch_run.sh), [Dockerfile](Dockerfile) (mc install), [config/VERSIONS.md](config/VERSIONS.md) (mc pin), [.env.example](.env.example) (S3 / HMAC envs).
+Phase 4: [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf), [orchestration/launch_batch.sh](orchestration/launch_batch.sh), [orchestration/upload_run.sh](orchestration/upload_run.sh), [orchestration/generate_run_report.py](orchestration/generate_run_report.py), updates to [orchestration/launch_run.sh](orchestration/launch_run.sh), [Dockerfile](Dockerfile) (mc install), [config/VERSIONS.md](config/VERSIONS.md) (mc pin), [.env.example](.env.example) (MinIO / HMAC envs + `OLLAMA_HOST`), [config/opencode.template.json](config/opencode.template.json) (ollama provider entry), [config/models.yaml](config/models.yaml) (ollama-prefixed short names), [.github/workflows/smoke.yml](.github/workflows/smoke.yml), [.github/workflows/integration-ollama.yml](.github/workflows/integration-ollama.yml).
 
 Phase 5: [prompts/recovery_template.md](prompts/recovery_template.md), [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py), [harness/conformance.py](harness/conformance.py), [harness/conformance_fuzzy.py](harness/conformance_fuzzy.py), [harness/docs_log.py](harness/docs_log.py), [results/manifest.jsonl](results/manifest.jsonl).
 
