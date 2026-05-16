@@ -95,7 +95,9 @@ echo "  Run dir:    $RUN_DIR"
 echo "  Backstop:   ${WALL_CLOCK_BACKSTOP_SEC}s"
 
 set +e
-timeout "$WALL_CLOCK_BACKSTOP_SEC" docker run --rm \
+# --kill-after=30 escalates to SIGKILL 30s after SIGTERM, in case
+# `docker run` gets wedged forwarding signals to a hung container.
+timeout --kill-after=30 "$WALL_CLOCK_BACKSTOP_SEC" docker run --rm \
   --env-file "$REPO_ROOT/.env" \
   -v "$WORKSPACE_DIR":/sandbox \
   -v "$REPO_ROOT/data":/sandbox/data:ro \
@@ -124,4 +126,7 @@ echo "  Trajectory: $RUN_DIR/trajectory.jsonl"
 echo "  Stderr:     $RUN_DIR/agent_stderr.log"
 echo ""
 echo "Score with:"
-echo "  docker run --rm --network=none -v $WORKSPACE_DIR:/sandbox fortree:scorer /opt/entrypoint-scorer.sh --target $TARGET"
+echo "  docker run --rm --network=none \\"
+echo "    -v $WORKSPACE_DIR:/sandbox \\"
+echo "    -v $REPO_ROOT/data:/sandbox/data:ro \\"
+echo "    fortree:scorer /opt/entrypoint-scorer.sh --target $TARGET"

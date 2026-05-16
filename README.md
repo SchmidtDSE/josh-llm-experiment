@@ -174,9 +174,11 @@ listed here so the variable contract is visible from the start.
 | `RUNG`                   | phase 3    | yes      | Prompt rung, 1–5. |
 | `TARGET`                 | phase 3    | yes      | `josh` or `mesa`. |
 | `RUN_ID`                 | phase 3    | yes      | Unique identifier for this generation. UUID preferred. |
-| `RESULTS_BUCKET`         | phase 5    | yes      | S3 (or compatible) URI for artifact upload. |
-| `AWS_ACCESS_KEY_ID`      | phase 5    | yes      | Object-store auth. |
-| `AWS_SECRET_ACCESS_KEY`  | phase 5    | yes      | Object-store auth. |
+| `MINIO_ENDPOINT`         | phase 4    | yes      | S3-compatible endpoint. Default `https://storage.googleapis.com` — we hit GCS via its S3 interop API; no MinIO server runs anywhere, `mc` is just the client. |
+| `MINIO_BUCKET`           | phase 4    | yes      | Destination bucket name for per-run artifact archival. |
+| `MINIO_ACCESS_KEY`       | phase 4    | yes      | HMAC access key for the bucket (GCS HMAC pair). |
+| `MINIO_SECRET_KEY`       | phase 4    | yes      | HMAC secret. |
+| `BATCH_TAG`              | phase 4    | yes      | Identifier prefixed to every object path; bumped per experimental batch. |
 | `WALL_CLOCK_BACKSTOP_SEC`| phase 3    | no       | Hard ceiling on agent wall time per phase. Default 1800. |
 | `TOKEN_BACKSTOP`         | phase 3    | no       | Completion-token cap per phase. Default 100000. |
 | `SKIP_FUZZY_CONFORMANCE` | phase 5    | no       | Skip the optional LLM-judge target check. Default false; set true for cost-sensitive runs. |
@@ -253,7 +255,9 @@ shows up in the per-run log regardless of which tool triggered it.
   and committed *(planned, phase 5)*. Each entry will record the
   prompt rung, model, target, resolved model ID, OpenRouter cost,
   all metrics, dnsmasq DNS log path, and S3 URIs for the
-  artifacts.
+  artifacts. The artifact store is the project's existing GCS
+  bucket accessed via the S3 interoperability API; uploads happen
+  per-run from `orchestration/upload_run.sh` *(planned, phase 4)*.
 - Prompt files versioned in Git; any change forces a new batch tag.
 
 ## License
