@@ -1,0 +1,78 @@
+# URL-prefix → category tag. Consumed post-hoc by the phase-5 manifest
+# builder to populate docs_paths_by_category from opencode's trajectory
+# log. Categories: reference, example, tutorial, api, general.
+# Matching is longest-prefix-wins on the path component of the URL.
+
+# Josh (https://joshsim.org/...)
+- prefix: "https://joshsim.org/tutorial"
+  category: tutorial
+- prefix: "https://joshsim.org/reference"
+  category: reference
+- prefix: "https://joshsim.org/examples"
+  category: example
+- prefix: "https://joshsim.org/"
+  category: general
+
+# Mesa (https://mesa.readthedocs.io/...)
+- prefix: "https://mesa.readthedocs.io/en/stable/tutorials"
+  category: tutorial
+- prefix: "https://mesa.readthedocs.io/en/latest/tutorials"
+  category: tutorial
+- prefix: "https://mesa.readthedocs.io/en/stable/apis"
+  category: api
+- prefix: "https://mesa.readthedocs.io/en/latest/apis"
+  category: api
+- prefix: "https://mesa.readthedocs.io/en/stable/examples"
+  category: example
+- prefix: "https://mesa.readthedocs.io/en/latest/examples"
+  category: example
+- prefix: "https://mesa.readthedocs.io/"
+  category: general
+
+# Python stdlib
+- prefix: "https://docs.python.org/3/tutorial"
+  category: tutorial
+- prefix: "https://docs.python.org/3/library"
+  category: reference
+- prefix: "https://docs.python.org/3/reference"
+  category: reference
+- prefix: "https://docs.python.org/"
+  category: general
+
+# NumPy
+- prefix: "https://numpy.org/doc/stable/reference"
+  category: api
+- prefix: "https://numpy.org/doc/stable/user"
+  category: tutorial
+- prefix: "https://numpy.org/"
+  category: general
+
+# SciPy
+- prefix: "https://docs.scipy.org/doc/scipy/reference"
+  category: api
+- prefix: "https://docs.scipy.org/doc/scipy/tutorial"
+  category: tutorial
+- prefix: "https://docs.scipy.org/"
+  category: general
+
+# pandas
+- prefix: "https://pandas.pydata.org/docs/reference"
+  category: api
+- prefix: "https://pandas.pydata.org/docs/user_guide"
+  category: tutorial
+- prefix: "https://pandas.pydata.org/"
+  category: general
+
+# xarray
+- prefix: "https://docs.xarray.dev/en/stable/api"
+  category: api
+- prefix: "https://docs.xarray.dev/en/stable/user-guide"
+  category: tutorial
+- prefix: "https://docs.xarray.dev/"
+  category: general
+
+# netCDF4 (Unidata)
+- prefix: "https://unidata.github.io/netcdf4-python"
+  category: api
+- prefix: "https://unidata.github.io/"
+  category: general

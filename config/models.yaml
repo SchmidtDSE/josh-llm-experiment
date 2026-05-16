@@ -1,0 +1,8 @@
+# Short-name → OpenRouter model ID. Used by orchestration/launch_run.sh
+# to resolve the MODEL env var into the slug opencode sends to OpenRouter.
+# Frozen for the headline experiment; bump the batch tag if any entry changes.
+claude:   anthropic/claude-sonnet-4.5
+gemma:    google/gemma-3-27b-it
+kimi:     moonshotai/kimi-k2
+minimax:  minimax/minimax-m2
+mistral:  mistralai/mistral-large-latest
