@@ -8,6 +8,10 @@ name: integration-ollama
 # Outputs a workflow artifact containing the full runs/<id>/ tree plus a
 # rendered report.md — sufficient for a reviewer to see what the model
 # produced without rerunning.
+#
+# Ollama startup, model pull, and .env construction live in
+# .github/scripts/setup-ollama.sh so the workflow stays thin and the
+# script can be exercised locally.
 
 on:
   workflow_dispatch:
@@ -25,18 +29,23 @@ on:
         required: true
         default: 'mesa'
 
+env:
+  # Pinned by digest so a malicious tag-rewrite on Docker Hub can't change
+  # what we run. Bump alongside dependabot PRs that update the tag suffix.
+  OLLAMA_IMAGE: 'ollama/ollama:0.24.0@sha256:a6149234667efc71d37766d61c1a16f24c33e4cd7a0bf4125c44a7e47e2419c4'
+
 jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
       - name: Build fortree:agent image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
           context: .
           target: agent
@@ -46,7 +55,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build fortree:scorer image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
           context: .
           target: scorer
@@ -55,44 +64,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Start Ollama and pull model
-        run: |
-          set -euo pipefail
-          docker run -d --name ollama -p 11434:11434 \
-            -v ollama-data:/root/.ollama \
-            ollama/ollama:latest
-
-          # Wait for ollama to be reachable on the host's published port.
-          for _ in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:11434/api/tags > /dev/null; then
-              echo "ollama up"
-              break
-            fi
-            sleep 2
-          done
-
-          MODEL_TAG="qwen2.5-coder:7b"
-          # Map ollama-qwen-coder-1_5b to qwen2.5-coder:1.5b if requested.
-          case "${{ inputs.model }}" in
-            ollama-qwen-coder-1_5b) MODEL_TAG="qwen2.5-coder:1.5b" ;;
-            ollama-qwen-coder-7b)   MODEL_TAG="qwen2.5-coder:7b"   ;;
-          esac
-          echo "Pulling $MODEL_TAG …"
-          docker exec ollama ollama pull "$MODEL_TAG"
-          docker exec ollama ollama list
-
-      - name: Write .env (Ollama only, no OpenRouter key)
-        run: |
-          set -euo pipefail
-          # The agent container runs on the default bridge; reach the host
-          # (where ollama publishes :11434) via the bridge gateway IP.
-          BRIDGE_GW=$(docker network inspect bridge \
-            --format '{{(index .IPAM.Config 0).Gateway}}')
-          echo "Bridge gateway: $BRIDGE_GW"
-          cat > .env <<ENV
-          OPENROUTER_API_KEY=unused-for-ollama-path
-          OLLAMA_HOST=http://${BRIDGE_GW}:11434
-          ENV
+      - name: Start Ollama, pull model, write .env
+        run: .github/scripts/setup-ollama.sh "$OLLAMA_IMAGE" "${{ inputs.model }}"
 
       - name: Launch agent run
         id: run
@@ -140,7 +113,7 @@ jobs:
 
       - name: Upload run artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: run-${{ steps.run.outputs.run_id }}-${{ inputs.model }}-rung${{ inputs.rung }}-${{ inputs.target }}
           path: runs/${{ steps.run.outputs.run_id }}/
