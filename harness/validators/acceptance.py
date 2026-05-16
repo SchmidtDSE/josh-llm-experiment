@@ -37,7 +37,7 @@ def check_output_acceptable(workspace: Path, ranges_path: Path) -> dict:
         }
 
     height_mean = float(year_df["meanHeight"].mean())
-    occupancy_mean = float(year_df.groupby("cell_id").size().mean())
+    occupancy_mean = float(year_df["nTrees"].mean())
 
     return {
         "height_year10_mean": height_mean,

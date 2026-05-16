@@ -16,6 +16,7 @@ EXPECTED_COLUMNS = [
     "lat",
     "lon",
     "year",
+    "nTrees",
     "meanAge",
     "meanHeight",
     "temperature",
@@ -25,6 +26,7 @@ EXPECTED_COLUMNS = [
 # Spec: 11 rows per cell (years 2024 through 2034 inclusive).
 ROWS_PER_CELL = 11
 
+INTEGER_COLUMNS = ("year", "nTrees")
 NUMERIC_COLUMNS = ("lat", "lon", "meanAge", "meanHeight", "temperature", "precipitation")
 
 
@@ -39,8 +41,9 @@ def _check_column_dtypes(df: pd.DataFrame) -> list[str]:
     errors: list[str] = []
     if "cell_id" in df.columns and not pd.api.types.is_object_dtype(df["cell_id"]):
         errors.append(f"cell_id dtype: expected object/str, got {df['cell_id'].dtype}")
-    if "year" in df.columns and not pd.api.types.is_integer_dtype(df["year"]):
-        errors.append(f"year dtype: expected integer, got {df['year'].dtype}")
+    for col in INTEGER_COLUMNS:
+        if col in df.columns and not pd.api.types.is_integer_dtype(df[col]):
+            errors.append(f"{col} dtype: expected integer, got {df[col].dtype}")
     for col in NUMERIC_COLUMNS:
         if col in df.columns and not pd.api.types.is_float_dtype(df[col]):
             errors.append(f"{col} dtype: expected float, got {df[col].dtype}")
