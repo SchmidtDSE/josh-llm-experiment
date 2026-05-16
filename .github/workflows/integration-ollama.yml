@@ -1,0 +1,147 @@
+name: integration-ollama
+
+# End-to-end agent run against a local Ollama model. workflow_dispatch only:
+# every dispatch burns runner minutes (~5-10 min wall-clock dominated by the
+# initial model pull) but does NOT cost OpenRouter tokens, so it's the
+# methodology demo a reviewer can run without an API key.
+#
+# Outputs a workflow artifact containing the full runs/<id>/ tree plus a
+# rendered report.md — sufficient for a reviewer to see what the model
+# produced without rerunning.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Short name from config/models.yaml (use ollama-* for key-free runs)'
+        required: true
+        default: 'ollama-qwen-coder-7b'
+      rung:
+        description: 'Prompt rung (1 or 5)'
+        required: true
+        default: '5'
+      target:
+        description: 'Target stack (josh or mesa)'
+        required: true
+        default: 'mesa'
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build fortree:agent image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: agent
+          tags: fortree:agent
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build fortree:scorer image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: scorer
+          tags: fortree:scorer
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start Ollama and pull model
+        run: |
+          set -euo pipefail
+          docker run -d --name ollama -p 11434:11434 \
+            -v ollama-data:/root/.ollama \
+            ollama/ollama:latest
+
+          # Wait for ollama to be reachable on the host's published port.
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/tags > /dev/null; then
+              echo "ollama up"
+              break
+            fi
+            sleep 2
+          done
+
+          MODEL_TAG="qwen2.5-coder:7b"
+          # Map ollama-qwen-coder-1_5b to qwen2.5-coder:1.5b if requested.
+          case "${{ inputs.model }}" in
+            ollama-qwen-coder-1_5b) MODEL_TAG="qwen2.5-coder:1.5b" ;;
+            ollama-qwen-coder-7b)   MODEL_TAG="qwen2.5-coder:7b"   ;;
+          esac
+          echo "Pulling $MODEL_TAG …"
+          docker exec ollama ollama pull "$MODEL_TAG"
+          docker exec ollama ollama list
+
+      - name: Write .env (Ollama only, no OpenRouter key)
+        run: |
+          set -euo pipefail
+          # The agent container runs on the default bridge; reach the host
+          # (where ollama publishes :11434) via the bridge gateway IP.
+          BRIDGE_GW=$(docker network inspect bridge \
+            --format '{{(index .IPAM.Config 0).Gateway}}')
+          echo "Bridge gateway: $BRIDGE_GW"
+          cat > .env <<ENV
+          OPENROUTER_API_KEY=unused-for-ollama-path
+          OLLAMA_HOST=http://${BRIDGE_GW}:11434
+          ENV
+
+      - name: Launch agent run
+        id: run
+        run: |
+          set -euo pipefail
+          RUN_ID="ci-$(uuidgen)"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          MODEL="${{ inputs.model }}" \
+          RUNG="${{ inputs.rung }}" \
+          TARGET="${{ inputs.target }}" \
+          RUN_ID="$RUN_ID" \
+          WALL_CLOCK_BACKSTOP_SEC=1800 \
+          IDLE_THRESHOLD_SEC=180 \
+            ./orchestration/launch_run.sh || true
+          # `|| true`: we want the workflow to keep going so the artifact +
+          # report capture whatever the agent produced, even on failure.
+
+      - name: Score workspace
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ steps.run.outputs.run_id }}"
+          RUN_DIR="runs/$RUN_ID"
+          mkdir -p "$RUN_DIR"
+          docker run --rm --network=none \
+            -v "$PWD/$RUN_DIR/workspace":/sandbox \
+            -v "$PWD/data":/sandbox/data:ro \
+            fortree:scorer /opt/entrypoint-scorer.sh --target "${{ inputs.target }}" \
+            > "$RUN_DIR/scorer.json" || true
+          echo "--- scorer.json ---"
+          cat "$RUN_DIR/scorer.json" || true
+
+      - name: Generate run report
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ steps.run.outputs.run_id }}"
+          python3 orchestration/generate_run_report.py "runs/$RUN_ID" \
+            > "runs/$RUN_ID/report.md"
+          echo "--- report.md (head) ---"
+          head -50 "runs/$RUN_ID/report.md"
+
+      - name: Collect ollama logs
+        if: always()
+        run: |
+          docker logs ollama > "runs/${{ steps.run.outputs.run_id }}/ollama.log" 2>&1 || true
+
+      - name: Upload run artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-${{ steps.run.outputs.run_id }}-${{ inputs.model }}-rung${{ inputs.rung }}-${{ inputs.target }}
+          path: runs/${{ steps.run.outputs.run_id }}/
+          if-no-files-found: warn

@@ -1,0 +1,86 @@
+name: smoke
+
+# Deterministic scorer smoke test: builds the scorer image, runs it against
+# every fixture under reference/, and asserts the expected csv_schema_ok +
+# csv_schema_errors[0] substring per fixture. No model is invoked — this
+# verifies that the harness/validators contract still holds whenever
+# anyone touches the harness, fixtures, or Dockerfile.
+#
+# Runs on every push and on PRs targeting dev or main. ~3-5 min wall-clock,
+# dominated by the cached Docker build.
+
+on:
+  push:
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  scorer-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build fortree:scorer image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: scorer
+          tags: fortree:scorer
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run scorer against every fixture
+        run: |
+          set -euo pipefail
+
+          # Each row: <fixture-dir>|<expected csv_schema_ok>|<errors[0] substring or empty for ok>
+          declare -a FIXTURES=(
+            "reference/golden|true|"
+            "reference/broken/nan-heights|false|meanHeight: 15 NaN values"
+            "reference/broken/nan-precip|false|precipitation: 9 NaN values"
+            "reference/broken/schema|false|columns mismatch"
+            "reference/broken/missing-year|false|row count: expected 99"
+          )
+
+          FAIL=0
+          for entry in "${FIXTURES[@]}"; do
+            IFS='|' read -r FIXTURE EXPECTED_OK EXPECTED_SUBSTR <<< "$entry"
+
+            WORKDIR="$(mktemp -d)"
+            cp -r "$FIXTURE"/. "$WORKDIR/"
+
+            echo "::group::$FIXTURE"
+            SCORER_JSON="$(docker run --rm --network=none \
+              -v "$WORKDIR":/sandbox \
+              fortree:scorer /opt/entrypoint-scorer.sh --target mesa)"
+            echo "$SCORER_JSON"
+            echo "::endgroup::"
+
+            ACTUAL_OK=$(echo "$SCORER_JSON" | jq -r '.csv_schema_ok')
+            ACTUAL_ERR0=$(echo "$SCORER_JSON" | jq -r '.csv_schema_errors[0] // ""')
+
+            if [ "$ACTUAL_OK" != "$EXPECTED_OK" ]; then
+              echo "✗ $FIXTURE: csv_schema_ok expected=$EXPECTED_OK got=$ACTUAL_OK"
+              FAIL=1
+              continue
+            fi
+
+            if [ -n "$EXPECTED_SUBSTR" ]; then
+              if [[ "$ACTUAL_ERR0" != *"$EXPECTED_SUBSTR"* ]]; then
+                echo "✗ $FIXTURE: csv_schema_errors[0] missing substring"
+                echo "    expected substring: $EXPECTED_SUBSTR"
+                echo "    actual: $ACTUAL_ERR0"
+                FAIL=1
+                continue
+              fi
+            fi
+
+            echo "✓ $FIXTURE"
+          done
+
+          exit $FAIL
