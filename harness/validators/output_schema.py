@@ -16,7 +16,7 @@ EXPECTED_COLUMNS = [
     "lat",
     "lon",
     "year",
-    "n_trees",
+    "nTrees",
     "meanAge",
     "meanHeight",
     "temperature",
@@ -26,7 +26,7 @@ EXPECTED_COLUMNS = [
 # Spec: 11 rows per cell (years 2024 through 2034 inclusive).
 ROWS_PER_CELL = 11
 
-INTEGER_COLUMNS = ("year", "n_trees")
+INTEGER_COLUMNS = ("year", "nTrees")
 NUMERIC_COLUMNS = ("lat", "lon", "meanAge", "meanHeight", "temperature", "precipitation")
 
 
