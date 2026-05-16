@@ -88,17 +88,26 @@ echo "  Target:     $TARGET"
 echo "  Run dir:    $RUN_DIR"
 echo "  Backstop:   ${WALL_CLOCK_BACKSTOP_SEC}s"
 
+IDLE_THRESHOLD_SEC="${IDLE_THRESHOLD_SEC:-120}"
+
 set +e
 WALL_CLOCK_BACKSTOP_SEC="$WALL_CLOCK_BACKSTOP_SEC" \
+IDLE_THRESHOLD_SEC="$IDLE_THRESHOLD_SEC" \
   "$REPO_ROOT/orchestration/run_agent.sh" "$RUN_DIR"
 AGENT_EXIT=$?
 set -e
+
+STREAM_STALLED="false"
+if [ -f "$RUN_DIR/stream_stalled.flag" ]; then
+  STREAM_STALLED="true"
+fi
 
 ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "$RUN_DIR/run_meta.final.json" <<META
 {
   "ended_at": "$ENDED_AT",
   "agent_exit_code": $AGENT_EXIT,
+  "stream_stalled": $STREAM_STALLED,
   "trajectory_size_bytes": $(stat -c%s "$RUN_DIR/trajectory.jsonl" 2>/dev/null || echo 0),
   "stderr_size_bytes": $(stat -c%s "$RUN_DIR/agent_stderr.log" 2>/dev/null || echo 0)
 }
