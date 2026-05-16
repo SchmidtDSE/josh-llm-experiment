@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
-# Scorer-mode entrypoint. Invoked when the image runs with --network=none and
-# a read-only workspace mount:
-#   docker run --rm --network=none \
-#     -v <workspace>:/sandbox -v <results>:/results \
-#     fortree:<tag> /opt/entrypoint-scorer.sh --target <josh|mesa> [...]
+# Scorer-mode entrypoint. Lives only in `fortree:scorer` (added by the
+# scorer Dockerfile stage). The agent image (`fortree:agent`) does not
+# carry this file.
 #
-# Phase 2 wires this to harness/run_metrics.py; until then it errors clearly.
+# Invocation:
+#   docker run --rm --network=none \
+#     -v <workspace>:/sandbox \
+#     fortree:scorer /opt/entrypoint-scorer.sh --target <josh|mesa>
+#
+# All argument parsing happens in run_metrics.py.
 
 set -euo pipefail
-
-if [ ! -f /opt/harness/run_metrics.py ]; then
-  echo "entrypoint-scorer: /opt/harness/run_metrics.py not present (phase 2 not complete)" >&2
-  exit 64
-fi
-
 exec python /opt/harness/run_metrics.py "$@"

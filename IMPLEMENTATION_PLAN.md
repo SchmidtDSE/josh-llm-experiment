@@ -73,7 +73,7 @@ Landed on `phase-1-env-bootstrap` (PR #2 → `dev`).
 
 ## Phase 2 — Scorer-only loop (no agents)
 
-Split three ways for reviewability.
+Split four ways for reviewability: 2a (Java + bbox + spec, complete), 2b-core (Docker + harness), 2b-mesa (Mesa ref + broken-variant fixtures), 2c (Josh ref).
 
 ### Phase 2a — Java upgrade, bbox fix, spec authoring *(complete)*
 
@@ -87,12 +87,12 @@ Landed on `phase-2a-java-bbox-spec` (PR #3 → `dev`, merged as `8f447d4`).
 - [harness/acceptance_ranges.json](harness/acceptance_ranges.json) — user-authored v0 ranges (height_year10 = [0, 11] m, occupancy_year10 = [9.9, 10.1]).
 - [config/VERSIONS.md](config/VERSIONS.md) — Java pin updated.
 
-### Phase 2b — Harness + Mesa reference *(next)*
+### Phase 2b-core — Multistage Dockerfile + harness *(next)*
 
 **Harness code to author**
-- [harness/run_metrics.py](harness/run_metrics.py) — top-level scorer entry point; invokes runner, validators, computes loc + entropy, emits JSON record.
-- [harness/runner.py](harness/runner.py) — invokes `./run.sh`; captures exit code, stdout, stderr, wall time. Single file, target-agnostic.
-- [harness/validators/output_schema.py](harness/validators/output_schema.py) — CSV existence + column shape check.
+- [harness/run_metrics.py](harness/run_metrics.py) — top-level scorer entry point; invokes runner, validators, computes loc + entropy, emits JSON record on stdout AND writes `/sandbox/results/scorer.json`.
+- [harness/runner.py](harness/runner.py) — invokes `./run.sh`; captures exit code, stdout/stderr tails (4 KiB each), wall time, timeout flag. `preexec_fn=os.setsid` + `os.killpg(SIGKILL)` on timeout. Single file, target-agnostic.
+- [harness/validators/output_schema.py](harness/validators/output_schema.py) — CSV existence + columns + dtypes + row count + NaN-in-numeric-columns check (NaN flips `csv_schema_ok=false`).
 - [harness/validators/acceptance.py](harness/validators/acceptance.py) — range check against [harness/acceptance_ranges.json](harness/acceptance_ranges.json).
 - [harness/loc.py](harness/loc.py) — relevant-LOC computation.
 - [harness/entropy.py](harness/entropy.py) — token-level Shannon entropy with `tiktoken` `cl100k_base`.
@@ -100,20 +100,24 @@ Landed on `phase-2a-java-bbox-spec` (PR #3 → `dev`, merged as `8f447d4`).
 
 **Image: multistage Dockerfile**
 - `base` stage: Python 3.11 + Java 21 + Josh + opencode + scientific stack (everything common to agent and scorer).
-- `agent` stage (`FROM base`): nothing further. Tagged `fortree:agent`. Used for the agent invocation; does NOT contain `/opt/harness/` or `/opt/spec/acceptance_ranges.json`.
-- `scorer` stage (`FROM base`): `COPY harness/ /opt/harness/`. Tagged `fortree:scorer`. The acceptance ranges live inside `/opt/harness/` so a single COPY brings the validator code AND its ranges into the scorer image.
-- `entrypoint-scorer.sh` rewritten to dispatch into `run_metrics.py`.
-
-**Reference: Mesa**
-- `reference/mesa/run.sh`, `reference/mesa/model.py` — hand-written Mesa 3.x ForeverTree.
+- `agent` stage (`FROM base`): nothing further. Tagged `fortree:agent`. Used for the agent invocation; does NOT contain `/opt/harness/`.
+- `scorer` stage (`FROM base`): `COPY harness/ /opt/harness/` + `COPY entrypoint-scorer.sh /opt/`. Tagged `fortree:scorer`. The acceptance ranges live inside `/opt/harness/` so the single COPY brings both validator code and ranges.
+- `entrypoint-scorer.sh` rewritten as `exec python /opt/harness/run_metrics.py "$@"`.
 
 **Validation gate**
-- `docker build --target scorer -t fortree:scorer .` and `docker build --target agent -t fortree:agent .` both succeed.
-- `docker run --rm fortree:agent ls /opt/harness/` returns no such directory (structural enforcement of the separation).
-- `docker run --rm --network=none -v reference/mesa:/sandbox fortree:scorer /opt/entrypoint-scorer.sh --target mesa` → `did_run=true`, `height_in_range=true`, `occupancy_in_range=true`.
-- Deliberately broken variants (wrong CSV schema, NaN heights, missing years, NaN-only precip) flip the expected bool flags.
+- `docker build --target agent -t fortree:agent .` and `docker build --target scorer -t fortree:scorer .` both succeed.
+- `! docker run --rm fortree:agent test -e /opt/harness` (structural separation: agent has no `/opt/harness/`).
+- `docker run --rm fortree:scorer test -e /opt/harness/run_metrics.py` (positive structural check on the scorer).
+- Smoke test: scorer against an empty workspace returns valid JSON with `did_run=false`, `csv_exists=false`, `relevant_loc=0`, `harness_errors=[]`.
+- The phase-2a image gates still pass on `fortree:agent`.
 
-### Phase 2c — Josh reference *(after 2b)*
+### Phase 2b-mesa — Mesa reference + broken-variant fixtures *(after 2b-core)*
+
+- `reference/mesa/run.sh`, `reference/mesa/model.py` — hand-written Mesa 3.x ForeverTree on the native data grid (50 × 31), seeded for reproducibility.
+- `reference/broken/{schema,nan-heights,missing-year,nan-precip}/run.sh` — four tiny scripts heredoc-writing canned malformed CSVs; single `reference/broken/` parent.
+- Validation: scorer on `reference/mesa/` returns `did_run=true`, `height_in_range=true`, `occupancy_in_range=true`. Each broken fixture flips `csv_schema_ok=false`.
+
+### Phase 2c — Josh reference *(after 2b-mesa)*
 
 - `reference/josh/run.sh`, `reference/josh/ForeverTree.josh`, `reference/josh/*.jshd`.
 - Verify Josh comment syntax against [llms-full.txt](https://raw.githubusercontent.com/SchmidtDSE/josh/refs/heads/main/llms-full.txt); finalize `harness/loc.py` rules for `.josh` / `.jshd` if needed.

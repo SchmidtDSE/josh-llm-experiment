@@ -1,12 +1,16 @@
-FROM python:3.11-slim-bookworm AS fortree
+FROM python:3.11-slim-bookworm AS base
 
-# Single image used two ways:
+# Two-stage image:
 #   - agent:  docker run --rm --env-file .env -v ./runs/<id>:/sandbox
-#               fortree:<tag> opencode run --config /opt/opencode.json ...
+#               fortree:agent opencode run --config /opt/opencode.json ...
 #   - scorer: docker run --rm --network=none -v ./runs/<id>:/sandbox
-#               fortree:<tag> /opt/entrypoint-scorer.sh --target <josh|mesa>
+#               fortree:scorer /opt/entrypoint-scorer.sh --target <josh|mesa>
 #
-# Same env both ways — that is the whole point of unifying these images.
+# `base` holds everything common to both roles. `agent` is base with no
+# extra payload. `scorer` adds harness code + acceptance ranges. The
+# structural separation matters: an agent container cannot read
+# `/opt/harness/acceptance_ranges.json` because those files don't exist
+# in `fortree:agent` — they're only in `fortree:scorer`.
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -34,12 +38,23 @@ RUN pip install --no-cache-dir -r /opt/requirements.txt
 COPY scripts/install_opencode.sh /tmp/install_opencode.sh
 RUN /tmp/install_opencode.sh && rm /tmp/install_opencode.sh
 
-# Scorer entrypoint. Phase 2 will COPY harness/ in and the entrypoint will
-# dispatch into harness/run_metrics.py.
-COPY entrypoint-scorer.sh /opt/entrypoint-scorer.sh
-RUN chmod +x /opt/entrypoint-scorer.sh
-
-# Phase 2 will uncomment.
-# COPY harness /opt/harness
+# Pre-warm the tiktoken cl100k_base cache so entropy.py works offline.
+# Without this, `tiktoken.get_encoding('cl100k_base')` tries to fetch the
+# BPE file from openaipublic.blob.core.windows.net the first time it's
+# loaded — which fails under --network=none in the scorer.
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
+RUN mkdir -p "$TIKTOKEN_CACHE_DIR" \
+    && python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 
 WORKDIR /sandbox
+
+# ---------- agent stage ----------
+FROM base AS agent
+# No additional payload. `fortree:agent` is `base` under a different tag.
+# Notably does NOT contain /opt/harness/ or the scorer entrypoint.
+
+# ---------- scorer stage ----------
+FROM base AS scorer
+COPY harness/ /opt/harness/
+COPY entrypoint-scorer.sh /opt/entrypoint-scorer.sh
+RUN chmod +x /opt/entrypoint-scorer.sh
