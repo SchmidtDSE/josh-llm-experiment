@@ -124,7 +124,7 @@ Exercises the scorer end-to-end against hand-crafted CSVs. No model implementati
 - `reference/broken/nan-precip/run.sh` — CSV with NaN in `precipitation`. Expected: `csv_schema_ok=false`.
 
 Validation gates:
-- Scorer on `reference/golden/` returns `did_run=true`, `height_in_range=true`, `harness_errors=[]`. `occupancy_in_range=false` is expected under the v0 schema: the validator computes `df.groupby("cell_id").size().mean()` filtered to year 10, which is trivially 1.0 (one row per cell at the target year) and falls outside the user-authored range `[9.9, 10.1]`. The mismatch surfaces a v0 design gap to resolve before agent runs — either redefine the occupancy metric, change the schema to carry tree-count, or relax the range.
+- Scorer on `reference/golden/` returns `did_run=true`, `height_in_range=true`, `occupancy_in_range=true`, `harness_errors=[]`. (The v0 occupancy gap — validator counting rows instead of trees — was resolved by adding an `n_trees` column to the SIDECAR schema; `acceptance.py` now reads `year_df["n_trees"].mean()` directly.)
 - Scorer on each `reference/broken/*/` returns `csv_schema_ok=false` with a matching entry in `csv_schema_errors`, and `did_run=false`.
 
 **Why before agents (entire phase 2)**: validates spec wording, acceptance numbers, and the entire scoring chain with zero LLM variance. If the scorer disagrees with a known-good fixture, no agent run is interpretable.

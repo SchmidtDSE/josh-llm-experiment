@@ -139,6 +139,7 @@ The model should export **per cell, per step**:
 
 | Variable        | Definition                                              |
 |-----------------|---------------------------------------------------------|
+| `n_trees`       | Count of ForeverTree agents currently on the cell.      |
 | `meanAge`       | Mean `age` of all ForeverTrees on the cell (year).      |
 | `meanHeight`    | Mean `height` of all ForeverTrees on the patch (m).     |
 | `temperature`   | The patch's annual mean temperature this step (K).      |

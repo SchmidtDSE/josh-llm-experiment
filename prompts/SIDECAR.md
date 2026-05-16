@@ -54,6 +54,7 @@ cd /sandbox && ./run.sh
 | `lat`           | float  | degrees       |
 | `lon`           | float  | degrees       |
 | `year`          | int    | calendar year |
+| `n_trees`       | int    | count         |
 | `meanAge`       | float  | years         |
 | `meanHeight`    | float  | meters        |
 | `temperature`   | float  | Kelvin        |
