@@ -10,6 +10,12 @@
 # Phase-4 additions (dnsmasq DNS observation, --dns flag) are deliberately
 # absent: phase 3 first proves the end-to-end opencode → OpenRouter →
 # workspace path works at all.
+#
+# This script is the high-level orchestrator. Three pieces are factored out
+# so they can be invoked / iterated on directly:
+#   - orchestration/resolve_model.py     (MODEL → OpenRouter slug)
+#   - prompts/target_directive_{josh,mesa}.md  (per-target boilerplate)
+#   - orchestration/run_agent.sh         (the docker-run invocation)
 set -euo pipefail
 
 : "${MODEL:?MODEL not set; pick a short name from config/models.yaml (claude|gemma|kimi|minimax|mistral)}"
@@ -39,25 +45,13 @@ WORKSPACE_DIR="$RUN_DIR/workspace"
 CONFIG_DIR="$RUN_DIR/.opencode"
 mkdir -p "$WORKSPACE_DIR" "$CONFIG_DIR"
 
-RESOLVED_MODEL_ID=$(
-  python3 -c "
-import sys, yaml
-models = yaml.safe_load(open('$REPO_ROOT/config/models.yaml'))
-slug = models.get('$MODEL')
-if not slug:
-    print(f'MODEL \"$MODEL\" not in config/models.yaml', file=sys.stderr); sys.exit(4)
-print(slug)
-"
-)
+RESOLVED_MODEL_ID="$("$REPO_ROOT/orchestration/resolve_model.py" "$MODEL")"
 
 case "$RUNG" in
   1) RUNG_FILE="$REPO_ROOT/prompts/rung1_minimal.md" ;;
   5) RUNG_FILE="$REPO_ROOT/prompts/rung5_master.md" ;;
 esac
-case "$TARGET" in
-  josh) FRAMEWORK_DIRECTIVE="Implement this using the Josh DSL. Author .josh model files and any .jshd preprocessing config the model needs; do not implement the model in Python." ;;
-  mesa) FRAMEWORK_DIRECTIVE="Implement this using the Mesa 3.x Python framework (already installed). The implementation should be a Python module that uses Mesa's Model and Agent classes." ;;
-esac
+TARGET_DIRECTIVE_FILE="$REPO_ROOT/prompts/target_directive_${TARGET}.md"
 
 {
   cat "$RUNG_FILE"
@@ -65,7 +59,7 @@ esac
   echo ""
   echo "## Implementation directive"
   echo ""
-  echo "$FRAMEWORK_DIRECTIVE"
+  cat "$TARGET_DIRECTIVE_FILE"
   echo ""
   echo "---"
   echo ""
@@ -95,18 +89,8 @@ echo "  Run dir:    $RUN_DIR"
 echo "  Backstop:   ${WALL_CLOCK_BACKSTOP_SEC}s"
 
 set +e
-# --kill-after=30 escalates to SIGKILL 30s after SIGTERM, in case
-# `docker run` gets wedged forwarding signals to a hung container.
-timeout --kill-after=30 "$WALL_CLOCK_BACKSTOP_SEC" docker run --rm \
-  --env-file "$REPO_ROOT/.env" \
-  -v "$WORKSPACE_DIR":/sandbox \
-  -v "$REPO_ROOT/data":/sandbox/data:ro \
-  -v "$CONFIG_DIR":/root/.config/opencode \
-  -v "$RUN_DIR/prompt.md":/opt/prompt.md:ro \
-  fortree:agent \
-  bash -c 'opencode run --dir /sandbox --agent coder --format json --print-logs "$(cat /opt/prompt.md)"' \
-  > "$RUN_DIR/trajectory.jsonl" \
-  2> "$RUN_DIR/agent_stderr.log"
+WALL_CLOCK_BACKSTOP_SEC="$WALL_CLOCK_BACKSTOP_SEC" \
+  "$REPO_ROOT/orchestration/run_agent.sh" "$RUN_DIR"
 AGENT_EXIT=$?
 set -e
 
