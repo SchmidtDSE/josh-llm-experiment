@@ -9,8 +9,10 @@
 #   <RUN_DIR>/prompt.md              — bind-mounted at /opt/prompt.md (ro)
 #
 # Reads $REPO_ROOT (auto-derived if unset) for `.env` and `data/`,
-# $WALL_CLOCK_BACKSTOP_SEC (default 1800) for the agent backstop, and
-# $IDLE_THRESHOLD_SEC (default 120) for the trajectory-idle heartbeat.
+# $WALL_CLOCK_BACKSTOP_SEC (default 1800) for the agent backstop,
+# $IDLE_THRESHOLD_SEC (default 120) for the trajectory-idle heartbeat,
+# and (optional) $AGENT_NETWORK + $AGENT_DNS to wire the agent through a
+# per-run dnsmasq sidecar (set by launch_run.sh from phase 4b onward).
 #
 # Writes <RUN_DIR>/trajectory.jsonl (stdout) and <RUN_DIR>/agent_stderr.log
 # (stderr). Exits with the agent container's exit code; 124 if the
@@ -40,11 +42,29 @@ IDLE_THRESHOLD_SEC="${IDLE_THRESHOLD_SEC:-120}"
 RUN_ID="$(basename "$RUN_DIR")"
 CONTAINER_NAME="fortree-agent-${RUN_ID}"
 
+# Optional network/DNS injection (phase 4b: agent talks DNS through a
+# dnsmasq sidecar that launch_run.sh starts on a per-run bridge network).
+# Empty by default → docker uses the default bridge with no --dns override,
+# preserving the phase-3 behavior.
+NETWORK_FLAGS=()
+if [ -n "${AGENT_NETWORK:-}" ]; then
+  NETWORK_FLAGS+=(--network "$AGENT_NETWORK")
+fi
+if [ -n "${AGENT_DNS:-}" ]; then
+  NETWORK_FLAGS+=(--dns "$AGENT_DNS")
+fi
+# Always make `host.docker.internal` resolvable to the host — needed so the
+# agent can reach a host-published ollama (or any other host port) whether
+# we're on the default bridge or a custom per-run network. Cheap; harmless
+# when the agent doesn't use it.
+NETWORK_FLAGS+=(--add-host=host.docker.internal:host-gateway)
+
 # Launch the agent in the background so the watcher can run concurrently.
 (
   timeout --kill-after=30 "$WALL_CLOCK_BACKSTOP_SEC" docker run --rm \
     --name "$CONTAINER_NAME" \
     --env-file "$REPO_ROOT/.env" \
+    "${NETWORK_FLAGS[@]}" \
     -v "$RUN_DIR/workspace":/sandbox \
     -v "$REPO_ROOT/data":/sandbox/data:ro \
     -v "$RUN_DIR/.opencode":/root/.config/opencode \

@@ -42,13 +42,13 @@ echo "▶ Pulling $OLLAMA_MODEL_TAG"
 docker exec ollama ollama pull "$OLLAMA_MODEL_TAG"
 docker exec ollama ollama list
 
-echo "▶ Writing .env (OLLAMA_HOST = docker bridge gateway)"
-# The agent container runs on the default bridge; reach the host's
-# published 11434 via the bridge gateway IP (typically 172.17.0.1).
-BRIDGE_GW=$(docker network inspect bridge \
-  --format '{{(index .IPAM.Config 0).Gateway}}')
-echo "  bridge gateway: $BRIDGE_GW"
+echo "▶ Writing .env (OLLAMA_HOST = host.docker.internal)"
+# Phase 4b puts the agent on a per-run custom network with its own
+# gateway IP, so the default-bridge gateway is no longer reachable from
+# inside the agent container. run_agent.sh always passes
+# `--add-host=host.docker.internal:host-gateway` so the agent can reach
+# the host (where ollama publishes :11434) regardless of network choice.
 cat > .env <<ENV
 OPENROUTER_API_KEY=unused-for-ollama-path
-OLLAMA_HOST=http://${BRIDGE_GW}:11434
+OLLAMA_HOST=http://host.docker.internal:11434
 ENV

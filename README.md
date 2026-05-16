@@ -76,9 +76,12 @@ The host needs Docker and [uv][uv]. Install each manually:
 # 2. uv — Astral's single-binary Python tool installer.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 3. Build the unified fortree image. Used both as the agent runtime
-#    and as the --network=none scorer.
-docker build -t fortree:latest .
+# 3. Build the multistage fortree image. Used as the agent runtime
+#    (--target agent), the --network=none scorer (--target scorer), and
+#    the per-run dnsmasq sidecar (--target dnsmasq).
+docker build --target agent   -t fortree:agent   .
+docker build --target scorer  -t fortree:scorer  .
+docker build --target dnsmasq -t fortree:dnsmasq .
 ```
 
 [uv]: https://docs.astral.sh/uv/
@@ -86,15 +89,16 @@ docker build -t fortree:latest .
 ### Image-only sanity checks (works today)
 
 After the prerequisites step, these commands work on the current
-branch and validate the image's installed environment:
+branch and validate the images' installed environments:
 
 ```sh
-docker run --rm fortree:latest python -c \
+docker run --rm fortree:agent python -c \
   "import mesa, numpy, pandas, scipy, xarray, netCDF4, rasterio, tiktoken; print('ok')"
-docker run --rm fortree:latest josh --version       # prints pinned sha256
-docker run --rm fortree:latest opencode --version   # prints 1.14.50
-docker run --rm --network=none fortree:latest python -c "print('offline')"
-docker run --rm --env-file .env fortree:latest printenv OPENROUTER_API_KEY
+docker run --rm fortree:agent josh --version       # prints pinned sha256
+docker run --rm fortree:agent opencode --version   # prints 1.14.50
+docker run --rm --network=none fortree:agent python -c "print('offline')"
+docker run --rm --env-file .env fortree:agent printenv OPENROUTER_API_KEY
+docker run --rm fortree:dnsmasq --test             # validates dnsmasq.conf syntax
 ```
 
 ### Running the integration test locally

@@ -64,6 +64,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build fortree:dnsmasq image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
+        with:
+          context: .
+          target: dnsmasq
+          tags: fortree:dnsmasq
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Start Ollama, pull model, write .env
         run: .github/scripts/setup-ollama.sh "$OLLAMA_IMAGE" "${{ inputs.model }}"
 

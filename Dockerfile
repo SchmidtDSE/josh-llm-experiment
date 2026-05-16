@@ -1,16 +1,20 @@
 FROM python:3.11-slim-bookworm AS base
 
-# Two-stage image:
-#   - agent:  docker run --rm --env-file .env -v ./runs/<id>:/sandbox
-#               fortree:agent opencode run --config /opt/opencode.json ...
-#   - scorer: docker run --rm --network=none -v ./runs/<id>:/sandbox
-#               fortree:scorer /opt/entrypoint-scorer.sh --target <josh|mesa>
+# Multistage image:
+#   - agent:   docker run --rm --env-file .env -v ./runs/<id>:/sandbox
+#                fortree:agent opencode run --config /opt/opencode.json ...
+#   - scorer:  docker run --rm --network=none -v ./runs/<id>:/sandbox
+#                fortree:scorer /opt/entrypoint-scorer.sh --target <josh|mesa>
+#   - dnsmasq: docker run -d --network fortree-run-<id>
+#                fortree:dnsmasq   (alpine + dnsmasq, query logging on)
 #
-# `base` holds everything common to both roles. `agent` is base with no
+# `base` holds everything common to agent/scorer. `agent` is base with no
 # extra payload. `scorer` adds harness code + acceptance ranges. The
 # structural separation matters: an agent container cannot read
 # `/opt/harness/acceptance_ranges.json` because those files don't exist
-# in `fortree:agent` — they're only in `fortree:scorer`.
+# in `fortree:agent` — they're only in `fortree:scorer`. `dnsmasq` is a
+# separate tiny alpine image used as a per-run DNS sidecar so we can log
+# every name the agent resolves; it shares no layers with base.
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -54,3 +58,14 @@ FROM base AS scorer
 COPY harness/ /opt/harness/
 COPY entrypoint-scorer.sh /opt/entrypoint-scorer.sh
 RUN chmod +x /opt/entrypoint-scorer.sh
+
+# ---------- dnsmasq stage ----------
+# Independent of `base` — runs only as a per-run DNS sidecar on the same
+# bridge network as the agent. Logs every query to stderr where launch_run.sh
+# captures it via `docker logs` on teardown.
+FROM alpine:3.20 AS dnsmasq
+RUN apk add --no-cache dnsmasq
+COPY orchestration/dnsmasq.conf /etc/dnsmasq.conf
+EXPOSE 53/udp 53/tcp
+# -k keeps dnsmasq in the foreground so the container stays up.
+ENTRYPOINT ["dnsmasq", "-k"]

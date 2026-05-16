@@ -8,14 +8,16 @@
 # phase 3 stops at "agent produced a workspace"; scoring is a follow-up
 # command printed at the end.
 #
-# Phase-4 additions (dnsmasq DNS observation, --dns flag) are deliberately
-# absent: phase 3 first proves the end-to-end opencode → OpenRouter →
-# workspace path works at all.
+# Phase-4b additions: a dnsmasq sidecar runs on a per-run docker bridge
+# network and logs every DNS query the agent makes. The sidecar's lifecycle
+# (start, IP discovery, teardown, log capture) is factored into
+# orchestration/dns_sidecar.sh so the orchestration here stays linear.
 #
-# This script is the high-level orchestrator. Three pieces are factored out
+# This script is the high-level orchestrator. Four pieces are factored out
 # so they can be invoked / iterated on directly:
-#   - orchestration/resolve_model.py     (MODEL → OpenRouter slug)
+#   - orchestration/resolve_model.py     (MODEL → provider/slug)
 #   - prompts/target_directive_{josh,mesa}.md  (per-target boilerplate)
+#   - orchestration/dns_sidecar.sh       (per-run DNS sidecar lifecycle)
 #   - orchestration/run_agent.sh         (the docker-run invocation)
 set -euo pipefail
 
@@ -92,9 +94,20 @@ echo "  Backstop:   ${WALL_CLOCK_BACKSTOP_SEC}s"
 
 IDLE_THRESHOLD_SEC="${IDLE_THRESHOLD_SEC:-120}"
 
+# Start the DNS sidecar; trap teardown so a backstop/SIGTERM/manual abort
+# still captures dns.log and removes the network. dns_sidecar.sh writes
+# $RUN_DIR/dns_sidecar.env with AGENT_NETWORK + AGENT_DNS for the agent.
+trap '"$REPO_ROOT/orchestration/dns_sidecar.sh" stop "$RUN_DIR" || true' EXIT
+"$REPO_ROOT/orchestration/dns_sidecar.sh" start "$RUN_DIR"
+# shellcheck disable=SC1091
+source "$RUN_DIR/dns_sidecar.env"
+echo "  DNS:        $AGENT_DNS  (network $AGENT_NETWORK)"
+
 set +e
 WALL_CLOCK_BACKSTOP_SEC="$WALL_CLOCK_BACKSTOP_SEC" \
 IDLE_THRESHOLD_SEC="$IDLE_THRESHOLD_SEC" \
+AGENT_NETWORK="$AGENT_NETWORK" \
+AGENT_DNS="$AGENT_DNS" \
   "$REPO_ROOT/orchestration/run_agent.sh" "$RUN_DIR"
 AGENT_EXIT=$?
 set -e
