@@ -149,34 +149,53 @@ Validation gates:
 
 This is the de-risk gate: prove a single (model, rung, target) cell can be driven prompt → opencode → workspace → scorer → metric record without any sandboxing layer in the way.
 
-## Phase 4 — Observation layer and local parallelism
+## Phase 4 — Observation layer, local parallelism, durable artifact upload
 
 **Files to author**
 - [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf) — dnsmasq config with query logging enabled; runs as a sidecar container on a per-run docker bridge network.
-- Update [orchestration/launch_run.sh](orchestration/launch_run.sh): create a per-run docker network, start the dnsmasq sidecar, point the agent container at it via `--dns`, copy the DNS log to `./runs/<run-id>/dns.log` on teardown.
+- Update [orchestration/launch_run.sh](orchestration/launch_run.sh): create a per-run docker network, start the dnsmasq sidecar, point the agent container at it via `--dns`, copy the DNS log to `./runs/<run-id>/dns.log` on teardown. **Also**: after the scorer step, invoke `orchestration/upload_run.sh` to archive the run dir.
 - [orchestration/launch_batch.sh](orchestration/launch_batch.sh) — fan out N concurrent `launch_run.sh` invocations with fresh `RUN_ID`s via `xargs -P` or GNU `parallel`. Each run gets its own bridge network, sidecar, and workspace dir.
+- [orchestration/upload_run.sh](orchestration/upload_run.sh) — uploads every file under `runs/<RUN_ID>/` to `${MINIO_BUCKET}/${BATCH_TAG}/<RUN_ID>/<relative-path>` via the configured S3-compatible endpoint. The orchestrator runs `mc alias set` from the `MINIO_*` env vars at the top of the script, then `mc cp --recursive` from the run dir. Target backend is the existing GCS bucket via its S3 interoperability API (`MINIO_ENDPOINT=https://storage.googleapis.com`); no MinIO server runs anywhere — `mc` is just the client. Paths under the run dir are preserved so the remote layout mirrors the local layout. Upload is opportunistic: on failure, log to stderr, record `upload_status=failed` in `run_meta.json`, leave the local copy intact, and do NOT fail `launch_run.sh`.
+- [Dockerfile](Dockerfile) — install `mc` (single static binary from `dl.min.io`, sha256-pinned) in the `base` stage so both agent and scorer images can call it.
+- [config/VERSIONS.md](config/VERSIONS.md) — pin the `mc` version (sha256).
+- [.env.example](.env.example) — add `MINIO_ENDPOINT=https://storage.googleapis.com`, `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `BATCH_TAG`. Required from Phase 4 onward; supersedes the placeholder `RESULTS_BUCKET` from earlier README drafts. `MINIO_*` naming is for project consistency — the bucket itself is GCS via S3 interop, not a MinIO server.
 
 **Validation gate**
 - A single agent run produces a non-empty `dns.log` containing the allowlisted host(s) the agent reached during code generation.
 - A deliberately-broken opencode config that lets the agent reach `stackoverflow.com` produces a `dns.log` entry for it — confirms the tripwire fires.
 - `./orchestration/launch_batch.sh --model claude --rung 5 --target josh --runs 4` runs four concurrent agent invocations to completion, each with its own isolated workspace and DNS log.
+- After a single agent run, `mc ls $alias/${MINIO_BUCKET}/${BATCH_TAG}/<RUN_ID>/` lists every file from the local `runs/<RUN_ID>/` directory.
+- A run with deliberately-broken HMAC credentials records `upload_status=failed` in `run_meta.json` and the run itself still completes (upload is opportunistic, not gating).
 
 ## Phase 5 — Full 5-step orchestrated run, one cell
 
 **Files to author**
-- [prompts/recovery_template.md](prompts/recovery_template.md) — recovery-phase prompt skeleton with placeholders for the binary/structural failure surface from step 3.
-- [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py) — fills the template from the step-3 JSON record. Strict: surfaces only the binary outcomes, never the acceptance numbers (README "Does not include the acceptance ranges or any new information about correctness criteria").
+- [prompts/recovery_template.md](prompts/recovery_template.md) — Markdown skeleton with these placeholders, filled by `render_recovery_prompt.py`:
+  - `{{ORIGINAL_RUNG_PROMPT}}` — the same rung-N body the agent originally received.
+  - `{{ORIGINAL_TARGET_DIRECTIVE}}` — the same "Implement this using Mesa / the Josh DSL" line.
+  - `{{BINARY_OUTCOMES_BLOCK}}` — a Markdown block built from the step-3 scorer JSON, carrying only the binary / structural fields: `did_run`, `exit_code`, `timed_out`, `csv_exists`, `csv_schema_ok`, `csv_schema_errors` (the exact validator messages, which already name columns and row counts), and `stderr_tail` (truncated to ~500 chars — the agent's own runtime errors are fair feedback).
+  - `{{SIDECAR}}` — same SIDECAR footer as the original prompt, unchanged.
+  - **Explicitly excluded** (per EXPERIMENTAL_DESIGN.md "does not include the acceptance ranges or any new information about correctness criteria"): `height_year10_mean`, `occupancy_year10_mean`, `height_in_range`, `occupancy_in_range`, `acceptance_ranges_used`, `src_loc`, `comment_loc`, `imports_loc`, `entropy_bits`.
+- [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py) — strict whitelist over the scorer JSON. Asserts the expected `schema_version`, copies only the named fields through. Anything new added to scorer.json in the future does NOT automatically leak into recovery prompts.
 - [harness/conformance.py](harness/conformance.py) — step 2 mechanical check: greps for `import mesa` / `from mesa` / Mesa base-class instantiation on Mesa runs; for Josh, looks for `*.josh` files, `*.jshd`, and `josh parse` exit zero on the produced files.
 - [harness/conformance_fuzzy.py](harness/conformance_fuzzy.py) — optional, gated by `SKIP_FUZZY_CONFORMANCE`; deferable but stub it so the manifest schema is complete.
 - [harness/docs_log.py](harness/docs_log.py) — joins opencode's trajectory log (WebFetch URLs) with the dnsmasq DNS log to produce the `docs_*` metric fields per README's metrics table, categorized via `config/docs_categories.yaml`.
 - [results/manifest.jsonl](results/manifest.jsonl) — empty, committed; the orchestrator appends per-run JSON records.
-- Update [orchestration/launch_run.sh](orchestration/launch_run.sh) to implement all five steps end-to-end and append the manifest row.
+- Update [orchestration/launch_run.sh](orchestration/launch_run.sh) to implement all five steps end-to-end and append the manifest row. The recovery flow:
+  1. Step 3 scorer runs (already in scope from Phase 3).
+  2. If `did_run=true AND height_in_range=true AND occupancy_in_range=true` → record `recovery_attempted=false`, skip steps 4-5.
+  3. Else: render the recovery prompt via `render_recovery_prompt.py` into `runs/<RUN_ID>/recovery_prompt.md`.
+  4. Invoke opencode a second time against the **same workspace** (the agent sees its prior implementation exactly as it left it, plus the recovery prompt). Record trajectory to `runs/<RUN_ID>/trajectory_recovery.jsonl`, stderr to `agent_stderr_recovery.log`.
+  5. Re-run the scorer container against the post-recovery workspace, writing to `runs/<RUN_ID>/scorer_recovery.json`.
+  6. Manifest row records both step-3 and step-5 outcomes side by side (`oneshot_*` and `recovery_*` field families).
 
 **Validation gate (end-to-end)**
 1. `MODEL=claude RUNG=5 TARGET=mesa RUN_ID=$(uuidgen) ./orchestration/launch_run.sh`.
 2. Inspect the appended row in [results/manifest.jsonl](results/manifest.jsonl): every metric listed in README's metrics table populated, including `target_conformance`, `oneshot_did_run`, `oneshot_height_in_range`, `oneshot_occupancy_in_range`, `recovery_attempted`, `prompt_tokens`, `completion_tokens`, `relevant_loc_oneshot`, `entropy_bits_oneshot`, `docs_*`, `wall_time_seconds`.
 3. Force the recovery path: run a deliberately weakened rung1 prompt that almost-certainly fails one-shot validation; confirm `recovery_attempted=true` and `recovery_*` fields populate.
-4. Run once with `TARGET=josh` to exercise the Josh runner path through the full flow.
+4. Grep gate on the rendered recovery prompt: `runs/<RUN_ID>/recovery_prompt.md` contains no occurrence of `height_year10_mean`, `occupancy_year10_mean`, `height_in_range`, `occupancy_in_range`, `acceptance_ranges_used`, `src_loc`, `entropy_bits` — confirms the strict whitelist in `render_recovery_prompt.py` holds.
+5. `scorer_recovery.json` carries the same `schema_version` as the step-3 `scorer.json`.
+6. Run once with `TARGET=josh` to exercise the Josh runner path through the full flow.
 
 ## Verification (end-of-plan acceptance)
 
@@ -194,7 +213,7 @@ Phase 2: [prompts/SIDECAR.md](prompts/SIDECAR.md), [harness/acceptance_ranges.js
 
 Phase 3: [prompts/rung1_minimal.md](prompts/rung1_minimal.md), [prompts/rung5_master.md](prompts/rung5_master.md), [config/models.yaml](config/models.yaml), [config/opencode.template.json](config/opencode.template.json), [config/docs_categories.yaml](config/docs_categories.yaml), [orchestration/launch_run.sh](orchestration/launch_run.sh).
 
-Phase 4: [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf), [orchestration/launch_batch.sh](orchestration/launch_batch.sh), updates to [orchestration/launch_run.sh](orchestration/launch_run.sh).
+Phase 4: [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf), [orchestration/launch_batch.sh](orchestration/launch_batch.sh), [orchestration/upload_run.sh](orchestration/upload_run.sh), updates to [orchestration/launch_run.sh](orchestration/launch_run.sh), [Dockerfile](Dockerfile) (mc install), [config/VERSIONS.md](config/VERSIONS.md) (mc pin), [.env.example](.env.example) (S3 / HMAC envs).
 
 Phase 5: [prompts/recovery_template.md](prompts/recovery_template.md), [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py), [harness/conformance.py](harness/conformance.py), [harness/conformance_fuzzy.py](harness/conformance_fuzzy.py), [harness/docs_log.py](harness/docs_log.py), [results/manifest.jsonl](results/manifest.jsonl).
 
