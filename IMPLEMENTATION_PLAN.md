@@ -73,7 +73,9 @@ Landed on `phase-1-env-bootstrap` (PR #2 → `dev`).
 
 ## Phase 2 — Scorer-only loop (no agents)
 
-Split four ways for reviewability: 2a (Java + bbox + spec, complete), 2b-core (Docker + harness), 2b-mesa (Mesa ref + broken-variant fixtures), 2c (Josh ref).
+Split three ways for reviewability: 2a (Java + bbox + spec, complete), 2b-core (Docker + harness, in PR #4), 2b-fixtures (static CSV fixtures exercising the scorer end-to-end).
+
+Hand-written reference implementations in Mesa and Josh are deferred. The scorer can be validated end-to-end against static CSV fixtures (a hand-crafted "golden" output plus four broken variants); a real model implementation isn't on the critical path until pilot agent data in phase 3+ tells us whether spec implementability needs separate verification.
 
 ### Phase 2a — Java upgrade, bbox fix, spec authoring *(complete)*
 
@@ -87,7 +89,7 @@ Landed on `phase-2a-java-bbox-spec` (PR #3 → `dev`, merged as `8f447d4`).
 - [harness/acceptance_ranges.json](harness/acceptance_ranges.json) — user-authored v0 ranges (height_year10 = [0, 11] m, occupancy_year10 = [9.9, 10.1]).
 - [config/VERSIONS.md](config/VERSIONS.md) — Java pin updated.
 
-### Phase 2b-core — Multistage Dockerfile + harness *(next)*
+### Phase 2b-core — Multistage Dockerfile + harness *(PR #4)*
 
 **Harness code to author**
 - [harness/run_metrics.py](harness/run_metrics.py) — top-level scorer entry point; invokes runner, validators, computes loc + entropy, emits JSON record on stdout AND writes `/sandbox/results/scorer.json`.
@@ -111,19 +113,25 @@ Landed on `phase-2a-java-bbox-spec` (PR #3 → `dev`, merged as `8f447d4`).
 - Smoke test: scorer against an empty workspace returns valid JSON with `did_run=false`, `csv_exists=false`, `relevant_loc=0`, `harness_errors=[]`.
 - The phase-2a image gates still pass on `fortree:agent`.
 
-### Phase 2b-mesa — Mesa reference + broken-variant fixtures *(after 2b-core)*
+### Phase 2b-fixtures — Static CSV fixtures *(after 2b-core)*
 
-- `reference/mesa/run.sh`, `reference/mesa/model.py` — hand-written Mesa 3.x ForeverTree on the native data grid (50 × 31), seeded for reproducibility.
-- `reference/broken/{schema,nan-heights,missing-year,nan-precip}/run.sh` — four tiny scripts heredoc-writing canned malformed CSVs; single `reference/broken/` parent.
-- Validation: scorer on `reference/mesa/` returns `did_run=true`, `height_in_range=true`, `occupancy_in_range=true`. Each broken fixture flips `csv_schema_ok=false`.
+Exercises the scorer end-to-end against hand-crafted CSVs. No model implementation; each fixture is a tiny `run.sh` that emits a canned CSV to `./output/results.csv`.
 
-### Phase 2c — Josh reference *(after 2b-mesa)*
+- `reference/golden/run.sh` — happy path. Emits a small valid CSV (e.g. 3×3 grid × 11 years = 99 rows) with hand-picked values inside the v0 acceptance ranges (height ∈ [0, 11] m, occupancy ≈ 10).
+- `reference/broken/schema/run.sh` — CSV with wrong column names. Expected: `csv_schema_ok=false`.
+- `reference/broken/nan-heights/run.sh` — CSV with NaN in `meanHeight`. Expected: `csv_schema_ok=false` (per the NaN-as-schema-violation rule).
+- `reference/broken/missing-year/run.sh` — CSV missing the 2034 row. Expected: `csv_schema_ok=false` via row-count check.
+- `reference/broken/nan-precip/run.sh` — CSV with NaN in `precipitation`. Expected: `csv_schema_ok=false`.
 
-- `reference/josh/run.sh`, `reference/josh/ForeverTree.josh`, `reference/josh/*.jshd`.
-- Verify Josh comment syntax against [llms-full.txt](https://raw.githubusercontent.com/SchmidtDSE/josh/refs/heads/main/llms-full.txt); finalize `harness/loc.py` rules for `.josh` / `.jshd` if needed.
-- Scorer passes on `reference/josh/` end-to-end; broken variants flip flags on the Josh side.
+Validation gates:
+- Scorer on `reference/golden/` returns `did_run=true`, `height_in_range=true`, `occupancy_in_range=true`, `harness_errors=[]`.
+- Scorer on each `reference/broken/*/` returns `csv_schema_ok=false` with a matching entry in `csv_schema_errors`, and `did_run=false`.
 
-**Why before agents (entire phase 2)**: validates spec wording, acceptance numbers, netCDF→grid→CSV alignment, and the entire scoring chain with zero LLM variance. If the scorer disagrees with hand-written correct code, no agent run is interpretable.
+**Why before agents (entire phase 2)**: validates spec wording, acceptance numbers, and the entire scoring chain with zero LLM variance. If the scorer disagrees with a known-good fixture, no agent run is interpretable.
+
+### Deferred (not on the critical path)
+
+- Hand-written Mesa and Josh reference implementations. Useful as a sanity check that the spec is implementable and as a regression test for harness changes, but neither is needed to validate the LLM scoring workflow end-to-end. Revisit if pilot agent runs (phase 3+) reveal that an independent baseline would clarify a methodological question.
 
 ## Phase 3 — Single agent call, end-to-end
 
@@ -176,13 +184,13 @@ The plan is complete when:
 - `./orchestration/launch_run.sh` runs to completion for at least three cells: (claude, rung5, mesa), (claude, rung5, josh), and a recovery-triggering (claude, rung1, mesa).
 - Each writes a manifest row with all metric fields populated.
 - All artifacts (workspace, opencode trajectory log, dnsmasq DNS log, scorer JSON, manifest row) are recoverable post-hoc from `./runs/<run-id>/`.
-- The reference implementations under `reference/{josh,mesa}/` still pass scoring (regression check that no harness change broke the scorer).
+- The static fixtures under `reference/golden/` and `reference/broken/*/` still produce the expected scorer outcomes (regression check that no harness change broke the scorer).
 
 ## Critical files to be created (summary)
 
 Phase 1: [Dockerfile](Dockerfile), [scripts/install_josh.sh](scripts/install_josh.sh), [entrypoint-scorer.sh](entrypoint-scorer.sh), [config/requirements.txt](config/requirements.txt), [config/VERSIONS.md](config/VERSIONS.md), `.env`, `.gitignore`, README "Host prerequisites" section.
 
-Phase 2: [prompts/SIDECAR.md](prompts/SIDECAR.md), [harness/acceptance_ranges.json](harness/acceptance_ranges.json), [harness/run_metrics.py](harness/run_metrics.py), [harness/runner.py](harness/runner.py), [harness/validators/output_schema.py](harness/validators/output_schema.py), [harness/validators/acceptance.py](harness/validators/acceptance.py), [harness/loc.py](harness/loc.py), [harness/entropy.py](harness/entropy.py), [harness/_files.py](harness/_files.py), `reference/josh/`, `reference/mesa/`.
+Phase 2: [prompts/SIDECAR.md](prompts/SIDECAR.md), [harness/acceptance_ranges.json](harness/acceptance_ranges.json), [harness/run_metrics.py](harness/run_metrics.py), [harness/runner.py](harness/runner.py), [harness/validators/output_schema.py](harness/validators/output_schema.py), [harness/validators/acceptance.py](harness/validators/acceptance.py), [harness/loc.py](harness/loc.py), [harness/entropy.py](harness/entropy.py), [harness/_files.py](harness/_files.py), `reference/golden/`, `reference/broken/{schema,nan-heights,missing-year,nan-precip}/`.
 
 Phase 3: [prompts/rung1_minimal.md](prompts/rung1_minimal.md), [prompts/rung5_master.md](prompts/rung5_master.md), [config/models.yaml](config/models.yaml), [config/opencode.template.json](config/opencode.template.json), [config/docs_categories.yaml](config/docs_categories.yaml), [orchestration/launch_run.sh](orchestration/launch_run.sh).
 
@@ -202,4 +210,4 @@ Phase 5: [prompts/recovery_template.md](prompts/recovery_template.md), [orchestr
 
 - Provide `OPENROUTER_API_KEY` (used from phase 3 onward).
 - Author [harness/acceptance_ranges.json](harness/acceptance_ranges.json) before phase 3 begins (technically before any agent runs). _Initial v0 ranges committed in PR #3._
-- Confirm or override the default assumption that Claude authors the hand-coded `reference/josh/` and `reference/mesa/` implementations.
+- (Deferred) Decide whether the experiment needs hand-coded Mesa / Josh reference implementations as an independent baseline. Not on the phase 2 critical path; revisit after pilot agent runs.
