@@ -70,7 +70,9 @@ def _ordered_record(
         "height_in_range": accept_out.get("height_in_range", False),
         "occupancy_in_range": accept_out.get("occupancy_in_range", False),
         "acceptance_ranges_used": accept_out.get("acceptance_ranges_used", {}),
-        "relevant_loc": loc_out.get("relevant_loc", 0),
+        "src_loc": loc_out.get("src_loc", 0),
+        "comment_loc": loc_out.get("comment_loc", 0),
+        "imports_loc": loc_out.get("imports_loc", 0),
         "loc_files_counted": loc_out.get("loc_files_counted", []),
         "entropy_bits": entropy_out.get("entropy_bits", 0.0),
         "harness_errors": harness_errors,
@@ -105,16 +107,16 @@ def main(argv: list[str] | None = None) -> int:
         harness_errors.append(f"runner.run:\n{traceback.format_exc()}")
 
     try:
-        schema_out = output_schema.check(workspace)
+        schema_out = output_schema.check_output_schema(workspace)
     except Exception:
-        harness_errors.append(f"output_schema.check:\n{traceback.format_exc()}")
+        harness_errors.append(f"output_schema.check_output_schema:\n{traceback.format_exc()}")
 
     if schema_out.get("csv_schema_ok"):
         try:
-            accept_out = acceptance.check(workspace, args.acceptance_ranges)
+            accept_out = acceptance.check_output_acceptable(workspace, args.acceptance_ranges)
             target_year = accept_out.get("acceptance_ranges_used", {}).get("target_year")
         except Exception:
-            harness_errors.append(f"acceptance.check:\n{traceback.format_exc()}")
+            harness_errors.append(f"acceptance.check_output_acceptable:\n{traceback.format_exc()}")
     else:
         try:
             with open(args.acceptance_ranges) as f:

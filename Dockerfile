@@ -38,13 +38,9 @@ RUN pip install --no-cache-dir -r /opt/requirements.txt
 COPY scripts/install_opencode.sh /tmp/install_opencode.sh
 RUN /tmp/install_opencode.sh && rm /tmp/install_opencode.sh
 
-# Pre-warm the tiktoken cl100k_base cache so entropy.py works offline.
-# Without this, `tiktoken.get_encoding('cl100k_base')` tries to fetch the
-# BPE file from openaipublic.blob.core.windows.net the first time it's
-# loaded — which fails under --network=none in the scorer.
 ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
-RUN mkdir -p "$TIKTOKEN_CACHE_DIR" \
-    && python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+COPY scripts/init_tiktoken.sh /tmp/init_tiktoken.sh
+RUN /tmp/init_tiktoken.sh && rm /tmp/init_tiktoken.sh
 
 WORKDIR /sandbox
 

@@ -1,9 +1,13 @@
-"""Relevant-LOC count, identical rules across targets.
+"""Lines-of-code by category, identical rules across targets.
 
-Strips: blank lines, full-line `#` or `//` comments, import-only lines.
-Inline trailing comments are NOT stripped (too brittle across languages).
+Classifies each non-blank line as one of:
+- `imports_loc`: lines matching `^\\s*(import|from)\\s`
+- `comment_loc`: lines matching `^\\s*(#|//)` (full-line only; inline
+  trailing comments are not stripped — too brittle across languages)
+- `src_loc`: everything else (the substantive code lines)
 
-The file selection is delegated to `_files.enumerate_source_files` so loc
+All three are reported; readers can sum to get total non-blank LOC.
+File selection is delegated to `_files.enumerate_source_files` so loc
 and entropy agree on which files count.
 """
 
@@ -19,31 +23,35 @@ _LINE_COMMENT = re.compile(r"^\s*(#|//)")
 _IMPORT_ONLY = re.compile(r"^\s*(import|from)\s")
 
 
-def _is_relevant(line: str) -> bool:
+def _classify(line: str) -> str | None:
+    """Return one of 'imports', 'comment', 'src', or None for blank."""
     if _BLANK.match(line):
-        return False
-    if _LINE_COMMENT.match(line):
-        return False
+        return None
     if _IMPORT_ONLY.match(line):
-        return False
-    return True
+        return "imports"
+    if _LINE_COMMENT.match(line):
+        return "comment"
+    return "src"
 
 
 def count(workspace: Path, target: str) -> dict:
     workspace = workspace.resolve()
     files = enumerate_source_files(workspace, target)
 
-    relevant = 0
+    counts = {"src": 0, "comment": 0, "imports": 0}
     for path in files:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for line in text.splitlines():
-            if _is_relevant(line):
-                relevant += 1
+            category = _classify(line)
+            if category is not None:
+                counts[category] += 1
 
     return {
-        "relevant_loc": relevant,
+        "src_loc": counts["src"],
+        "comment_loc": counts["comment"],
+        "imports_loc": counts["imports"],
         "loc_files_counted": [str(p.relative_to(workspace)) for p in files],
     }

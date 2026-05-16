@@ -1,15 +1,8 @@
 """Compare year-10 metrics from results.csv against acceptance ranges.
 
 Reads /opt/harness/acceptance_ranges.json (or an override path for tests).
-Only runs after output_schema.check passed — caller's responsibility to
-gate on csv_schema_ok.
-
-Per the v0 spec, occupancy is a trivial check: trees do not die, reproduce,
-or move, so mean tree count per cell at year 10 is whatever the user
-authored their `lo_count`/`hi_count` bounds around. We compute it as
-"rows-per-cell at target_year" (trivially 1 under the eleven-rows-per-cell
-contract); the v0 range [9.9, 10.1] expects the field to be reused as a
-direct tree-count under a future mortality-enabled spec.
+Only runs after the schema check passed — caller's responsibility to gate
+on csv_schema_ok.
 """
 
 from __future__ import annotations
@@ -20,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 
-def check(workspace: Path, ranges_path: Path) -> dict:
+def check_output_acceptable(workspace: Path, ranges_path: Path) -> dict:
     with open(ranges_path) as f:
         ranges = json.load(f)
 
