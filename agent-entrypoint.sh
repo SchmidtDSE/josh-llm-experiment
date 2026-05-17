@@ -51,7 +51,7 @@ export_session() {
 }
 
 on_term() {
-  echo "[entrypoint] SIGTERM received; terminating opencode pid=$OPENCODE_PID" >&2
+  echo "[entrypoint] SIGTERM received; terminating opencode pid=${OPENCODE_PID:-(none)}" >&2
   if [ -n "$OPENCODE_PID" ] && kill -0 "$OPENCODE_PID" 2>/dev/null; then
     kill -TERM "$OPENCODE_PID" 2>/dev/null || true
     # Block until opencode exits — the outer watcher's grace window
