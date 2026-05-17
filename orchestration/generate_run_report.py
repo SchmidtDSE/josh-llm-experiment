@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Render a single-file Markdown report from a finished runs/<RUN_ID>/.
 
-Designed for CI artifact review: a reviewer can read report.md and see
-the full prompt the agent received, every file in the resulting workspace,
-the sequence of tool calls, the model's final message, and the scorer
-record — without rerunning the workflow.
+Designed for CI artifact review: a reviewer opens report.md and the very
+first thing they see is a verdict card (did the agent ship a working
+implementation?), followed by the workspace files claude actually
+produced. The full transcript — prompt, every tool call's input JSON,
+DNS log — is collapsed into a single bottom "Diagnostics" section so it
+doesn't bury the answer.
 
 Data flow:
 - `opencode export` (called inside the agent container by
@@ -12,8 +14,8 @@ Data flow:
   <RUN_DIR>/agent_artifacts/session_export.json. We read that here
   rather than walking the streaming `trajectory.jsonl` event log.
 - A Jinja2 template at orchestration/templates/report.md.j2 owns the
-  report's shape; this script just collects values and hands them to
-  the renderer.
+  report's shape; this script just collects values, decides on per-tool
+  compact labels, and hands them to the renderer.
 
 Usage:
   generate_run_report.py <run-dir>      # writes Markdown to stdout
@@ -23,14 +25,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-FILE_TRUNCATE_BYTES = 2048
-TOOL_INPUT_TRUNCATE_CHARS = 400
-TEXT_TRUNCATE_CHARS = 4000
+# Per-file body cap inside the workspace fold. Generous because the content
+# is hidden behind <details>; tightened only to avoid a 10MB single-file
+# blowup making the report unviewable.
+FILE_TRUNCATE_BYTES = 64 * 1024
+TEXT_TRUNCATE_CHARS = 8 * 1024  # last assistant message — visible by default
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 TEMPLATE_NAME = "report.md.j2"
@@ -58,10 +64,10 @@ def _truncate_bytes(text: str, limit: int) -> tuple[str, bool]:
 
 
 def _metadata(run_dir: Path) -> dict:
-    """Flat key→str map for the metadata table. None means 'not recorded'."""
+    """Flat key→value map for the metadata table. None means 'not recorded'."""
     meta = _read_json(run_dir / "run_meta.json") or {}
     final = _read_json(run_dir / "run_meta.final.json") or {}
-    rows = {
+    return {
         "run_id": meta.get("run_id"),
         "model": meta.get("model"),
         "resolved_model_id": meta.get("resolved_model_id"),
@@ -75,31 +81,35 @@ def _metadata(run_dir: Path) -> dict:
         "trajectory_size_bytes": final.get("trajectory_size_bytes"),
         "stderr_size_bytes": final.get("stderr_size_bytes"),
     }
-    return rows
 
 
 def _workspace_files(run_dir: Path) -> list[dict]:
+    """Files the agent produced in workspace/, biggest first.
+
+    Sorting by size desc puts the deliverable (typically a multi-KB .py
+    or .josh) above bookkeeping files like run.sh.
+    """
     workspace = run_dir / "workspace"
     if not workspace.is_dir():
         return []
     files: list[dict] = []
-    for path in sorted(workspace.rglob("*")):
+    for path in workspace.rglob("*"):
         if not path.is_file():
             continue
-        rel = path.relative_to(workspace)
         text = _read_text(path)
         if text is None:
-            body, truncated = "_binary or unreadable_", False
+            body, truncated = "(binary or unreadable)", False
         else:
             body, truncated = _truncate_bytes(text, FILE_TRUNCATE_BYTES)
         files.append(
             {
-                "path": str(rel),
+                "path": str(path.relative_to(workspace)),
                 "size": path.stat().st_size,
                 "body": body,
                 "truncated": truncated,
             }
         )
+    files.sort(key=lambda f: (-f["size"], f["path"]))
     return files
 
 
@@ -119,11 +129,60 @@ def _msg_role(msg: dict) -> str | None:
     return None
 
 
-def _tool_calls_from_export(export: dict) -> list[dict]:
-    """Pull tool invocations out of every message's parts.
+def _ellipsize(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
 
-    Per opencode's ToolPart schema:
-      { "type": "tool", "tool": "<name>", "state": { "status": ..., "input": {...}, ... } }
+
+def _tool_call_label(tool: str, tool_input: object) -> str:
+    """One-line label for a tool call. Tries to surface the most useful arg.
+
+    Falls back to "<tool> <comma-separated input keys>" for tools we
+    don't have a specific format for, so the trajectory stays scannable
+    even when opencode adds a new tool.
+    """
+    if not isinstance(tool_input, dict):
+        return tool
+
+    def s(key: str) -> str | None:
+        value = tool_input.get(key)
+        return value if isinstance(value, str) else None
+
+    if tool == "write":
+        path = s("filePath") or s("path") or "?"
+        content = tool_input.get("content")
+        size = len(content) if isinstance(content, str) else None
+        return f"write {path}" + (f" ({size} bytes)" if size is not None else "")
+    if tool == "edit":
+        return f"edit {s('filePath') or s('path') or '?'}"
+    if tool == "read":
+        return f"read {s('filePath') or s('path') or '?'}"
+    if tool == "bash":
+        return f"bash $ {_ellipsize(s('command') or '', 80)}"
+    if tool == "glob":
+        return f"glob {s('pattern') or '?'}"
+    if tool == "grep":
+        return f"grep {s('pattern') or '?'}"
+    if tool == "webfetch":
+        return f"webfetch {s('url') or '?'}"
+    if tool == "todowrite":
+        todos = tool_input.get("todos")
+        n = len(todos) if isinstance(todos, list) else None
+        return f"todowrite ({n} todos)" if n is not None else "todowrite"
+    if tool == "invalid":
+        attempted = s("tool")
+        return f"invalid (tried '{attempted}')" if attempted else "invalid"
+    keys = ", ".join(sorted(tool_input.keys())) or "(empty)"
+    return f"{tool} [{keys}]"
+
+
+def _tool_calls_from_export(export: dict) -> list[dict]:
+    """Extract tool invocations as a flat list, with a compact label per call.
+
+    Per opencode's ToolPart schema (message-v2.ts upstream):
+      { "type": "tool", "tool": "<name>",
+        "state": { "status": ..., "input": {...}, ... } }
     """
     calls: list[dict] = []
     for msg in _iter_messages(export):
@@ -134,18 +193,28 @@ def _tool_calls_from_export(export: dict) -> list[dict]:
             if not isinstance(part, dict) or part.get("type") != "tool":
                 continue
             tool_name = part.get("tool")
-            state = part.get("state") if isinstance(part.get("state"), dict) else {}
-            tool_input = state.get("input")
             if not isinstance(tool_name, str):
                 continue
+            state = part.get("state") if isinstance(part.get("state"), dict) else {}
+            tool_input = state.get("input")
             try:
-                serialized = json.dumps(tool_input, default=str)
+                input_json = json.dumps(tool_input, indent=2, default=str)
             except (TypeError, ValueError):
-                serialized = repr(tool_input)
-            if len(serialized) > TOOL_INPUT_TRUNCATE_CHARS:
-                serialized = serialized[:TOOL_INPUT_TRUNCATE_CHARS] + "…"
-            calls.append({"tool": tool_name, "input": serialized})
+                input_json = repr(tool_input)
+            calls.append(
+                {
+                    "tool": tool_name,
+                    "label": _tool_call_label(tool_name, tool_input),
+                    "input_json": input_json,
+                }
+            )
     return calls
+
+
+def _tool_call_counts(calls: list[dict]) -> list[tuple[str, int]]:
+    """[(tool_name, count), ...] sorted by count desc, tie-break by name."""
+    counter = Counter(call["tool"] for call in calls)
+    return sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
 
 
 def _last_assistant_text(export: dict) -> tuple[str, bool]:
@@ -159,7 +228,9 @@ def _last_assistant_text(export: dict) -> tuple[str, bool]:
         texts = [
             part["text"]
             for part in parts
-            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
+            if isinstance(part, dict)
+            and part.get("type") == "text"
+            and isinstance(part.get("text"), str)
         ]
         joined = "\n".join(texts).strip()
         if joined:
@@ -167,29 +238,59 @@ def _last_assistant_text(export: dict) -> tuple[str, bool]:
     return "", False
 
 
+SCORER_FIELDS = [
+    "schema_version", "target", "target_year", "did_run",
+    "exit_code", "wall_time_seconds", "timed_out",
+    "csv_exists", "csv_row_count", "csv_schema_ok", "csv_schema_errors",
+    "height_year10_mean", "occupancy_year10_mean",
+    "height_in_range", "occupancy_in_range",
+    "src_loc", "comment_loc", "imports_loc",
+    "entropy_bits", "harness_errors",
+]
+
+
 def _scorer_record(run_dir: Path) -> dict | None:
-    """Flat key→value map of fields the report surfaces."""
     scorer = _read_json(run_dir / "scorer.json")
     if scorer is None:
         return None
-    fields = [
-        "schema_version", "target", "target_year", "did_run",
-        "exit_code", "wall_time_seconds", "timed_out",
-        "csv_exists", "csv_row_count", "csv_schema_ok", "csv_schema_errors",
-        "height_year10_mean", "occupancy_year10_mean",
-        "height_in_range", "occupancy_in_range",
-        "src_loc", "comment_loc", "imports_loc",
-        "entropy_bits", "harness_errors",
-    ]
-    out: dict = {}
-    for key in fields:
-        if key not in scorer:
-            continue
-        value = scorer[key]
-        if isinstance(value, (list, dict)):
-            value = json.dumps(value)
-        out[key] = value
-    return out
+    return {k: scorer[k] for k in SCORER_FIELDS if k in scorer}
+
+
+def _verdict(scorer: dict | None) -> list[dict]:
+    """Top-of-report ✓/✗ rows. Empty list if no scorer.json."""
+    if not scorer:
+        return []
+    rows: list[dict] = []
+
+    def row(label: str, value):
+        rows.append({"label": label, "ok": bool(value), "value": value})
+
+    row("did_run", scorer.get("did_run"))
+    row("csv_schema_ok", scorer.get("csv_schema_ok"))
+    row("height_in_range", scorer.get("height_in_range"))
+    row("occupancy_in_range", scorer.get("occupancy_in_range"))
+    return rows
+
+
+_DNS_QUERY_RE = re.compile(r"query\[[A-Z]+\]\s+(\S+)\s+from")
+
+
+def _dns_summary(run_dir: Path) -> list[tuple[str, int]] | None:
+    """Aggregate dnsmasq query log into [(host, count), ...] desc by count.
+
+    Returns None if dns.log doesn't exist (e.g., phase-4b sidecar wasn't
+    wired in for this run). Returns [] if the file exists but had no
+    matching queries.
+    """
+    path = run_dir / "dns.log"
+    if not path.is_file():
+        return None
+    try:
+        body = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    hosts = Counter(_DNS_QUERY_RE.findall(body))
+    return sorted(hosts.items(), key=lambda kv: (-kv[1], kv[0]))
 
 
 def render(run_dir: Path) -> str:
@@ -199,6 +300,8 @@ def render(run_dir: Path) -> str:
     # Prefer the recorded run_id over the mount-dir name — the workflow
     # mounts <RUN_DIR> at /run, so run_dir.name is "run" inside CI.
     run_id = metadata.get("run_id") or run_dir.name
+    scorer = _scorer_record(run_dir)
+    tool_calls = _tool_calls_from_export(export)
 
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
@@ -212,10 +315,13 @@ def render(run_dir: Path) -> str:
         metadata=metadata,
         prompt=(_read_text(run_dir / "prompt.md") or ""),
         workspace_files=_workspace_files(run_dir),
-        tool_calls=_tool_calls_from_export(export),
+        tool_calls=tool_calls,
+        tool_call_counts=_tool_call_counts(tool_calls),
         last_assistant_text=text,
         last_assistant_text_truncated=text_truncated,
-        scorer=_scorer_record(run_dir),
+        scorer=scorer,
+        verdict=_verdict(scorer),
+        dns_summary=_dns_summary(run_dir),
     )
 
 
