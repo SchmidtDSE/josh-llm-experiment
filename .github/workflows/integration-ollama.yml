@@ -123,6 +123,21 @@ jobs:
           echo "--- report.md (head) ---"
           head -50 "runs/$RUN_ID/report.md"
 
+      - name: Publish report.md to the workflow Summary tab
+        # Posts the rendered Markdown into the workflow run's Summary so a
+        # reviewer can read the verdict + workspace + tool trace directly
+        # in the GH UI, without downloading the artifact. $GITHUB_STEP_SUMMARY
+        # has a 1 MiB cap; our reports are ~50-100 KB.
+        if: always()
+        run: |
+          set -euo pipefail
+          REPORT="runs/${{ steps.run.outputs.run_id }}/report.md"
+          if [ -s "$REPORT" ]; then
+            cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_(no report.md produced — see workflow logs and artifact)_" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Collect ollama logs
         if: always()
         run: |
