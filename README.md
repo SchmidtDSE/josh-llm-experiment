@@ -59,7 +59,7 @@ are present on the current branch.
 ├── harness/                      # acceptance_ranges.json today;
 │                                 # scoring entry point + runners + validators planned, phase 2b
 ├── orchestration/                # (planned, phase 3+) — launch_run.sh, launch_batch.sh, dnsmasq.conf
-├── .github/workflows/            # CI: smoke.yml (deterministic, every push) + integration-ollama.yml (workflow_dispatch)
+├── .github/workflows/            # CI: smoke.yml (deterministic, every push) + integration.yml (workflow_dispatch, ollama or openrouter)
 └── results/                      # (planned, phase 5) — per-run JSON manifests
 ```
 
@@ -104,8 +104,8 @@ docker run --rm fortree:dnsmasq --test             # validates dnsmasq.conf synt
 ### Running the integration test locally
 
 The agent path supports Ollama as an OpenRouter-free alternative. Useful
-for replication without a paid API key, and for the `integration-ollama.yml`
-CI workflow.
+for replication without a paid API key, and for the `integration.yml`
+CI workflow's ollama branch.
 
 ```sh
 # 1. Install ollama on the host (https://ollama.com/download).
@@ -133,9 +133,13 @@ fallback for resource-constrained environments.
 - `.github/workflows/smoke.yml` runs on every push and on PRs to `dev`/`main`.
   It builds `fortree:scorer` and asserts every fixture under `reference/`
   produces the expected scorer outcome — no model is invoked.
-- `.github/workflows/integration-ollama.yml` is `workflow_dispatch`-only.
-  It runs a full agent → scorer pipeline against Ollama and uploads
-  `runs/<id>/` (including a rendered `report.md`) as a workflow artifact.
+- `.github/workflows/integration.yml` is `workflow_dispatch`-only.
+  Inputs `model`, `rung`, `target`. Dispatches on the model short-name:
+  - `ollama-*` → free, spins up ollama on the runner. Slow on CPU.
+  - anything else → uses OpenRouter; requires repo secret `OPENROUTER_API_KEY`.
+  Runs the full agent → scorer → report pipeline. Uploads `runs/<id>/`
+  as a workflow artifact, and posts the rendered `report.md` into the
+  run's Summary tab for in-UI review.
 
 ### One-off local run *(planned, phase 5)*
 

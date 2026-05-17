@@ -11,7 +11,7 @@
 #   directory, so no per-file entry is needed.
 #
 # Note: dependabot does NOT scan workflow-embedded image references like
-# the ollama/ollama digest in integration-ollama.yml's env block, so that
+# the ollama/ollama digest in integration.yml's env block, so that
 # pin is currently bumped by hand. Renovate would catch it; revisit if the
 # manual churn becomes a problem.
 version: 2
