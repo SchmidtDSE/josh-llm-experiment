@@ -7,8 +7,13 @@
       }
     },
     "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "{env:OLLAMA_HOST}/v1"
+      },
+      "models": {
+        "qwen2.5-coder:1.5b": {},
+        "qwen2.5-coder:7b": {}
       }
     }
   },

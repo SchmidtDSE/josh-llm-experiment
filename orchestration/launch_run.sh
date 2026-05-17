@@ -47,7 +47,8 @@ fi
 
 WORKSPACE_DIR="$RUN_DIR/workspace"
 CONFIG_DIR="$RUN_DIR/.opencode"
-mkdir -p "$WORKSPACE_DIR" "$CONFIG_DIR"
+AGENT_ARTIFACTS_DIR="$RUN_DIR/agent_artifacts"
+mkdir -p "$WORKSPACE_DIR" "$CONFIG_DIR" "$AGENT_ARTIFACTS_DIR"
 
 RESOLVED_MODEL_ID="$("$REPO_ROOT/orchestration/resolve_model.py" "$MODEL")"
 

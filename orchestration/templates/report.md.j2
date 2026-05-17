@@ -1,0 +1,152 @@
+{# Jinja2 template for runs/<id>/report.md. Order is reviewer-first:
+   verdict + workspace + final message at the top; full prompt + tool
+   trajectory + DNS log collapsed at the bottom.
+
+   Every emission of opaque content (prompt, file bodies, JSON, dns.log)
+   uses <pre>{{ value | e }}</pre>. <pre> blocks are not re-parsed as
+   markdown by GFM renderers, so embedded triple-backticks / `#` headings
+   / HTML tags inside agent-produced content cannot leak into the report
+   layout. The `| e` filter HTML-escapes <, >, &, " so claude's literal
+   `</details>` etc. stays inert.
+
+   Avoid embedding markdown inside <details> bodies — keep summaries on
+   the outer markdown layer and put everything else under <pre>.
+#}
+# Run report — `{{ run_id }}`
+
+## At a glance
+
+| Field | Value |
+|---|---|
+| `model` | {{ metadata.model }} → `{{ metadata.resolved_model_id }}` |
+| `rung` | {{ metadata.rung }} |
+| `target` | {{ metadata.target }} |
+| `agent_exit_code` | `{{ metadata.agent_exit_code }}` |
+| `stream_stalled` | `{{ metadata.stream_stalled }}` |
+| `started_at` → `ended_at` | `{{ metadata.started_at }}` → `{{ metadata.ended_at }}` |
+{%- if verdict %}
+
+**Verdict**
+{% for row in verdict %}
+- {% if row.ok %}✅{% else %}❌{% endif %} `{{ row.label }}`{% if row.value is not none and row.value is not sameas true and row.value is not sameas false %} — `{{ row.value }}`{% endif %}
+{%- endfor %}
+{%- else %}
+
+_No scorer.json — verdict not available._
+{%- endif %}
+
+**Tool calls**: {{ tool_calls|length }} total
+{%- if tool_call_counts %} ({% for tool, n in tool_call_counts %}{{ tool }}: {{ n }}{% if not loop.last %} • {% endif %}{% endfor %}){%- endif %}
+
+---
+
+## Workspace
+{%- if not workspace_files %}
+
+_workspace is empty or missing_
+{%- else %}
+
+The {{ workspace_files|length }} file{% if workspace_files|length != 1 %}s{% endif %} the agent produced, biggest first.
+{% for file in workspace_files %}
+<details>
+<summary><code>{{ file.path }}</code> — {{ file.size }} bytes{% if file.truncated %} (truncated){% endif %}</summary>
+
+<pre>{{ file.body | e }}</pre>
+</details>
+{% endfor %}
+{%- endif %}
+
+---
+
+## Final assistant message
+{%- if not last_assistant_text %}
+
+_no assistant text in session export_
+{%- else %}
+
+<pre>{{ last_assistant_text | e }}</pre>
+{%- if last_assistant_text_truncated %}
+
+_(truncated)_
+{%- endif %}
+{%- endif %}
+
+---
+
+## Scorer
+{%- if not scorer %}
+
+_scorer.json missing or unreadable_
+{%- else %}
+
+| Field | Value |
+|---|---|
+{%- for key, value in scorer.items() if key not in ('csv_schema_errors', 'harness_errors') %}
+{%- if value is mapping or (value is iterable and value is not string) %}
+| `{{ key }}` | `{{ value | tojson }}` |
+{%- else %}
+| `{{ key }}` | `{{ value }}` |
+{%- endif %}
+{%- endfor %}
+
+{%- set csv_errs = scorer.get('csv_schema_errors') or [] %}
+{%- set harness_errs = scorer.get('harness_errors') or [] %}
+{%- if csv_errs %}
+
+<details>
+<summary><code>csv_schema_errors</code> ({{ csv_errs|length }})</summary>
+
+<pre>{{ csv_errs | join('\n') | e }}</pre>
+</details>
+{%- endif %}
+{%- if harness_errs %}
+
+<details>
+<summary><code>harness_errors</code> ({{ harness_errs|length }})</summary>
+
+<pre>{{ harness_errs | join('\n\n---\n\n') | e }}</pre>
+</details>
+{%- endif %}
+{%- endif %}
+
+---
+
+## Diagnostics
+
+<details>
+<summary>Rendered prompt ({{ prompt|length }} chars)</summary>
+
+<pre>{{ prompt | e }}</pre>
+</details>
+
+<details>
+<summary>Tool-call trajectory ({{ tool_calls|length }} calls)</summary>
+
+{% if not tool_calls %}
+_no tool calls in session export_
+{%- else %}
+{% for call in tool_calls %}
+<details>
+<summary>{{ loop.index }}. <code>{{ call.label | e }}</code></summary>
+
+<pre>{{ call.input_json | e }}</pre>
+</details>
+{% endfor %}
+{%- endif %}
+</details>
+
+{% if dns_summary is not none %}
+<details>
+<summary>DNS log ({{ dns_summary|length }} unique host{% if dns_summary|length != 1 %}s{% endif %})</summary>
+
+{% if not dns_summary %}
+_no DNS queries captured_
+{%- else %}
+| Host | Queries |
+|---|---|
+{%- for host, count in dns_summary %}
+| `{{ host }}` | {{ count }} |
+{%- endfor %}
+{%- endif %}
+</details>
+{%- endif %}
