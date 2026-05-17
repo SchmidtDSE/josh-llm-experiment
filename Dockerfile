@@ -50,8 +50,14 @@ WORKDIR /sandbox
 
 # ---------- agent stage ----------
 FROM base AS agent
-# No additional payload. `fortree:agent` is `base` under a different tag.
-# Notably does NOT contain /opt/harness/ or the scorer entrypoint.
+# Notably does NOT contain /opt/harness/ or the scorer entrypoint —
+# `fortree:agent` cannot read /opt/harness/acceptance_ranges.json because
+# those files only exist in `fortree:scorer`. The only payload is a thin
+# wrapper that runs `opencode run` and then `opencode export` so the
+# orchestrator can read a normalized session JSON instead of walking the
+# streaming-event trajectory.
+COPY agent-entrypoint.sh /opt/agent-entrypoint.sh
+RUN chmod +x /opt/agent-entrypoint.sh
 
 # ---------- scorer stage ----------
 FROM base AS scorer

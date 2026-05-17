@@ -1,0 +1,68 @@
+{# Jinja2 template for runs/<id>/report.md, rendered by generate_run_report.py. #}
+# Run report — `{{ run_id }}`
+
+## Metadata
+| Field | Value |
+|---|---|
+{%- for key, value in metadata.items() %}
+| `{{ key }}` | `{{ value }}` |
+{%- endfor %}
+
+## Prompt
+<details>
+<summary>Rendered prompt ({{ prompt|length }} chars)</summary>
+
+```markdown
+{{ prompt }}
+```
+</details>
+
+## Workspace inventory
+{%- if not workspace_files %}
+_workspace is empty or missing_
+{%- else %}
+Files in workspace: **{{ workspace_files|length }}**
+
+{% for file in workspace_files %}
+<details>
+<summary><code>{{ file.path }}</code> — {{ file.size }} bytes{% if file.truncated %} (truncated, full file in artifact){% endif %}</summary>
+
+```
+{{ file.body }}
+```
+</details>
+{% endfor %}
+{%- endif %}
+
+## Tool-call trajectory
+{%- if not tool_calls %}
+_no tool calls in session export_
+{%- else %}
+{% for call in tool_calls %}
+{{ loop.index }}. **{{ call.tool }}** — `{{ call.input }}`
+{%- endfor %}
+{%- endif %}
+
+## Last assistant text
+{%- if not last_assistant_text %}
+_no assistant text in session export_
+{%- else %}
+```
+{{ last_assistant_text }}
+```
+{%- if last_assistant_text_truncated %}
+
+_(truncated)_
+{%- endif %}
+{%- endif %}
+
+## Scorer results
+{%- if not scorer %}
+_scorer.json missing or unreadable_
+{%- else %}
+| Field | Value |
+|---|---|
+{%- for key, value in scorer.items() %}
+| `{{ key }}` | `{{ value }}` |
+{%- endfor %}
+{%- endif %}

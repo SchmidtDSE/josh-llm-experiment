@@ -69,8 +69,8 @@ NETWORK_FLAGS+=(--add-host=host.docker.internal:host-gateway)
     -v "$REPO_ROOT/data":/sandbox/data:ro \
     -v "$RUN_DIR/.opencode":/root/.config/opencode \
     -v "$RUN_DIR/prompt.md":/opt/prompt.md:ro \
-    fortree:agent \
-    bash -c 'opencode run --dir /sandbox --agent coder --format json --print-logs "$(cat /opt/prompt.md)"' \
+    -v "$RUN_DIR/agent_artifacts":/opt/agent_meta \
+    fortree:agent /opt/agent-entrypoint.sh \
     > "$RUN_DIR/trajectory.jsonl" \
     2> "$RUN_DIR/agent_stderr.log"
 ) &
