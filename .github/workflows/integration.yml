@@ -1,25 +1,34 @@
-name: integration-ollama
+name: integration
 
-# End-to-end agent run against a local Ollama model. workflow_dispatch only:
-# every dispatch burns runner minutes (~5-10 min wall-clock dominated by the
-# initial model pull) but does NOT cost OpenRouter tokens, so it's the
-# methodology demo a reviewer can run without an API key.
+# End-to-end agent run. workflow_dispatch only. Supports both inference
+# paths via a single MODEL input (config/models.yaml resolves the short
+# name to a provider+slug):
 #
-# Outputs a workflow artifact containing the full runs/<id>/ tree plus a
-# rendered report.md — sufficient for a reviewer to see what the model
-# produced without rerunning.
+#   - ollama-* shortnames     → free; spins up an ollama container on
+#                               the runner, pulls the requested model,
+#                               agent reaches it via host.docker.internal.
+#                               Slow on CPU runners (qwen 7b often can't
+#                               emit before the idle watcher fires).
+#   - any other shortname     → uses OpenRouter; requires repo secret
+#                               OPENROUTER_API_KEY. ~$0.10 per dispatch
+#                               for claude; completes reliably.
 #
-# Ollama startup, model pull, and .env construction live in
-# .github/scripts/setup-ollama.sh so the workflow stays thin and the
-# script can be exercised locally.
+# Provider setup (start ollama OR write OPENROUTER_API_KEY to .env) is
+# dispatched in .github/scripts/setup-provider.sh based on the MODEL
+# prefix. Build steps, agent launch, scorer, report render, summary
+# publish, artifact upload are shared.
+#
+# Outputs a workflow artifact containing the full runs/<id>/ tree plus
+# a rendered report.md, and posts the same report into the run's
+# Summary tab for in-UI review.
 
 on:
   workflow_dispatch:
     inputs:
       model:
-        description: 'Short name from config/models.yaml (use ollama-* for key-free runs)'
+        description: 'Short name from config/models.yaml (ollama-* for key-free runs, otherwise uses OpenRouter via the OPENROUTER_API_KEY repo secret)'
         required: true
-        default: 'ollama-qwen-coder-7b'
+        default: 'claude'
       rung:
         description: 'Prompt rung (1 or 5)'
         required: true
@@ -74,8 +83,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Start Ollama, pull model, write .env
-        run: .github/scripts/setup-ollama.sh "$OLLAMA_IMAGE" "${{ inputs.model }}"
+      - name: Set up inference provider, write .env
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: .github/scripts/setup-provider.sh "$OLLAMA_IMAGE" "${{ inputs.model }}"
 
       - name: Launch agent run
         id: run
@@ -88,10 +99,13 @@ jobs:
           TARGET="${{ inputs.target }}" \
           RUN_ID="$RUN_ID" \
           WALL_CLOCK_BACKSTOP_SEC=1800 \
-          IDLE_THRESHOLD_SEC=180 \
+          IDLE_THRESHOLD_SEC=600 \
             ./orchestration/launch_run.sh || true
           # `|| true`: we want the workflow to keep going so the artifact +
           # report capture whatever the agent produced, even on failure.
+          # IDLE_THRESHOLD_SEC=600 gives ollama 7b on CPU a chance to
+          # produce a first token; it's harmless on the openrouter path
+          # (claude exits naturally well before that).
 
       - name: Score workspace
         run: |
@@ -138,8 +152,8 @@ jobs:
             echo "_(no report.md produced — see workflow logs and artifact)_" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Collect ollama logs
-        if: always()
+      - name: Collect ollama logs (ollama path only)
+        if: always() && startsWith(inputs.model, 'ollama-')
         run: |
           docker logs ollama > "runs/${{ steps.run.outputs.run_id }}/ollama.log" 2>&1 || true
 
