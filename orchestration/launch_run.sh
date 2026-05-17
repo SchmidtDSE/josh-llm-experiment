@@ -48,7 +48,14 @@ fi
 WORKSPACE_DIR="$RUN_DIR/workspace"
 CONFIG_DIR="$RUN_DIR/.opencode"
 AGENT_ARTIFACTS_DIR="$RUN_DIR/agent_artifacts"
-mkdir -p "$WORKSPACE_DIR" "$CONFIG_DIR" "$AGENT_ARTIFACTS_DIR"
+# opencode_data persists opencode's per-session SQLite DB on the host so
+# (a) `opencode export` survives a TERM-killed agent and (b) the idle
+# watcher in run_agent.sh has a liveness signal that catches sub-agent
+# activity (parent agent's trajectory.jsonl goes silent while the `task`
+# tool runs a sub-agent, but the DB gets mtime'd on every session event
+# regardless of which agent emitted it).
+OPENCODE_DATA_DIR="$RUN_DIR/opencode_data"
+mkdir -p "$WORKSPACE_DIR" "$CONFIG_DIR" "$AGENT_ARTIFACTS_DIR" "$OPENCODE_DATA_DIR"
 
 RESOLVED_MODEL_ID="$("$REPO_ROOT/orchestration/resolve_model.py" "$MODEL")"
 

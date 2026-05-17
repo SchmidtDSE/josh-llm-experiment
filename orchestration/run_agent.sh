@@ -21,13 +21,20 @@
 # Two backstops layered:
 # - --kill-after=30: SIGKILL fires 30s after SIGTERM in case `docker run`
 #   wedges propagating signals to a hung container.
-# - Idle watcher: an in-script poller checks <RUN_DIR>/trajectory.jsonl
-#   every 10s; if its size hasn't grown for $IDLE_THRESHOLD_SEC, the
+# - Idle watcher: an in-script poller checks the opencode session DB's
+#   mtime every 10s; if it hasn't advanced for $IDLE_THRESHOLD_SEC, the
 #   watcher writes <RUN_DIR>/stream_stalled.flag and `docker kill`s the
 #   container. The wall-clock backstop is for total budget; the idle
 #   heartbeat catches silent stream stalls (LLM streams that wedge without
-#   producing more events but also don't error). See prior incident where
-#   claude/rung5/josh sat 24 min mid-stream with no trajectory growth.
+#   producing more events but also don't error).
+#
+# Why the DB mtime and not trajectory.jsonl size: when the agent invokes
+# the `task` tool (sub-agent), opencode pauses streaming on the parent
+# session while the sub-agent does its work. trajectory.jsonl appears
+# frozen for the whole sub-agent duration — minutes is normal — and the
+# old size-based watcher fired false stalls. Every opencode event from
+# either agent updates the SQLite DB, so its mtime is a true liveness
+# signal across the whole session tree.
 set -euo pipefail
 
 if [ $# -ne 1 ]; then
@@ -68,33 +75,51 @@ fi
     -v "$RUN_DIR/.opencode":/root/.config/opencode \
     -v "$RUN_DIR/prompt.md":/opt/prompt.md:ro \
     -v "$RUN_DIR/agent_artifacts":/opt/agent_meta \
+    -v "$RUN_DIR/opencode_data":/root/.local/share/opencode \
     fortree:agent /opt/agent-entrypoint.sh \
     > "$RUN_DIR/trajectory.jsonl" \
     2> "$RUN_DIR/agent_stderr.log"
 ) &
 AGENT_PID=$!
 
-# Idle watcher: polls trajectory.jsonl size; if no growth for IDLE_THRESHOLD,
-# kills the container. Distinct from the wall-clock backstop — this fires
-# fast when the LLM stream wedges silently.
+# Idle watcher: polls the opencode session DB's mtime; if it hasn't
+# advanced for IDLE_THRESHOLD, kills the container. Captures both
+# parent-agent and sub-agent activity uniformly.
 #
 # Two-stage kill so agent-entrypoint.sh's TERM trap can run opencode export
-# before the container goes away: SIGTERM first, wait 30s, then SIGKILL only
+# before the container goes away: SIGTERM first, wait 60s, then SIGKILL only
 # if the container hasn't exited on its own. Mirrors the wall-clock backstop
 # which uses `timeout --kill-after=30`.
+OPENCODE_DB_DIR="$RUN_DIR/opencode_data"
 (
-  last_size=0
+  last_mtime=0
   last_change_ts=$(date +%s)
   while kill -0 "$AGENT_PID" 2>/dev/null; do
     sleep 10
-    current_size=$(stat -c %s "$RUN_DIR/trajectory.jsonl" 2>/dev/null || echo 0)
-    if [ "$current_size" -ne "$last_size" ]; then
-      last_size=$current_size
+    # opencode runs SQLite in WAL mode: every transaction writes to
+    # opencode.db-wal first; opencode.db only mtime-bumps at checkpoint
+    # (~1000 frames or on shutdown). Take the max mtime across both
+    # files so live activity in the WAL counts as liveness even when
+    # the main DB file looks frozen. -shm is the shared-memory index
+    # and gets touched on every connection but not every transaction;
+    # leaving it out keeps the signal tight to "useful writes".
+    #
+    # Returns 0 when neither file exists yet (opencode hasn't booted),
+    # which makes the watcher start the clock from invocation; if
+    # opencode never writes anything within IDLE_THRESHOLD_SEC the
+    # watcher fires correctly (treating "startup wedge" as a stall).
+    current_mtime=$(stat -c %Y \
+      "$OPENCODE_DB_DIR/opencode.db" \
+      "$OPENCODE_DB_DIR/opencode.db-wal" \
+      2>/dev/null | sort -rn | head -1)
+    current_mtime="${current_mtime:-0}"
+    if [ "$current_mtime" -ne "$last_mtime" ]; then
+      last_mtime=$current_mtime
       last_change_ts=$(date +%s)
     fi
     idle_for=$(( $(date +%s) - last_change_ts ))
     if [ "$idle_for" -ge "$IDLE_THRESHOLD_SEC" ]; then
-      printf '[heartbeat] trajectory idle for %ds, terminating %s\n' "$idle_for" "$CONTAINER_NAME" >&2
+      printf '[heartbeat] opencode DB+WAL idle for %ds, terminating %s\n' "$idle_for" "$CONTAINER_NAME" >&2
       printf '{"idle_seconds": %d, "killed_at": "%s"}\n' \
         "$idle_for" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         > "$RUN_DIR/stream_stalled.flag"
