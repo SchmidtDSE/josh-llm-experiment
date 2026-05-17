@@ -61,8 +61,7 @@ FROM base AS agent
 # orchestrator can read a normalized session JSON instead of walking the
 # streaming-event trajectory.
 COPY agent-entrypoint.sh /opt/agent-entrypoint.sh
-COPY agent-host-internal.py /opt/agent-host-internal.py
-RUN chmod +x /opt/agent-entrypoint.sh /opt/agent-host-internal.py
+RUN chmod +x /opt/agent-entrypoint.sh
 
 # ---------- scorer stage ----------
 FROM base AS scorer

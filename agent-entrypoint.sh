@@ -33,18 +33,17 @@ OPENCODE_PID=""
 EXPORT_PATH="/opt/agent_meta/session_export.json"
 
 # Pre-flight: the agent shares the dnsmasq sidecar's network namespace
-# (--network=container:dnsmasq-<id>) so docker rejects --add-host /
-# --dns / etc on the agent container. We have to set up the two
-# per-container files (resolv.conf, hosts) ourselves at startup.
+# (--network=container:dnsmasq-<id>) so docker rejects --dns on the
+# agent container. Point /etc/resolv.conf at dnsmasq on 127.0.0.1:53
+# ourselves — otherwise docker's embedded DNS at 127.0.0.11 bypasses
+# our ipset and every connection would be blocked because no IPs would
+# ever land in the allowlist.
 #
-# 1. resolv.conf → point at dnsmasq on 127.0.0.1:53 (otherwise docker's
-#    embedded DNS at 127.0.0.11 bypasses our ipset and every connection
-#    would be blocked because no IPs would ever land in the allowlist).
-# 2. hosts → add `host.docker.internal` pointing at the docker bridge
-#    gateway so OLLAMA_HOST=http://host.docker.internal:11434 resolves.
-#    Logic factored into /opt/agent-host-internal.py.
+# host.docker.internal: docker propagates the sidecar's /etc/hosts
+# (which has `--add-host=host.docker.internal:host-gateway`) into this
+# container automatically when --network=container: is used. No work
+# needed here.
 echo "nameserver 127.0.0.1" > /etc/resolv.conf
-/opt/agent-host-internal.py || true
 
 export_session() {
   if [ ! -d /opt/agent_meta ]; then
