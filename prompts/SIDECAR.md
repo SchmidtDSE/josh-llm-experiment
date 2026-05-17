@@ -46,7 +46,14 @@ A single executable file `./run.sh` in the workspace root, plus whatever source 
 cd /sandbox && ./run.sh
 ```
 
-…your code must exit 0 and write `./output/results.csv`. The CSV is UTF-8, comma-separated, with a header row. Columns, in order:
+Your code must exit 0 and write `./output/results.csv`.
+
+Two requirements that are part of the delivery, not optional polish:
+
+- `./run.sh` must have the executable bit set. After writing it, run `chmod +x run.sh`. The scorer invokes the file as `./run.sh`; a script without the executable bit will not run.
+- Before you declare yourself done, execute `./run.sh` at least once yourself. Confirm it exits 0 and writes `./output/results.csv`. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
+
+The CSV is UTF-8, comma-separated, with a header row. Columns, in order:
 
 | Column          | Type   | Unit          |
 |-----------------|--------|---------------|

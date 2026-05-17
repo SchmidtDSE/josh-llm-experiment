@@ -64,6 +64,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build fortree:dnsmasq image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
+        with:
+          context: .
+          file: Dockerfile.dnsmasq
+          tags: fortree:dnsmasq
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Start Ollama, pull model, write .env
         run: .github/scripts/setup-ollama.sh "$OLLAMA_IMAGE" "${{ inputs.model }}"
 
@@ -98,10 +108,17 @@ jobs:
           cat "$RUN_DIR/scorer.json" || true
 
       - name: Generate run report
+        # Runs inside fortree:scorer because that image carries the
+        # report's pip deps (jinja2 via config/requirements.txt). The
+        # GH runner host doesn't have them.
         run: |
           set -euo pipefail
           RUN_ID="${{ steps.run.outputs.run_id }}"
-          python3 orchestration/generate_run_report.py "runs/$RUN_ID" \
+          docker run --rm --network=none \
+            -v "$PWD/runs/$RUN_ID":/run \
+            -v "$PWD/orchestration":/opt/orchestration:ro \
+            fortree:scorer \
+            python3 /opt/orchestration/generate_run_report.py /run \
             > "runs/$RUN_ID/report.md"
           echo "--- report.md (head) ---"
           head -50 "runs/$RUN_ID/report.md"
