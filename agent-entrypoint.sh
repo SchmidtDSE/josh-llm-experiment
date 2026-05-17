@@ -32,6 +32,49 @@ set -uo pipefail
 OPENCODE_PID=""
 EXPORT_PATH="/opt/agent_meta/session_export.json"
 
+# When the agent joins the sidecar's network namespace via
+# --network=container:dnsmasq-<id>, docker disallows --add-host on the
+# agent. /etc/hosts is per-container, not per-netns, so the sidecar's
+# host.docker.internal entry doesn't propagate. Detect the bridge
+# gateway from /proc/net/route (same netns as the sidecar = same default
+# route) and append the hosts entry ourselves so opencode/ollama with
+# OLLAMA_HOST=http://host.docker.internal:11434 still resolves.
+ensure_dns_through_sidecar() {
+  # Docker injects its embedded DNS (127.0.0.11) by default. With our
+  # --network=container:dnsmasq-<id> setup, dnsmasq itself is listening
+  # on 127.0.0.1:53 in the shared netns. Point /etc/resolv.conf at it
+  # so name resolution flows through dnsmasq's `ipset=` directives and
+  # populates the netfilter allowlist. Without this override the
+  # iptables egress filter would block every connection because no IPs
+  # would ever land in the ipset.
+  echo "nameserver 127.0.0.1" > /etc/resolv.conf
+}
+ensure_dns_through_sidecar
+
+ensure_host_docker_internal() {
+  if grep -qE '[[:space:]]host\.docker\.internal([[:space:]]|$)' /etc/hosts; then
+    return 0
+  fi
+  local gw
+  gw="$(python3 -c '
+import socket, struct
+with open("/proc/net/route") as f:
+    next(f)
+    for line in f:
+        parts = line.split()
+        if parts[1] == "00000000" and len(parts) >= 3:
+            print(socket.inet_ntoa(struct.pack("<L", int(parts[2], 16))))
+            break
+' 2>/dev/null)"
+  if [ -n "$gw" ]; then
+    echo "$gw host.docker.internal" >> /etc/hosts
+    echo "[entrypoint] resolved host.docker.internal → $gw" >&2
+  else
+    echo "[entrypoint] WARN: could not resolve default gateway; host.docker.internal not set" >&2
+  fi
+}
+ensure_host_docker_internal
+
 export_session() {
   if [ ! -d /opt/agent_meta ]; then
     return 0

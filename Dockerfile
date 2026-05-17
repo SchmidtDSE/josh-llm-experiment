@@ -66,12 +66,19 @@ COPY entrypoint-scorer.sh /opt/entrypoint-scorer.sh
 RUN chmod +x /opt/entrypoint-scorer.sh
 
 # ---------- dnsmasq stage ----------
-# Independent of `base` — runs only as a per-run DNS sidecar on the same
-# bridge network as the agent. Logs every query to stderr where launch_run.sh
-# captures it via `docker logs` on teardown.
+# Independent of `base`. Doubles as the per-run **egress enforcer** for
+# the agent: the agent joins this container's network namespace via
+# `docker run --network=container:dnsmasq-<id>`, so every packet the
+# agent sends traverses iptables rules configured here. Hosts on the
+# allowlist (see dnsmasq.conf `ipset=` entries) are added to a netfilter
+# ipset as they're resolved by dnsmasq; iptables only forwards traffic
+# to ipset members + a small static allowlist (loopback, upstream DNS,
+# docker bridge gateway for host.docker.internal). Everything else is
+# REJECTed at the kernel.
 FROM alpine:3.20 AS dnsmasq
-RUN apk add --no-cache dnsmasq
+RUN apk add --no-cache dnsmasq iptables ip6tables ipset
 COPY orchestration/dnsmasq.conf /etc/dnsmasq.conf
+COPY orchestration/sidecar-init.sh /usr/local/bin/sidecar-init.sh
+RUN chmod +x /usr/local/bin/sidecar-init.sh
 EXPOSE 53/udp 53/tcp
-# -k keeps dnsmasq in the foreground so the container stays up.
-ENTRYPOINT ["dnsmasq", "-k"]
+ENTRYPOINT ["/usr/local/bin/sidecar-init.sh"]

@@ -95,20 +95,22 @@ echo "  Backstop:   ${WALL_CLOCK_BACKSTOP_SEC}s"
 
 IDLE_THRESHOLD_SEC="${IDLE_THRESHOLD_SEC:-120}"
 
-# Start the DNS sidecar; trap teardown so a backstop/SIGTERM/manual abort
-# still captures dns.log and removes the network. dns_sidecar.sh writes
-# $RUN_DIR/dns_sidecar.env with AGENT_NETWORK + AGENT_DNS for the agent.
+# Start the DNS / egress sidecar; trap teardown so a backstop/SIGTERM/manual
+# abort still captures dns.log and removes the network. dns_sidecar.sh
+# writes $RUN_DIR/dns_sidecar.env with AGENT_NETMODE for the agent — a
+# string like `container:dnsmasq-<id>` that gets passed straight to
+# `docker run --network=...`, putting the agent in the sidecar's network
+# namespace so the sidecar's iptables rules enforce egress.
 trap '"$REPO_ROOT/orchestration/dns_sidecar.sh" stop "$RUN_DIR" || true' EXIT
 "$REPO_ROOT/orchestration/dns_sidecar.sh" start "$RUN_DIR"
 # shellcheck disable=SC1091
 source "$RUN_DIR/dns_sidecar.env"
-echo "  DNS:        $AGENT_DNS  (network $AGENT_NETWORK)"
+echo "  Net:        $AGENT_NETMODE (egress allowlist enforced)"
 
 set +e
 WALL_CLOCK_BACKSTOP_SEC="$WALL_CLOCK_BACKSTOP_SEC" \
 IDLE_THRESHOLD_SEC="$IDLE_THRESHOLD_SEC" \
-AGENT_NETWORK="$AGENT_NETWORK" \
-AGENT_DNS="$AGENT_DNS" \
+AGENT_NETMODE="$AGENT_NETMODE" \
   "$REPO_ROOT/orchestration/run_agent.sh" "$RUN_DIR"
 AGENT_EXIT=$?
 set -e

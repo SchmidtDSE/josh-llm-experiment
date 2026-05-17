@@ -42,22 +42,20 @@ IDLE_THRESHOLD_SEC="${IDLE_THRESHOLD_SEC:-120}"
 RUN_ID="$(basename "$RUN_DIR")"
 CONTAINER_NAME="fortree-agent-${RUN_ID}"
 
-# Optional network/DNS injection (phase 4b: agent talks DNS through a
-# dnsmasq sidecar that launch_run.sh starts on a per-run bridge network).
-# Empty by default → docker uses the default bridge with no --dns override,
-# preserving the phase-3 behavior.
+# Network mode injection (phase 4b: agent shares the dnsmasq sidecar's
+# network namespace via `--network=container:dnsmasq-<id>`, so every
+# packet the agent emits is filtered by the sidecar's iptables rules).
+# Empty AGENT_NETMODE → docker default bridge, no egress filter — only
+# used by tests or by callers that intentionally bypass dns_sidecar.sh.
 NETWORK_FLAGS=()
-if [ -n "${AGENT_NETWORK:-}" ]; then
-  NETWORK_FLAGS+=(--network "$AGENT_NETWORK")
+if [ -n "${AGENT_NETMODE:-}" ]; then
+  NETWORK_FLAGS+=(--network "$AGENT_NETMODE")
 fi
-if [ -n "${AGENT_DNS:-}" ]; then
-  NETWORK_FLAGS+=(--dns "$AGENT_DNS")
-fi
-# Always make `host.docker.internal` resolvable to the host — needed so the
-# agent can reach a host-published ollama (or any other host port) whether
-# we're on the default bridge or a custom per-run network. Cheap; harmless
-# when the agent doesn't use it.
-NETWORK_FLAGS+=(--add-host=host.docker.internal:host-gateway)
+# `--network=container:` is incompatible with `--add-host`, `--dns`,
+# `--hostname`, and similar — the agent inherits all of that from the
+# sidecar. `host.docker.internal` resolution is set up on the sidecar in
+# orchestration/dns_sidecar.sh and propagated by agent-entrypoint.sh
+# into the agent's own /etc/hosts at startup.
 
 # Launch the agent in the background so the watcher can run concurrently.
 (
