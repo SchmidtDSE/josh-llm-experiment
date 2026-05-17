@@ -5,11 +5,16 @@
       "options": {
         "apiKey": "{env:OPENROUTER_API_KEY}"
       }
+    },
+    "ollama": {
+      "options": {
+        "baseURL": "{env:OLLAMA_HOST}/v1"
+      }
     }
   },
   "agent": {
     "coder": {
-      "model": "openrouter/${RESOLVED_MODEL_ID}",
+      "model": "${RESOLVED_MODEL_ID}",
       "tools": {
         "read":     true,
         "write":    true,

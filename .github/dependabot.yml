@@ -1,0 +1,29 @@
+# Dependabot config — watch the things hash-pinned in this repo so a
+# malicious tag rewrite (or stale pin) gets a routine PR.
+#
+# - github-actions: scans every workflow under .github/workflows/ for
+#   `uses: owner/action@sha # version` lines and proposes bumps with the
+#   matching SHA + comment.
+# - docker (Dockerfile): bumps the FROM in the main Dockerfile.
+#
+# Note: dependabot does NOT scan workflow-embedded image references like
+# the ollama/ollama digest in integration-ollama.yml's env block, so that
+# pin is currently bumped by hand. Renovate would catch it; revisit if the
+# manual churn becomes a problem.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

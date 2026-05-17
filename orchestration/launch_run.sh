@@ -2,10 +2,11 @@
 # Launch a single phase-3 agent run: render the prompt, render opencode's
 # config, bind-mount a workspace, invoke opencode non-interactively.
 #
-# Required env vars: MODEL, RUNG, TARGET, RUN_ID (and OPENROUTER_API_KEY
-# in .env). Writes everything to runs/<RUN_ID>/. Does NOT score — phase 3
-# stops at "agent produced a workspace"; scoring is a follow-up command
-# printed at the end.
+# Required env vars: MODEL, RUNG, TARGET, RUN_ID, plus `.env` carrying
+# either OPENROUTER_API_KEY (for openrouter/* MODELs) or OLLAMA_HOST (for
+# ollama-* MODELs). Writes everything to runs/<RUN_ID>/. Does NOT score —
+# phase 3 stops at "agent produced a workspace"; scoring is a follow-up
+# command printed at the end.
 #
 # Phase-4 additions (dnsmasq DNS observation, --dns flag) are deliberately
 # absent: phase 3 first proves the end-to-end opencode → OpenRouter →
@@ -18,7 +19,7 @@
 #   - orchestration/run_agent.sh         (the docker-run invocation)
 set -euo pipefail
 
-: "${MODEL:?MODEL not set; pick a short name from config/models.yaml (claude|gemma|kimi|minimax|mistral)}"
+: "${MODEL:?MODEL not set; pick a short name from config/models.yaml (claude|gemma|kimi|minimax|mistral|ollama-qwen-coder-7b|ollama-qwen-coder-1_5b)}"
 : "${RUNG:?RUNG not set; 1 or 5 (rungs 2-4 deferred to pilot phase)}"
 : "${TARGET:?TARGET not set; josh or mesa}"
 : "${RUN_ID:?RUN_ID not set; use \$(uuidgen)}"
@@ -31,7 +32,8 @@ case "$RUNG"   in 1|5)       ;; *) echo "RUNG must be 1 or 5 (rungs 2-4 deferred
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [ ! -f "$REPO_ROOT/.env" ]; then
-  echo "Missing $REPO_ROOT/.env — copy .env.example and fill OPENROUTER_API_KEY" >&2
+  echo "Missing $REPO_ROOT/.env — copy .env.example and set the keys your MODEL needs" >&2
+  echo "  (OPENROUTER_API_KEY for openrouter/* models; OLLAMA_HOST for ollama-* models)" >&2
   exit 5
 fi
 

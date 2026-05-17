@@ -59,6 +59,7 @@ are present on the current branch.
 ├── harness/                      # acceptance_ranges.json today;
 │                                 # scoring entry point + runners + validators planned, phase 2b
 ├── orchestration/                # (planned, phase 3+) — launch_run.sh, launch_batch.sh, dnsmasq.conf
+├── .github/workflows/            # CI: smoke.yml (deterministic, every push) + integration-ollama.yml (workflow_dispatch)
 └── results/                      # (planned, phase 5) — per-run JSON manifests
 ```
 
@@ -95,6 +96,42 @@ docker run --rm fortree:latest opencode --version   # prints 1.14.50
 docker run --rm --network=none fortree:latest python -c "print('offline')"
 docker run --rm --env-file .env fortree:latest printenv OPENROUTER_API_KEY
 ```
+
+### Running the integration test locally
+
+The agent path supports Ollama as an OpenRouter-free alternative. Useful
+for replication without a paid API key, and for the `integration-ollama.yml`
+CI workflow.
+
+```sh
+# 1. Install ollama on the host (https://ollama.com/download).
+# 2. Pull the model used by the integration workflow:
+ollama pull qwen2.5-coder:7b   # ~4.7 GB
+
+# 3. Point the launcher at the host's ollama via .env. On Linux, the agent
+#    container reaches the host through the docker bridge gateway
+#    (typically 172.17.0.1). On macOS / Docker Desktop, use host.docker.internal.
+cp .env.example .env
+# edit .env:
+#   OLLAMA_HOST=http://172.17.0.1:11434       # Linux
+#   OLLAMA_HOST=http://host.docker.internal:11434  # macOS / Docker Desktop
+
+# 4. Run.
+MODEL=ollama-qwen-coder-7b RUNG=5 TARGET=mesa RUN_ID="$(uuidgen)" \
+  ./orchestration/launch_run.sh
+```
+
+`config/models.yaml` also exposes `ollama-qwen-coder-1_5b` as a smaller
+fallback for resource-constrained environments.
+
+### CI
+
+- `.github/workflows/smoke.yml` runs on every push and on PRs to `dev`/`main`.
+  It builds `fortree:scorer` and asserts every fixture under `reference/`
+  produces the expected scorer outcome — no model is invoked.
+- `.github/workflows/integration-ollama.yml` is `workflow_dispatch`-only.
+  It runs a full agent → scorer pipeline against Ollama and uploads
+  `runs/<id>/` (including a rendered `report.md`) as a workflow artifact.
 
 ### One-off local run *(planned, phase 5)*
 
@@ -169,7 +206,8 @@ listed here so the variable contract is visible from the start.
 
 | Variable                 | Used since | Required | Purpose |
 | ------------------------ | ---------- | -------- | ------- |
-| `OPENROUTER_API_KEY`     | phase 1    | yes      | API key for the OpenRouter gateway. Single key, all models. |
+| `OPENROUTER_API_KEY`     | phase 1    | conditional | API key for the OpenRouter gateway. Required when `MODEL` is an `openrouter/*` short name (all of `claude`, `gemma`, `kimi`, `minimax`, `mistral`). |
+| `OLLAMA_HOST`            | phase 4    | conditional | Base URL of an Ollama server (default `http://localhost:11434`). Required when `MODEL` is an `ollama-*` short name; ignored otherwise. From inside the agent container on Linux, point this at the docker bridge gateway (typically `http://172.17.0.1:11434`); on Docker Desktop / macOS, `http://host.docker.internal:11434`. |
 | `MODEL`                  | phase 3    | yes      | Short name from `config/models.yaml`. |
 | `RUNG`                   | phase 3    | yes      | Prompt rung, 1–5. |
 | `TARGET`                 | phase 3    | yes      | `josh` or `mesa`. |

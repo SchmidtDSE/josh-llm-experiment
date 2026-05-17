@@ -1,0 +1,42 @@
+name: smoke
+
+# Deterministic scorer smoke test: builds the scorer image, runs it against
+# every fixture under reference/, and asserts the expected csv_schema_ok +
+# csv_schema_errors[0] substring per fixture. No model is invoked — this
+# verifies that the harness/validators contract still holds whenever
+# anyone touches the harness, fixtures, or Dockerfile.
+#
+# Runs on every push and on PRs targeting dev or main. ~3-5 min wall-clock,
+# dominated by the cached Docker build.
+#
+# The fixture loop lives in .github/scripts/smoke-fixtures.sh; this workflow
+# is intentionally thin so the assertion logic is reviewable / runnable
+# locally without GH Actions.
+
+on:
+  push:
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  scorer-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
+
+      - name: Build fortree:scorer image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
+        with:
+          context: .
+          target: scorer
+          tags: fortree:scorer
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run scorer against every fixture
+        run: .github/scripts/smoke-fixtures.sh fortree:scorer

@@ -1,8 +1,15 @@
-# Short-name → OpenRouter model ID. Used by orchestration/launch_run.sh
-# to resolve the MODEL env var into the slug opencode sends to OpenRouter.
+# Short-name → provider/slug. Used by orchestration/resolve_model.py
+# to resolve MODEL into the slug opencode sends to the provider.
+# The leading path component (openrouter/ or ollama/) is what opencode
+# uses to dispatch to the matching provider block in opencode.json.
 # Frozen for the headline experiment; bump the batch tag if any entry changes.
-claude:   anthropic/claude-sonnet-4.5
-gemma:    google/gemma-3-27b-it
-kimi:     moonshotai/kimi-k2
-minimax:  minimax/minimax-m2
-mistral:  mistralai/mistral-large-2411
+claude:   openrouter/anthropic/claude-sonnet-4.5
+gemma:    openrouter/google/gemma-3-27b-it
+kimi:     openrouter/moonshotai/kimi-k2
+minimax:  openrouter/minimax/minimax-m2
+mistral:  openrouter/mistralai/mistral-large-2411
+
+# Local-LLM path for CI smoke + key-free replication. The underscore in
+# 1_5b is to keep YAML from coercing "1.5b" to a float.
+ollama-qwen-coder-7b:   ollama/qwen2.5-coder:7b
+ollama-qwen-coder-1_5b: ollama/qwen2.5-coder:1.5b

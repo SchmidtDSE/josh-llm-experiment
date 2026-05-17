@@ -1,0 +1,120 @@
+name: integration-ollama
+
+# End-to-end agent run against a local Ollama model. workflow_dispatch only:
+# every dispatch burns runner minutes (~5-10 min wall-clock dominated by the
+# initial model pull) but does NOT cost OpenRouter tokens, so it's the
+# methodology demo a reviewer can run without an API key.
+#
+# Outputs a workflow artifact containing the full runs/<id>/ tree plus a
+# rendered report.md — sufficient for a reviewer to see what the model
+# produced without rerunning.
+#
+# Ollama startup, model pull, and .env construction live in
+# .github/scripts/setup-ollama.sh so the workflow stays thin and the
+# script can be exercised locally.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Short name from config/models.yaml (use ollama-* for key-free runs)'
+        required: true
+        default: 'ollama-qwen-coder-7b'
+      rung:
+        description: 'Prompt rung (1 or 5)'
+        required: true
+        default: '5'
+      target:
+        description: 'Target stack (josh or mesa)'
+        required: true
+        default: 'mesa'
+
+env:
+  # Pinned by digest so a malicious tag-rewrite on Docker Hub can't change
+  # what we run. Bump alongside dependabot PRs that update the tag suffix.
+  OLLAMA_IMAGE: 'ollama/ollama:0.24.0@sha256:a6149234667efc71d37766d61c1a16f24c33e4cd7a0bf4125c44a7e47e2419c4'
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
+
+      - name: Build fortree:agent image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
+        with:
+          context: .
+          target: agent
+          tags: fortree:agent
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build fortree:scorer image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
+        with:
+          context: .
+          target: scorer
+          tags: fortree:scorer
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start Ollama, pull model, write .env
+        run: .github/scripts/setup-ollama.sh "$OLLAMA_IMAGE" "${{ inputs.model }}"
+
+      - name: Launch agent run
+        id: run
+        run: |
+          set -euo pipefail
+          RUN_ID="ci-$(uuidgen)"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          MODEL="${{ inputs.model }}" \
+          RUNG="${{ inputs.rung }}" \
+          TARGET="${{ inputs.target }}" \
+          RUN_ID="$RUN_ID" \
+          WALL_CLOCK_BACKSTOP_SEC=1800 \
+          IDLE_THRESHOLD_SEC=180 \
+            ./orchestration/launch_run.sh || true
+          # `|| true`: we want the workflow to keep going so the artifact +
+          # report capture whatever the agent produced, even on failure.
+
+      - name: Score workspace
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ steps.run.outputs.run_id }}"
+          RUN_DIR="runs/$RUN_ID"
+          mkdir -p "$RUN_DIR"
+          docker run --rm --network=none \
+            -v "$PWD/$RUN_DIR/workspace":/sandbox \
+            -v "$PWD/data":/sandbox/data:ro \
+            fortree:scorer /opt/entrypoint-scorer.sh --target "${{ inputs.target }}" \
+            > "$RUN_DIR/scorer.json" || true
+          echo "--- scorer.json ---"
+          cat "$RUN_DIR/scorer.json" || true
+
+      - name: Generate run report
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ steps.run.outputs.run_id }}"
+          python3 orchestration/generate_run_report.py "runs/$RUN_ID" \
+            > "runs/$RUN_ID/report.md"
+          echo "--- report.md (head) ---"
+          head -50 "runs/$RUN_ID/report.md"
+
+      - name: Collect ollama logs
+        if: always()
+        run: |
+          docker logs ollama > "runs/${{ steps.run.outputs.run_id }}/ollama.log" 2>&1 || true
+
+      - name: Upload run artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: run-${{ steps.run.outputs.run_id }}-${{ inputs.model }}-rung${{ inputs.rung }}-${{ inputs.target }}
+          path: runs/${{ steps.run.outputs.run_id }}/
+          if-no-files-found: warn
