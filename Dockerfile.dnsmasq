@@ -1,0 +1,36 @@
+# Per-run egress-enforcement sidecar. Builds `fortree:dnsmasq`.
+#
+#   docker build -f Dockerfile.dnsmasq -t fortree:dnsmasq .
+#
+# Deliberately a SEPARATE Dockerfile from the main one — this image is
+# structurally unrelated to base/agent/scorer:
+#
+#   - Built FROM alpine, not FROM base. Shares zero layers with the
+#     agent/scorer images. ~16 MB total vs base's ~1.5 GB.
+#   - Has no python, java, josh, opencode, or scientific stack. The only
+#     payload is dnsmasq + iptables + ipset + a small init script. That
+#     minimal surface is the point: even if sidecar-init.sh were
+#     compromised, there's no shell-out vector (no python, no curl etc.).
+#
+# Lifecycle (see orchestration/dns_sidecar.sh):
+#   1. launch_run.sh creates a per-run docker bridge network.
+#   2. Starts this image on it with CAP_NET_ADMIN +
+#      --add-host=host.docker.internal:host-gateway.
+#   3. The agent joins the sidecar's netns via
+#      --network=container:dnsmasq-<id>, so every packet it sends
+#      traverses the iptables rules installed below.
+#
+# Egress policy (see orchestration/sidecar-init.sh):
+#   - dnsmasq populates a netfilter ipset (`allowed_dst`) as it resolves
+#     each host listed in orchestration/dnsmasq.conf's `ipset=` lines.
+#   - iptables OUTPUT chain ACCEPTs loopback, ESTABLISHED/RELATED,
+#     53/udp+tcp to upstream DNS, the docker bridge gateway, and
+#     destinations in `allowed_dst`. Everything else is REJECTed.
+
+FROM alpine:3.20
+RUN apk add --no-cache dnsmasq iptables ip6tables ipset
+COPY orchestration/dnsmasq.conf /etc/dnsmasq.conf
+COPY orchestration/sidecar-init.sh /usr/local/bin/sidecar-init.sh
+RUN chmod +x /usr/local/bin/sidecar-init.sh
+EXPOSE 53/udp 53/tcp
+ENTRYPOINT ["/usr/local/bin/sidecar-init.sh"]

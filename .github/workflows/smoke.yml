@@ -55,7 +55,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
           context: .
-          target: dnsmasq
+          file: Dockerfile.dnsmasq
           tags: fortree:dnsmasq
           load: true
           cache-from: type=gha
