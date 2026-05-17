@@ -197,6 +197,10 @@ def _scorer_record(run_dir: Path) -> dict | None:
 def render(run_dir: Path) -> str:
     export = _read_json(run_dir / "agent_artifacts" / "session_export.json") or {}
     text, text_truncated = _last_assistant_text(export)
+    metadata = _metadata(run_dir)
+    # Prefer the recorded run_id over the mount-dir name — the workflow
+    # mounts <RUN_DIR> at /run, so run_dir.name is "run" inside CI.
+    run_id = metadata.get("run_id") or run_dir.name
 
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
@@ -206,8 +210,8 @@ def render(run_dir: Path) -> str:
     )
     template = env.get_template(TEMPLATE_NAME)
     return template.render(
-        run_id=run_dir.name,
-        metadata=_metadata(run_dir),
+        run_id=run_id,
+        metadata=metadata,
         prompt=(_read_text(run_dir / "prompt.md") or ""),
         workspace_files=_workspace_files(run_dir),
         tool_calls=_tool_calls_from_export(export),
