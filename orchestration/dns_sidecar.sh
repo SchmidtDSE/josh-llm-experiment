@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
-# DNS-observability sidecar lifecycle for a single agent run.
+# DNS-observation + egress-enforcement sidecar lifecycle for one agent run.
 #
 # Usage:
-#   dns_sidecar.sh start <RUN_DIR>     # create network + start dnsmasq
+#   dns_sidecar.sh start <RUN_DIR>     # create network + start sidecar
 #   dns_sidecar.sh stop  <RUN_DIR>     # collect log, tear down
 #
-# `start` creates a fresh docker bridge network and runs `fortree:dnsmasq`
-# (built from the Dockerfile dnsmasq stage) on it. It writes
-# <RUN_DIR>/dns_sidecar.env with two lines for the caller to source:
-#   AGENT_NETWORK=fortree-run-<id>
-#   AGENT_DNS=<sidecar-ip-on-that-network>
+# `start`:
+#   1. Creates a fresh docker bridge network (`fortree-run-<id>`).
+#   2. Runs `fortree:dnsmasq` on that network with CAP_NET_ADMIN +
+#      `--add-host=host.docker.internal:host-gateway`. The sidecar's
+#      sidecar-init.sh installs iptables rules that REJECT anything not
+#      on the dnsmasq-maintained ipset allowlist, then execs dnsmasq.
+#   3. Writes <RUN_DIR>/dns_sidecar.env with one line for the caller:
+#        AGENT_NETMODE=container:<sidecar-container-name>
+#      run_agent.sh passes that string to `docker run --network=...`,
+#      so the agent shares the sidecar's network namespace and is
+#      forced through the iptables rules.
 #
-# `stop` is idempotent — safe to call from a trap that may fire after the
-# agent's wall-clock backstop killed everything. It writes <RUN_DIR>/dns.log
-# from the sidecar's stdout/stderr, removes the sidecar container, and
-# removes the network. Missing pieces are skipped without error.
+# `stop` is idempotent: capture docker-logs into <RUN_DIR>/dns.log,
+# remove the sidecar container, remove the network. Safe to call from
+# an EXIT trap even after a backstop SIGKILL.
 set -euo pipefail
 
 SIDECAR_IMAGE="${SIDECAR_IMAGE:-fortree:dnsmasq}"
-
-_run_id_of() {
-  basename "$(realpath "$1")"
-}
 
 cmd_start() {
   local run_dir="$(realpath "$1")"
@@ -34,21 +35,30 @@ cmd_start() {
   docker run -d --name "$container" \
     --network "$network" \
     --cap-add NET_ADMIN \
+    --add-host=host.docker.internal:host-gateway \
     "$SIDECAR_IMAGE" > /dev/null
 
-  # Resolve the sidecar's IP on the new network.
-  local sidecar_ip
-  sidecar_ip=$(docker inspect -f \
-    "{{(index .NetworkSettings.Networks \"${network}\").IPAddress}}" \
-    "$container")
-  if [ -z "$sidecar_ip" ]; then
-    echo "dns_sidecar: failed to resolve $container IP on $network" >&2
+  # Block until the sidecar's HEALTHCHECK reports healthy. Until then
+  # iptables rules + dnsmasq aren't necessarily up, so an agent joining
+  # the netns could see docker's default DNS (127.0.0.11) and bypass
+  # our ipset, OR could leak traffic before the OUTPUT chain is loaded.
+  # See HEALTHCHECK in Dockerfile.dnsmasq.
+  local status
+  for _ in $(seq 1 30); do
+    status="$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo unknown)"
+    if [ "$status" = "healthy" ]; then
+      break
+    fi
+    sleep 0.5
+  done
+  if [ "$status" != "healthy" ]; then
+    echo "dns_sidecar: $container did not become healthy within 15s (last status: $status)" >&2
+    docker logs "$container" >&2 || true
     exit 1
   fi
 
   cat > "$run_dir/dns_sidecar.env" <<ENV
-AGENT_NETWORK=$network
-AGENT_DNS=$sidecar_ip
+AGENT_NETMODE=container:$container
 ENV
 }
 

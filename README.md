@@ -76,12 +76,12 @@ The host needs Docker and [uv][uv]. Install each manually:
 # 2. uv — Astral's single-binary Python tool installer.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 3. Build the multistage fortree image. Used as the agent runtime
-#    (--target agent), the --network=none scorer (--target scorer), and
-#    the per-run dnsmasq sidecar (--target dnsmasq).
-docker build --target agent   -t fortree:agent   .
-docker build --target scorer  -t fortree:scorer  .
-docker build --target dnsmasq -t fortree:dnsmasq .
+# 3. Build the three fortree images. The agent + scorer share a base
+#    layer (Dockerfile) and differ only in payload; the dnsmasq sidecar
+#    is built from a separate alpine-based Dockerfile.dnsmasq.
+docker build --target agent  -t fortree:agent  .
+docker build --target scorer -t fortree:scorer .
+docker build -f Dockerfile.dnsmasq -t fortree:dnsmasq .
 ```
 
 [uv]: https://docs.astral.sh/uv/

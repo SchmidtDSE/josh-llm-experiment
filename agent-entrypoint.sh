@@ -32,6 +32,19 @@ set -uo pipefail
 OPENCODE_PID=""
 EXPORT_PATH="/opt/agent_meta/session_export.json"
 
+# The agent shares the dnsmasq sidecar's network namespace via
+# --network=container:dnsmasq-<id>, and docker bind-mounts the
+# sidecar's /etc/hosts AND /etc/resolv.conf into this container at the
+# same paths (same underlying inode — observable with `stat -c %i`).
+# So everything network-identity-shaped is already configured by
+# sidecar-init.sh:
+#   - /etc/resolv.conf → "nameserver 127.0.0.1" (dnsmasq listening on
+#     loopback in the shared netns; populates the ipset allowlist).
+#   - /etc/hosts → host.docker.internal pointing at the bridge gateway
+#     (from the sidecar's --add-host=host.docker.internal:host-gateway).
+# dns_sidecar.sh blocks on the sidecar's HEALTHCHECK before returning,
+# so by the time we get here the sidecar's writes are guaranteed visible.
+
 export_session() {
   if [ ! -d /opt/agent_meta ]; then
     return 0
