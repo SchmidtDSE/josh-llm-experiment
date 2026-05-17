@@ -38,6 +38,25 @@ cmd_start() {
     --add-host=host.docker.internal:host-gateway \
     "$SIDECAR_IMAGE" > /dev/null
 
+  # Block until the sidecar's HEALTHCHECK reports healthy. Until then
+  # iptables rules + dnsmasq aren't necessarily up, so an agent joining
+  # the netns could see docker's default DNS (127.0.0.11) and bypass
+  # our ipset, OR could leak traffic before the OUTPUT chain is loaded.
+  # See HEALTHCHECK in Dockerfile.dnsmasq.
+  local status
+  for _ in $(seq 1 30); do
+    status="$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo unknown)"
+    if [ "$status" = "healthy" ]; then
+      break
+    fi
+    sleep 0.5
+  done
+  if [ "$status" != "healthy" ]; then
+    echo "dns_sidecar: $container did not become healthy within 15s (last status: $status)" >&2
+    docker logs "$container" >&2 || true
+    exit 1
+  fi
+
   cat > "$run_dir/dns_sidecar.env" <<ENV
 AGENT_NETMODE=container:$container
 ENV

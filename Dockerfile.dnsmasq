@@ -33,4 +33,16 @@ COPY orchestration/dnsmasq.conf /etc/dnsmasq.conf
 COPY orchestration/sidecar-init.sh /usr/local/bin/sidecar-init.sh
 RUN chmod +x /usr/local/bin/sidecar-init.sh
 EXPOSE 53/udp 53/tcp
+
+# Healthcheck so the orchestrator (orchestration/dns_sidecar.sh) can
+# block the agent's start until the sidecar's iptables rules are
+# installed AND dnsmasq is actually accepting queries. `pidof dnsmasq`
+# only goes nonzero before sidecar-init.sh has reached its `exec dnsmasq`
+# line; once dnsmasq is up, iptables rules are also already in place
+# (init runs them first, sequentially, before exec). Tight cadence so
+# the orchestrator wait is short — the whole startup is sub-second on
+# a warm host.
+HEALTHCHECK --interval=1s --timeout=2s --start-period=1s --retries=5 \
+  CMD pidof dnsmasq >/dev/null || exit 1
+
 ENTRYPOINT ["/usr/local/bin/sidecar-init.sh"]

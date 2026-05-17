@@ -33,25 +33,29 @@ docker run -d --name "$SIDECAR" \
   --add-host=host.docker.internal:host-gateway \
   "$SIDECAR_IMAGE" >/dev/null
 
-# Wait for sidecar-init.sh to install iptables rules and exec dnsmasq.
-# It's cheap (<1s typically) but the docker daemon takes its time.
-for _ in $(seq 1 10); do
-  if docker exec "$SIDECAR" pgrep dnsmasq >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
+# Wait for the sidecar's HEALTHCHECK to flip to `healthy` before probing.
+# Until then iptables rules + dnsmasq aren't guaranteed up, and the
+# probes would race the init. See HEALTHCHECK in Dockerfile.dnsmasq.
+status=""
+for _ in $(seq 1 30); do
+  status="$(docker inspect -f '{{.State.Health.Status}}' "$SIDECAR" 2>/dev/null || echo unknown)"
+  if [ "$status" = "healthy" ]; then break; fi
+  sleep 0.5
 done
+if [ "$status" != "healthy" ]; then
+  echo "firewall-probe: sidecar didn't become healthy within 15s (last status: $status)" >&2
+  docker logs "$SIDECAR" >&2 || true
+  exit 1
+fi
 
 probe_tcp() {
   local host="$1"
   local port="$2"
-  # Override /etc/resolv.conf so name resolution goes through the
-  # sidecar's dnsmasq (which populates the ipset). Docker injects its
-  # embedded DNS at 127.0.0.11 by default; that bypasses the allowlist.
-  docker run --rm --network "container:$SIDECAR" "$PROBE_IMAGE" sh -c "
-    echo nameserver 127.0.0.1 > /etc/resolv.conf
-    nc -zvw5 $host $port
-  "
+  # The probe container also inherits the sidecar's /etc/resolv.conf
+  # (same inode under --network=container:), so DNS goes through
+  # dnsmasq and the ipset populates. No per-probe override needed.
+  docker run --rm --network "container:$SIDECAR" "$PROBE_IMAGE" \
+    nc -zvw5 "$host" "$port"
 }
 
 # Hosts chosen for stability: openrouter.ai + mesa.readthedocs.io are
