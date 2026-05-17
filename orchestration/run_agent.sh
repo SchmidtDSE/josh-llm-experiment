@@ -79,6 +79,11 @@ AGENT_PID=$!
 # Idle watcher: polls trajectory.jsonl size; if no growth for IDLE_THRESHOLD,
 # kills the container. Distinct from the wall-clock backstop — this fires
 # fast when the LLM stream wedges silently.
+#
+# Two-stage kill so agent-entrypoint.sh's TERM trap can run opencode export
+# before the container goes away: SIGTERM first, wait 30s, then SIGKILL only
+# if the container hasn't exited on its own. Mirrors the wall-clock backstop
+# which uses `timeout --kill-after=30`.
 (
   last_size=0
   last_change_ts=$(date +%s)
@@ -91,11 +96,24 @@ AGENT_PID=$!
     fi
     idle_for=$(( $(date +%s) - last_change_ts ))
     if [ "$idle_for" -ge "$IDLE_THRESHOLD_SEC" ]; then
-      printf '[heartbeat] trajectory idle for %ds, killing %s\n' "$idle_for" "$CONTAINER_NAME" >&2
+      printf '[heartbeat] trajectory idle for %ds, terminating %s\n' "$idle_for" "$CONTAINER_NAME" >&2
       printf '{"idle_seconds": %d, "killed_at": "%s"}\n' \
         "$idle_for" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         > "$RUN_DIR/stream_stalled.flag"
-      docker kill --signal=SIGKILL "$CONTAINER_NAME" 2>/dev/null || true
+      docker kill --signal=SIGTERM "$CONTAINER_NAME" 2>/dev/null || true
+      # Grace window for the TERM trap to: wait for opencode to flush
+      # + die (often slow under CPU load), then start a fresh `opencode
+      # export` (~6s cold-start). 60s comfortably covers both on the
+      # CPU-only GH-hosted runner.
+      grace=60
+      for _ in $(seq 1 "$grace"); do
+        kill -0 "$AGENT_PID" 2>/dev/null || break
+        sleep 1
+      done
+      if kill -0 "$AGENT_PID" 2>/dev/null; then
+        printf '[heartbeat] %s still alive after %ds, SIGKILL\n' "$CONTAINER_NAME" "$grace" >&2
+        docker kill --signal=SIGKILL "$CONTAINER_NAME" 2>/dev/null || true
+      fi
       exit 0
     fi
   done

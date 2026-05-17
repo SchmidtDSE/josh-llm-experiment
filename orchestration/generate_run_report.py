@@ -104,38 +104,39 @@ def _workspace_files(run_dir: Path) -> list[dict]:
 
 
 def _iter_messages(export: dict) -> list[dict]:
-    """Pull the message list out of opencode's export shape.
+    """Return opencode export's `messages` list (empty if absent)."""
+    messages = export.get("messages")
+    return messages if isinstance(messages, list) else []
 
-    Tolerates two common layouts: top-level `messages`, or nested under
-    `session.messages`. Returns [] when neither is present.
-    """
-    if isinstance(export.get("messages"), list):
-        return export["messages"]
-    session = export.get("session")
-    if isinstance(session, dict) and isinstance(session.get("messages"), list):
-        return session["messages"]
-    return []
+
+def _msg_role(msg: dict) -> str | None:
+    """Role lives at `messages[].info.role` per opencode message-v2 schema."""
+    info = msg.get("info")
+    if isinstance(info, dict):
+        role = info.get("role")
+        if isinstance(role, str):
+            return role
+    return None
 
 
 def _tool_calls_from_export(export: dict) -> list[dict]:
-    """Pull tool invocations out of the message list.
+    """Pull tool invocations out of every message's parts.
 
-    A tool part is identified by either `type == "tool"` or the presence
-    of a `tool` field plus a `state` mapping with `input`.
+    Per opencode's ToolPart schema:
+      { "type": "tool", "tool": "<name>", "state": { "status": ..., "input": {...}, ... } }
     """
     calls: list[dict] = []
     for msg in _iter_messages(export):
-        parts = msg.get("parts") or msg.get("content") or []
+        parts = msg.get("parts")
         if not isinstance(parts, list):
             continue
         for part in parts:
-            if not isinstance(part, dict):
+            if not isinstance(part, dict) or part.get("type") != "tool":
                 continue
-            tool_name = part.get("tool") or part.get("name")
+            tool_name = part.get("tool")
             state = part.get("state") if isinstance(part.get("state"), dict) else {}
-            tool_input = state.get("input") if state else part.get("input")
-            is_tool = part.get("type") == "tool" or (tool_name and tool_input is not None)
-            if not is_tool or not tool_name:
+            tool_input = state.get("input")
+            if not isinstance(tool_name, str):
                 continue
             try:
                 serialized = json.dumps(tool_input, default=str)
@@ -148,21 +149,18 @@ def _tool_calls_from_export(export: dict) -> list[dict]:
 
 
 def _last_assistant_text(export: dict) -> tuple[str, bool]:
-    """Concatenate text parts from the last assistant message."""
+    """Concatenate `type: text` parts of the last assistant message."""
     for msg in reversed(_iter_messages(export)):
-        if msg.get("role") != "assistant":
+        if _msg_role(msg) != "assistant":
             continue
-        parts = msg.get("parts") or msg.get("content") or []
+        parts = msg.get("parts")
         if not isinstance(parts, list):
             continue
-        texts: list[str] = []
-        for part in parts:
-            if isinstance(part, dict) and part.get("type") in ("text", None):
-                value = part.get("text") or part.get("content")
-                if isinstance(value, str):
-                    texts.append(value)
-            elif isinstance(part, str):
-                texts.append(part)
+        texts = [
+            part["text"]
+            for part in parts
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
+        ]
         joined = "\n".join(texts).strip()
         if joined:
             return _truncate_bytes(joined, TEXT_TRUNCATE_CHARS)
