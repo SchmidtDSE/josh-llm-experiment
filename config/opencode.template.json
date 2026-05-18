@@ -59,7 +59,8 @@
           "mkdir *":     "allow",
           "*":           "deny"
         },
-        "webfetch": "allow"
+        "webfetch": "allow",
+        "external_directory": "allow"
       }
     }
   }
