@@ -1,0 +1,9 @@
+model,rung,target,replicates
+claude,1,mesa,2
+claude,1,josh,2
+claude,5,mesa,2
+claude,5,josh,2
+gemma4,1,mesa,2
+gemma4,1,josh,2
+gemma4,5,mesa,2
+gemma4,5,josh,2

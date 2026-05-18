@@ -191,6 +191,15 @@ cell owns its own bridge network + dnsmasq sidecar (named by
 ./orchestration/launch_batch.py --cells cells.csv --jobs 8
 ```
 
+While the batch runs, the orchestrator shows a live panel with the
+cells currently in flight + their lifecycle phase
+(`AGENT → SCORE → REPORT → DONE`, derived by polling each run dir for
+which artifacts exist), a progress bar with rough ETA, and a per-cell
+✔/✗ scroll above the panel. When a cell fails, the last ~20 lines of
+its log are dumped inline so you don't have to navigate to find the
+cause. In non-TTY contexts (CI, redirects, piping to `tee`), the live
+panel auto-disables and you get clean line-oriented output instead.
+
 Per-cell outputs go to `runs/<RUN_ID>/` (same layout as a single cell).
 Batch metadata goes to a sibling `runs/<BATCH_TAG>/`:
 
@@ -214,16 +223,22 @@ Concurrency caps and what binds them, roughly worst-binding first:
 - **CPU** is rarely binding: most wall time is API wait, with short
   bursts during `./run.sh` and JVM startup.
 
-Host prerequisites for the orchestrator: Python 3.11+ and `pyyaml`.
-The cleanest setup is to open the repo in the included
-[`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json),
-which provides Python 3.11 + docker-in-docker out of the box (same
-pattern the existing GitHub codespace uses). For a bare SSH host
-without devcontainers:
+Host prerequisites for the orchestrator: Docker, Python 3.11+, and
+[uv][uv]. `pyproject.toml` at the repo root declares `pyyaml` and
+`rich` (the latter powers the live UI and auto-degrades to plain
+output in non-TTY contexts; the import itself is required). One-time
+setup on a fresh host:
 
 ```sh
-sudo apt-get install -y python3 python3-pip  # debian/ubuntu
-pip install pyyaml
+curl -LsSf https://astral.sh/uv/install.sh | sh   # if uv isn't already there
+uv sync                                            # installs pyyaml + rich into .venv
+```
+
+Then invoke the orchestrator through uv so the venv is picked up
+automatically:
+
+```sh
+uv run orchestration/launch_batch.py --cells cells.csv --jobs 8
 ```
 
 The batch driver also runs a pre-sweep cleanup of any orphan

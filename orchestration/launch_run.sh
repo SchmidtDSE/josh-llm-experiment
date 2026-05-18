@@ -38,6 +38,13 @@ if [ ! -f "$REPO_ROOT/.env" ]; then
   echo "  (OPENROUTER_API_KEY for openrouter/* models; OLLAMA_HOST for ollama-* models)" >&2
   exit 5
 fi
+# Source .env into the host shell so host-bound knobs (WALL_CLOCK_BACKSTOP_SEC,
+# IDLE_THRESHOLD_SEC, BATCH_CONCURRENCY, …) take effect alongside the
+# container-bound ones (OPENROUTER_API_KEY, OLLAMA_HOST) that --env-file
+# already injects. set -a auto-exports every assignment; set +a restores.
+set -a
+. "$REPO_ROOT/.env"
+set +a
 
 RUN_DIR="$REPO_ROOT/runs/$RUN_ID"
 if [ -e "$RUN_DIR" ]; then

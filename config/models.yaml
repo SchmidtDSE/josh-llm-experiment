@@ -5,6 +5,7 @@
 # Frozen for the headline experiment; bump the batch tag if any entry changes.
 claude:   openrouter/anthropic/claude-sonnet-4.5
 gemma:    openrouter/google/gemma-3-27b-it
+gemma4:   openrouter/google/gemma-4-26b-a4b-it
 kimi:     openrouter/moonshotai/kimi-k2
 minimax:  openrouter/minimax/minimax-m2
 mistral:  openrouter/mistralai/mistral-large-2411
