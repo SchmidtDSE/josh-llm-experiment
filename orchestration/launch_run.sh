@@ -129,9 +129,24 @@ AGENT_NETMODE="$AGENT_NETMODE" \
 AGENT_EXIT=$?
 set -e
 
+# Two related signals, both written if the idle-watcher fired:
+#   idle_killed     — did the watcher SIGTERM the container? (raw fact)
+#   stream_stalled  — did the agent stall *mid-work*?  Set true only when
+#                     the watcher fired AND the workspace doesn't carry
+#                     the artifacts a finished agent would have produced
+#                     (run.sh + non-empty output/results.csv). A cell
+#                     where the agent finished its loop then went idle
+#                     reads as idle_killed=true, stream_stalled=false.
+# Falls back gracefully if jq isn't available on the host or the flag
+# predates the presumed_done field — assumes stalled, never assumes done.
+IDLE_KILLED="false"
 STREAM_STALLED="false"
 if [ -f "$RUN_DIR/stream_stalled.flag" ]; then
-  STREAM_STALLED="true"
+  IDLE_KILLED="true"
+  PRESUMED_DONE=$(jq -r '.presumed_done // false' "$RUN_DIR/stream_stalled.flag" 2>/dev/null || echo "false")
+  if [ "$PRESUMED_DONE" != "true" ]; then
+    STREAM_STALLED="true"
+  fi
 fi
 
 ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -139,6 +154,7 @@ cat > "$RUN_DIR/run_meta.final.json" <<META
 {
   "ended_at": "$ENDED_AT",
   "agent_exit_code": $AGENT_EXIT,
+  "idle_killed": $IDLE_KILLED,
   "stream_stalled": $STREAM_STALLED,
   "trajectory_size_bytes": $(stat -c%s "$RUN_DIR/trajectory.jsonl" 2>/dev/null || echo 0),
   "stderr_size_bytes": $(stat -c%s "$RUN_DIR/agent_stderr.log" 2>/dev/null || echo 0)
