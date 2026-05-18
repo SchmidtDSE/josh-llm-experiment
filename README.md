@@ -160,21 +160,70 @@ if needed, and runs the final validation. It captures the dnsmasq
 DNS log, all opencode trajectories, and the harness output, and
 appends a row to `results/manifest.jsonl`.
 
-### Full experimental cell *(planned, phase 5)*
+### Running a cell end-to-end
+
+A "cell" is one experimental point: model × rung × target × one run ID,
+end-to-end through agent → scorer → report. The same code path runs
+under CI and under the local batch driver.
 
 ```sh
-./orchestration/launch_batch.sh \
-  --model claude \
-  --rung 3 \
-  --target josh \
-  --runs 3
+MODEL=claude RUNG=5 TARGET=mesa RUN_ID=$(uuidgen) \
+  ./orchestration/launch_cell.sh
 ```
 
-`launch_batch.sh` will fan out `RUNS` parallel `launch_run.sh`
-invocations locally via `xargs -P` (or GNU `parallel`) with fresh
-`RUN_ID`s, each on its own bridge network. Runs are
-network-I/O-bound on OpenRouter latency rather than CPU-bound on
-the host, so single-machine parallelism is the default.
+Output lands in `runs/<RUN_ID>/`: the agent workspace, `scorer.json`,
+`report.md`, `dns.log`, the opencode trajectory + session export, and
+`run_meta.cell.json` (per-step pass/fail).
+
+### Running a batch locally
+
+`launch_batch.sh` fans out N cells concurrently on the local host via
+GNU `parallel`. Each cell owns its own bridge network + dnsmasq
+sidecar (named by `RUN_ID`); the only shared mount is read-only
+`data/`. Two CLI forms:
+
+```sh
+# Single cell × N replicates
+./orchestration/launch_batch.sh \
+  --model claude --rung 5 --target josh --runs 4 --jobs 4
+
+# Matrix via CSV (header: model,rung,target,replicates; '#' comments OK)
+./orchestration/launch_batch.sh --cells cells.csv --jobs 8
+```
+
+Per-cell outputs go to `runs/<RUN_ID>/` (same layout as a single cell).
+Batch metadata goes to a sibling `runs/<BATCH_TAG>/`:
+
+| File             | Contents |
+| ---------------- | -------- |
+| `worklist.tsv`   | `model rung target run_id` per cell |
+| `joblog.tsv`     | GNU parallel's joblog (per-cell exit code + wall time); supports `parallel --retry-failed --joblog ...` |
+| `manifest.jsonl` | One JSON object per cell with `run_meta` + `cell` (step statuses) + full `scorer.json` |
+| `summary.txt`    | Totals: succeeded / failed / concurrency |
+
+Concurrency caps and what binds them, roughly worst-binding first:
+
+- **OpenRouter rate / concurrency limits per key.** Start at `--jobs 4`
+  on a paid sweep; tune up watching for 429s in `runs/<id>/agent_stderr.log`.
+- **Memory.** Each cell is ~0.5-1.5 GB resident (JVM spikes during
+  `josh parse`). A 64 GB host fits ~30 concurrent comfortably.
+- **Docker default bridge subnets** allow ~31 concurrent
+  `fortree-run-*` networks before allocation churn. Above that,
+  widen `default-address-pools` in `/etc/docker/daemon.json`.
+- **CPU** is rarely binding: most wall time is API wait, with short
+  bursts during `./run.sh` and JVM startup.
+
+Host prerequisites beyond what `launch_run.sh` already needs:
+
+```sh
+sudo apt-get install -y parallel jq   # debian/ubuntu
+brew install parallel jq              # macOS
+```
+
+The batch driver also runs a pre-sweep cleanup of any orphan
+`fortree-run-*` networks / `dnsmasq-*` containers left behind by a
+prior SIGKILL'd batch, so a hard-kill of the driver is recoverable —
+the next `launch_batch.sh` invocation scrubs whatever leaked.
 
 ### Full sweep *(planned, phase 6+)*
 

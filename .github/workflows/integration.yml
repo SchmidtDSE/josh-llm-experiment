@@ -88,8 +88,16 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: .github/scripts/setup-provider.sh "$OLLAMA_IMAGE" "${{ inputs.model }}"
 
-      - name: Launch agent run
+      - name: Run cell (agent + scorer + report)
         id: run
+        # launch_cell.sh chains the agent run, the scorer, and report
+        # rendering into one step — same code path the local batch
+        # driver uses. `|| true` keeps the workflow going so the
+        # artifact + Summary publish steps capture whatever was
+        # produced, even on partial failure. Per-step status is
+        # captured inside runs/<id>/run_meta.cell.json.
+        # IDLE_THRESHOLD_SEC=600 gives ollama 7b on CPU a chance to
+        # produce a first token; it's harmless on the openrouter path.
         run: |
           set -euo pipefail
           RUN_ID="ci-$(uuidgen)"
@@ -100,42 +108,13 @@ jobs:
           RUN_ID="$RUN_ID" \
           WALL_CLOCK_BACKSTOP_SEC=1800 \
           IDLE_THRESHOLD_SEC=600 \
-            ./orchestration/launch_run.sh || true
-          # `|| true`: we want the workflow to keep going so the artifact +
-          # report capture whatever the agent produced, even on failure.
-          # IDLE_THRESHOLD_SEC=600 gives ollama 7b on CPU a chance to
-          # produce a first token; it's harmless on the openrouter path
-          # (claude exits naturally well before that).
-
-      - name: Score workspace
-        run: |
-          set -euo pipefail
-          RUN_ID="${{ steps.run.outputs.run_id }}"
-          RUN_DIR="runs/$RUN_ID"
-          mkdir -p "$RUN_DIR"
-          docker run --rm --network=none \
-            -v "$PWD/$RUN_DIR/workspace":/sandbox \
-            -v "$PWD/data":/sandbox/data:ro \
-            fortree:scorer /opt/entrypoint-scorer.sh --target "${{ inputs.target }}" \
-            > "$RUN_DIR/scorer.json" || true
+            ./orchestration/launch_cell.sh || true
+          echo "--- run_meta.cell.json ---"
+          cat "runs/$RUN_ID/run_meta.cell.json" 2>/dev/null || echo "(no run_meta.cell.json)"
           echo "--- scorer.json ---"
-          cat "$RUN_DIR/scorer.json" || true
-
-      - name: Generate run report
-        # Runs inside fortree:scorer because that image carries the
-        # report's pip deps (jinja2 via config/requirements.txt). The
-        # GH runner host doesn't have them.
-        run: |
-          set -euo pipefail
-          RUN_ID="${{ steps.run.outputs.run_id }}"
-          docker run --rm --network=none \
-            -v "$PWD/runs/$RUN_ID":/run \
-            -v "$PWD/orchestration":/opt/orchestration:ro \
-            fortree:scorer \
-            python3 /opt/orchestration/generate_run_report.py /run \
-            > "runs/$RUN_ID/report.md"
+          cat "runs/$RUN_ID/scorer.json" 2>/dev/null || echo "(no scorer.json)"
           echo "--- report.md (head) ---"
-          head -50 "runs/$RUN_ID/report.md"
+          head -50 "runs/$RUN_ID/report.md" 2>/dev/null || echo "(no report.md)"
 
       - name: Publish report.md to the workflow Summary tab
         # Posts the rendered Markdown into the workflow run's Summary so a
