@@ -38,7 +38,15 @@ set -euo pipefail
 : "${RUN_ID:?RUN_ID not set; use \$(uuidgen)}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUN_DIR="$REPO_ROOT/runs/$RUN_ID"
+# Honor BATCH_DIR (set by launch_batch.py) so cells in a batch share a
+# common parent dir. Single-cell operator invocations default to the
+# legacy runs/<run_id>/ layout.
+RUNS_PARENT="${BATCH_DIR:-$REPO_ROOT/runs}"
+case "$RUNS_PARENT" in
+  /*) ;;
+  *)  RUNS_PARENT="$REPO_ROOT/$RUNS_PARENT" ;;
+esac
+RUN_DIR="$RUNS_PARENT/$RUN_ID"
 
 echo "▶ launch_cell.sh: $MODEL rung=$RUNG target=$TARGET run=$RUN_ID"
 

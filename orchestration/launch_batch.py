@@ -301,8 +301,9 @@ class LiveRenderer:
       └─────────────────────────────────────────────┘
     """
 
-    def __init__(self, state: BatchState) -> None:
+    def __init__(self, state: BatchState, batch_dir: Path) -> None:
         self.state = state
+        self.batch_dir = batch_dir
         self._start = time.monotonic()
 
     def __rich__(self):
@@ -322,7 +323,7 @@ class LiveRenderer:
             t.add_column()
             t.add_column(justify="right", style="dim")
             for cell in cells:
-                phase = compute_phase(REPO_ROOT / "runs" / cell.run_id)
+                phase = compute_phase(self.batch_dir / cell.run_id)
                 phase_text = Text(phase, style=PHASE_STYLES.get(phase, "white"))
                 cell_repr = (
                     f"{cell.model} rung={cell.rung} {cell.target} run={cell.run_id[:8]}"
@@ -396,6 +397,7 @@ def run_one_cell(
     launch_cell: Path,
     cell: CellState,
     log_path: Path,
+    batch_dir: Path,
 ) -> CellState:
     """Run one cell. Updates state, prints completion line, dumps failure
     tail on non-zero exit. Never raises; the executor sees a clean future
@@ -407,6 +409,7 @@ def run_one_cell(
         "RUNG": str(cell.rung),
         "TARGET": cell.target,
         "RUN_ID": cell.run_id,
+        "BATCH_DIR": str(batch_dir),
     }
     try:
         with log_path.open("wb") as logf:
@@ -447,11 +450,11 @@ def write_joblog(joblog_path: Path, cells_in_seq_order: list[CellState]) -> None
             )
 
 
-def emit_manifest_line(run_id: str) -> Optional[dict]:
+def emit_manifest_line(run_id: str, batch_dir: Path) -> Optional[dict]:
     """Build one manifest row for run_id. Returns None if run_meta.json is
     missing (launch_run.sh failed before workspace setup — joblog records
     that already)."""
-    run_dir = REPO_ROOT / "runs" / run_id
+    run_dir = batch_dir / run_id
     meta_path = run_dir / "run_meta.json"
     if not meta_path.exists():
         return None
@@ -490,11 +493,13 @@ def emit_manifest_line(run_id: str) -> Optional[dict]:
 
 
 def aggregate_manifest(
-    manifest_path: Path, worklist: list[tuple[str, int, str, str]]
+    manifest_path: Path,
+    worklist: list[tuple[str, int, str, str]],
+    batch_dir: Path,
 ) -> None:
     with manifest_path.open("w") as mf:
         for _, _, _, run_id in worklist:
-            line = emit_manifest_line(run_id)
+            line = emit_manifest_line(run_id, batch_dir)
             if line is not None:
                 mf.write(json.dumps(line) + "\n")
 
@@ -692,7 +697,7 @@ def main() -> int:
 
     # Live(...) becomes a no-op when console isn't a TTY, so this same
     # code path emits clean line output under CI / `tee` / redirects.
-    renderer = LiveRenderer(state)
+    renderer = LiveRenderer(state, batch_dir)
     with Live(renderer, console=console, refresh_per_second=2, transient=True):
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as exe:
             futures = []
@@ -700,7 +705,13 @@ def main() -> int:
                 log_path = cell_logs_dir / f"{cell.run_id}.log"
                 futures.append(
                     exe.submit(
-                        run_one_cell, state, console, args.launch_cell, cell, log_path
+                        run_one_cell,
+                        state,
+                        console,
+                        args.launch_cell,
+                        cell,
+                        log_path,
+                        batch_dir,
                     )
                 )
             concurrent.futures.wait(futures)
@@ -709,7 +720,7 @@ def main() -> int:
     # so the joblog and manifest are reproducible across reruns.
     cells_in_seq = [cells_by_seq[i] for i in sorted(cells_by_seq)]
     write_joblog(joblog_path, cells_in_seq)
-    aggregate_manifest(manifest_path, worklist)
+    aggregate_manifest(manifest_path, worklist, batch_dir)
 
     succeeded = sum(1 for c in cells_in_seq if c.exit_code == 0)
     failed = len(cells_in_seq) - succeeded
