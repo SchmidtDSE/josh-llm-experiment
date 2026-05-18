@@ -223,18 +223,22 @@ Concurrency caps and what binds them, roughly worst-binding first:
 - **CPU** is rarely binding: most wall time is API wait, with short
   bursts during `./run.sh` and JVM startup.
 
-Host prerequisites for the orchestrator: Python 3.11+, `pyyaml`, and
-`rich` (powers the live UI; auto-degrades to plain output in non-TTY
-contexts, but the import itself is required). The cleanest setup is
-to open the repo in the included
-[`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json),
-which provides Python 3.11 + docker-in-docker + both pip deps out of
-the box (same pattern the existing GitHub codespace uses). For a bare
-SSH host without devcontainers:
+Host prerequisites for the orchestrator: Docker, Python 3.11+, and
+[uv][uv]. `pyproject.toml` at the repo root declares `pyyaml` and
+`rich` (the latter powers the live UI and auto-degrades to plain
+output in non-TTY contexts; the import itself is required). One-time
+setup on a fresh host:
 
 ```sh
-sudo apt-get install -y python3 python3-pip  # debian/ubuntu
-pip install pyyaml rich
+curl -LsSf https://astral.sh/uv/install.sh | sh   # if uv isn't already there
+uv sync                                            # installs pyyaml + rich into .venv
+```
+
+Then invoke the orchestrator through uv so the venv is picked up
+automatically:
+
+```sh
+uv run orchestration/launch_batch.py --cells cells.csv --jobs 8
 ```
 
 The batch driver also runs a pre-sweep cleanup of any orphan

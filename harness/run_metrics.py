@@ -25,7 +25,7 @@ import runner
 from validators import acceptance, output_schema
 
 SCHEMA_VERSION = "phase2-v1"
-DEFAULT_TIMEOUT_S = 600
+DEFAULT_TIMEOUT_S = 900
 DEFAULT_ACCEPTANCE_RANGES = Path("/opt/harness/acceptance_ranges.json")
 
 
