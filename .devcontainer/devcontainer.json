@@ -18,8 +18,10 @@
   },
   // Orchestrator-only Python deps. The scientific stack (mesa, numpy,
   // xarray, ...) is installed inside the fortree images via
-  // config/requirements.txt and is not needed here.
-  "postCreateCommand": "pip install pyyaml",
+  // config/requirements.txt and is not needed here. `rich` powers the
+  // live progress UI in orchestration/launch_batch.py; gracefully
+  // degrades to plain output when stdout isn't a TTY.
+  "postCreateCommand": "pip install pyyaml rich",
   // The image's default user. Owns /workspaces and the docker socket
   // (via the docker-in-docker feature).
   "remoteUser": "vscode",
