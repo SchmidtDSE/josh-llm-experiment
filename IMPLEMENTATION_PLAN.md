@@ -6,7 +6,7 @@
 
 We will stair-step the build so that each phase produces a demonstrable artifact that validates the foundation for the next phase, rather than building monolithically and running once at the end. **Scope of this plan is phases 1–5 only** — env bootstrap through a single successful 5-step orchestrated run for one (model × rung × target) cell. The pilot sweep and headline sweep get their own subsequent plans, after pilot data is in hand and prompts can be frozen.
 
-The plan validates the end-to-end opencode path first under opencode's own tool allowlists plus passive observation (trajectory log + DNS tripwire). A hard-layer egress proxy (OpenShell or equivalent) is out of scope for phases 1–5.
+The plan validates the end-to-end opencode path first under opencode's own tool allowlists plus passive observation (trajectory log + DNS tripwire). **Updated during Phase 4b**: a hard egress allowlist *was* added (kernel-enforced via dnsmasq + iptables + ipset on a per-run sidecar that shares its netns with the agent — see [Dockerfile.dnsmasq](Dockerfile.dnsmasq) and [orchestration/sidecar-init.sh](orchestration/sidecar-init.sh)). The "OpenShell or equivalent" mention is historical context only.
 
 ## Architecture
 
@@ -29,14 +29,20 @@ fortree image (Dockerfile):
 invocation modes:
 - agent:    docker run --rm --env-file .env
               -v ./runs/<run-id>:/sandbox
-              --dns <dnsmasq-sidecar-ip>
-              fortree:<tag> opencode run --config /opt/opencode.json ...
-            (opencode's WebFetch + bash allowlists are the soft policy;
-             a dnsmasq sidecar on the docker bridge logs all DNS queries
-             as a passive tripwire for non-allowlisted hosts)
+              --network=container:dnsmasq-<run-id>
+              fortree:agent /opt/agent-entrypoint.sh
+            (agent shares the sidecar's network namespace; the sidecar
+             enforces a kernel-level egress allowlist via
+             dnsmasq + iptables + ipset. opencode's webfetch + bash
+             tool allowlists are still the in-process policy layer.)
 - scorer:   docker run --rm --network=none
               -v ./runs/<run-id>:/sandbox
-              fortree:<tag> /opt/entrypoint-scorer.sh --target <josh|mesa>
+              fortree:scorer /opt/entrypoint-scorer.sh --target <josh|mesa>
+- sidecar:  docker run -d --cap-add NET_ADMIN
+              --add-host=host.docker.internal:host-gateway
+              fortree:dnsmasq
+            (built from Dockerfile.dnsmasq, alpine + iptables/ipset;
+             one per agent run; lifecycle in orchestration/dns_sidecar.sh)
 ```
 
 Decisions:
@@ -151,39 +157,59 @@ This is the de-risk gate: prove a single (model, rung, target) cell can be drive
 
 ## Phase 4 — Observation layer, local parallelism, durable upload, CI + local-LLM path
 
+**Status**: split into sub-phases during execution; bottom of this section tracks each.
+
+- **4a (CI + Ollama path)** — *complete*, merged via PR #9 / #14.
+- **4b (Observation: dnsmasq sidecar)** — *complete*, merged via PR #10. Originally scoped as passive logging; extended in PR #13 to **hard egress enforcement** (kernel-level iptables+ipset allowlist; see Architecture note above).
+- **Mid-phase polish that landed alongside 4a/4b** — *complete*:
+  - PR #11: report generator rewrite (opencode export + Jinja2 template, results-first layout, scorer table) — see [orchestration/generate_run_report.py](orchestration/generate_run_report.py), [orchestration/templates/report.md.j2](orchestration/templates/report.md.j2).
+  - PR #12: SIDECAR self-test contract — agent must `chmod +x run.sh` AND run it once before declaring done.
+  - PR #15: workflow publishes `report.md` to `$GITHUB_STEP_SUMMARY` so the report renders inline in the GH run UI.
+  - PR #16: merged `integration-ollama.yml` + an OpenRouter path into one `integration.yml`; provider dispatch lives in [.github/scripts/setup-provider.sh](.github/scripts/setup-provider.sh).
+  - PR #17: idle watcher switched from `trajectory.jsonl` size to opencode session-DB mtime (catches sub-agent activity, which the trajectory stream doesn't reflect).
+- **4c (Local parallelism: `launch_batch.sh`)** — *pending*. The docker-compose decision flagged earlier should be made here.
+- **4d (Durable upload: `upload_run.sh` + `mc` → GCS via S3 interop)** — *pending*.
+
+The original "Files to author" sections below describe the **planned** scope; mark of completion notes the deltas from what actually landed.
+
 **Files to author**
 
 *Observation + parallelism + upload (as before)*
-- [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf) — dnsmasq config with query logging enabled; runs as a sidecar container on a per-run docker bridge network.
-- Update [orchestration/launch_run.sh](orchestration/launch_run.sh): create a per-run docker network, start the dnsmasq sidecar, point the agent container at it via `--dns`, copy the DNS log to `./runs/<run-id>/dns.log` on teardown. **Also**: after the scorer step, invoke `orchestration/upload_run.sh` to archive the run dir.
-- [orchestration/launch_batch.sh](orchestration/launch_batch.sh) — fan out N concurrent `launch_run.sh` invocations with fresh `RUN_ID`s via `xargs -P` or GNU `parallel`. Each run gets its own bridge network, sidecar, and workspace dir.
+- ✓ [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf) — query logging + `ipset=` directives populating the kernel allowlist (openrouter.ai, mesa.readthedocs.io, joshsim.org, python.org, numpy.org, scipy.org, pandas.pydata.org, xarray.dev, unidata.github.io, readthedocs.io). *Landed in PR #10, extended for enforcement in PR #13.*
+- ✓ Sidecar implementation grew beyond the original "one config file" scope:
+  - [Dockerfile.dnsmasq](Dockerfile.dnsmasq) — alpine + dnsmasq + iptables + ipset; the sidecar image is built separately from the main Dockerfile to keep the multistage inheritance chain clean.
+  - [orchestration/sidecar-init.sh](orchestration/sidecar-init.sh) — creates ipset, installs iptables OUTPUT rules (default DROP + carve-outs for lo/conntrack/upstream-DNS/bridge-gateway/allowlist), execs dnsmasq.
+  - [orchestration/dns_sidecar.sh](orchestration/dns_sidecar.sh) — `start`/`stop` subcommands managing the per-run network + sidecar lifecycle; blocks on the sidecar's HEALTHCHECK before returning so the agent can't race a half-initialized firewall.
+  - [agent-entrypoint.sh](agent-entrypoint.sh) — wraps `opencode run` + `opencode export`; traps SIGTERM so the idle/wall-clock watcher can capture a session export before the container dies.
+- ✓ [orchestration/launch_run.sh](orchestration/launch_run.sh): per-run network + sidecar start/stop trap, DNS log captured to `./runs/<run-id>/dns.log` on teardown. Agent container joins the sidecar's netns via `--network=container:dnsmasq-<id>` (not `--dns`, which docker forbids alongside container netns sharing). Upload integration is **pending — phase 4d**.
+- ⏳ **[Phase 4c, pending]** [orchestration/launch_batch.sh](orchestration/launch_batch.sh) — fan out N concurrent `launch_run.sh` invocations with fresh `RUN_ID`s via `xargs -P` or GNU `parallel`. Each run gets its own bridge network, sidecar, and workspace dir.
   - **Revisit at this point**: by the time `launch_batch.sh` lands, each run already orchestrates a sidecar + agent pair, and parallelism multiplies the per-run lifecycle bookkeeping. `docker-compose -p run-<id>` would let compose own network creation, sidecar healthcheck-gated startup (`depends_on: service_healthy`), and teardown — replacing the current manual `docker network create` + `docker run -d` + `docker rm -f` chain in [orchestration/dns_sidecar.sh](orchestration/dns_sidecar.sh). The idle watcher, SIGTERM trap, and `opencode export` would still live in bash since they're agent-internal. Not adopted in Phase 4b (small win; rewrite churn); adopt or skip as a design call once 4c is being scoped.
-- [orchestration/upload_run.sh](orchestration/upload_run.sh) — uploads every file under `runs/<RUN_ID>/` to `${MINIO_BUCKET}/${BATCH_TAG}/<RUN_ID>/<relative-path>` via the configured S3-compatible endpoint. The orchestrator runs `mc alias set` from the `MINIO_*` env vars at the top of the script, then `mc cp --recursive` from the run dir. Target backend is the existing GCS bucket via its S3 interoperability API (`MINIO_ENDPOINT=https://storage.googleapis.com`); no MinIO server runs anywhere — `mc` is just the client. Paths under the run dir are preserved so the remote layout mirrors the local layout. Upload is opportunistic: on failure, log to stderr, record `upload_status=failed` in `run_meta.json`, leave the local copy intact, and do NOT fail `launch_run.sh`.
-- [Dockerfile](Dockerfile) — install `mc` (single static binary from `dl.min.io`, sha256-pinned) in the `base` stage so both agent and scorer images can call it.
-- [config/VERSIONS.md](config/VERSIONS.md) — pin the `mc` version (sha256).
-- [.env.example](.env.example) — add `MINIO_ENDPOINT=https://storage.googleapis.com`, `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `BATCH_TAG`. Required from Phase 4 onward; supersedes the placeholder `RESULTS_BUCKET` from earlier README drafts. `MINIO_*` naming is for project consistency — the bucket itself is GCS via S3 interop, not a MinIO server.
+- ⏳ **[Phase 4d, pending]** [orchestration/upload_run.sh](orchestration/upload_run.sh) — uploads every file under `runs/<RUN_ID>/` to `${MINIO_BUCKET}/${BATCH_TAG}/<RUN_ID>/<relative-path>` via the configured S3-compatible endpoint. The orchestrator runs `mc alias set` from the `MINIO_*` env vars at the top of the script, then `mc cp --recursive` from the run dir. Target backend is the existing GCS bucket via its S3 interoperability API (`MINIO_ENDPOINT=https://storage.googleapis.com`); no MinIO server runs anywhere — `mc` is just the client. Paths under the run dir are preserved so the remote layout mirrors the local layout. Upload is opportunistic: on failure, log to stderr, record `upload_status=failed` in `run_meta.json`, leave the local copy intact, and do NOT fail `launch_run.sh`.
+- ⏳ **[Phase 4d, pending]** [Dockerfile](Dockerfile) — install `mc` (single static binary from `dl.min.io`, sha256-pinned) in the `base` stage so both agent and scorer images can call it.
+- ⏳ **[Phase 4d, pending]** [config/VERSIONS.md](config/VERSIONS.md) — pin the `mc` version (sha256).
+- ⏳ **[Phase 4d, pending]** [.env.example](.env.example) — add `MINIO_ENDPOINT=https://storage.googleapis.com`, `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `BATCH_TAG`. (`OLLAMA_HOST` row already landed in 4a.) `MINIO_*` naming is for project consistency — the bucket itself is GCS via S3 interop, not a MinIO server.
 
 *CI + local-LLM (Ollama) path*
 
 Motivation: OpenRouter integration tests cost real money per run and gate replication behind a paid API; a reviewer wanting to inspect the methodology should be able to run an end-to-end agent test locally and in CI without an account or key. opencode 1.14.50 supports Ollama natively via its OpenAI-compatible wrapper — no new agent dependency, only config + a workflow.
 
-- [.github/workflows/smoke.yml](.github/workflows/smoke.yml) — runs on every push and every PR to `dev`/`main`. Builds `fortree:scorer`, then for each fixture under `reference/golden/` and `reference/broken/*/`: bind-mounts into a temp dir, runs `/opt/entrypoint-scorer.sh --target mesa`, parses stdout JSON, asserts the expected `csv_schema_ok` value and a substring match in `csv_schema_errors[0]`. Fully deterministic, no model. ~3–5 min wall-clock dominated by the cached docker build.
-- [.github/workflows/integration-ollama.yml](.github/workflows/integration-ollama.yml) — `workflow_dispatch` only. Inputs: `model` (default `ollama-qwen-coder-7b`), `rung` (default `5`), `target` (default `mesa`). Steps: build `fortree:agent` + `fortree:scorer`, start `ollama/ollama:latest` as a service container, `docker exec ollama ollama pull qwen2.5-coder:7b`, run `MODEL=$model RUNG=$rung TARGET=$target OLLAMA_HOST=http://ollama:11434 ./orchestration/launch_run.sh`, score the workspace, render a Markdown report via `orchestration/generate_run_report.py`, upload `runs/$RUN_ID/` as a workflow artifact. Expected wall-clock 5–10 min.
-- [orchestration/generate_run_report.py](orchestration/generate_run_report.py) — reads a finished `runs/<RUN_ID>/` directory and emits a single Markdown `report.md`. Sections: run metadata (model/target/rung/wall_time), the full rendered prompt inside a `<details>` block, a workspace inventory with each file's content (`<details>`-wrapped, truncated to ~2 KB; full files are in the artifact tarball), trajectory summary as an ordered list of tool calls with their inputs, the last assistant text, and a scorer-results table. The canonical artifact for reviewers wanting to inspect what a model produced without re-running.
-- [config/opencode.template.json](config/opencode.template.json) — add an `ollama` entry to the `provider` block alongside `openrouter` (`{ "options": { "baseURL": "{env:OLLAMA_HOST}/v1" } }`). opencode auto-selects the provider from the model slug's prefix (`ollama/...` → ollama). No orchestrator change.
-- [config/models.yaml](config/models.yaml) — add ollama-prefixed short names: `ollama-qwen-coder-7b: ollama/qwen2.5-coder:7b` and `ollama-qwen-coder-1_5b: ollama/qwen2.5-coder:1.5b` (fallback for resource-constrained environments). Underscore inside numeric tokens because YAML coerces `1.5` to float.
-- [.env.example](.env.example) — add `OLLAMA_HOST=http://localhost:11434` (default for host-local ollama; CI overrides to `http://ollama:11434`).
-- [README.md](README.md) — "Running the integration test locally" subsection covering: install ollama, `ollama pull qwen2.5-coder:7b`, `MODEL=ollama-qwen-coder-7b ... ./orchestration/launch_run.sh`, and platform-specific `OLLAMA_HOST` overrides (`host.docker.internal` for Docker Desktop on macOS, sidecar container on Linux).
+- ✓ [.github/workflows/smoke.yml](.github/workflows/smoke.yml) — two jobs: `scorer-fixtures` (asserts fixture outcomes) + `firewall-probe` (busybox in sidecar netns, asserts allow vs reject for 4 hosts). Both deterministic, no model. Fixture-assertion logic in [.github/scripts/smoke-fixtures.sh](.github/scripts/smoke-fixtures.sh); probe in [.github/scripts/firewall-probe.sh](.github/scripts/firewall-probe.sh).
+- ✓ [.github/workflows/integration.yml](.github/workflows/integration.yml) (renamed from `integration-ollama.yml` in PR #16) — `workflow_dispatch` only; one workflow, two provider paths. Provider dispatch in [.github/scripts/setup-provider.sh](.github/scripts/setup-provider.sh): `ollama-*` short-name → start ollama, pull model; anything else → write `OPENROUTER_API_KEY` from repo secret. After agent run: score, render `report.md`, **publish to `$GITHUB_STEP_SUMMARY`** for inline GH-UI viewing, upload `runs/<id>/` as artifact.
+- ✓ [orchestration/generate_run_report.py](orchestration/generate_run_report.py) — rewritten in PR #11 around `opencode export` (normalized session JSON) + a Jinja2 template ([orchestration/templates/report.md.j2](orchestration/templates/report.md.j2)). Layout is results-first: verdict card + tool-call counts at top, workspace files biggest-first, final assistant text, scorer table, diagnostics (full prompt + per-call tool detail + DNS log summary) collapsed at bottom. All opaque content rendered in HTML-escaped `<pre>` to prevent markdown bleed-through.
+- ✓ [config/opencode.template.json](config/opencode.template.json) — both `openrouter` and `ollama` provider blocks. The ollama entry uses `npm: @ai-sdk/openai-compatible` + an explicit `models` map (opencode's catalog at `models.dev` doesn't list local ollama, so an explicit declaration is required).
+- ✓ [config/models.yaml](config/models.yaml) — five OpenRouter entries + two ollama entries (`ollama-qwen-coder-7b`, `ollama-qwen-coder-1_5b`).
+- ✓ [.env.example](.env.example) — `OLLAMA_HOST` row added; MINIO_* rows still pending until phase 4d.
+- ✓ [README.md](README.md) — "Running the integration test locally" subsection + CI subsection covering both workflow paths.
 
 **Validation gate**
-- A single agent run produces a non-empty `dns.log` containing the allowlisted host(s) the agent reached during code generation.
-- A deliberately-broken opencode config that lets the agent reach `stackoverflow.com` produces a `dns.log` entry for it — confirms the tripwire fires.
-- `./orchestration/launch_batch.sh --model claude --rung 5 --target josh --runs 4` runs four concurrent agent invocations to completion, each with its own isolated workspace and DNS log.
-- After a single agent run, `mc ls $alias/${MINIO_BUCKET}/${BATCH_TAG}/<RUN_ID>/` lists every file from the local `runs/<RUN_ID>/` directory.
-- A run with deliberately-broken HMAC credentials records `upload_status=failed` in `run_meta.json` and the run itself still completes (upload is opportunistic, not gating).
-- `gh workflow run smoke.yml` (or pushing any branch) completes green; all five fixture assertions pass.
-- `gh workflow run integration.yml -f model=ollama-qwen-coder-1_5b -f rung=5 -f target=mesa` completes regardless of the `did_run` outcome, produces an artifact bundle including `report.md`, and `harness_errors=[]` in the scorer record. (Same workflow with `-f model=claude` exercises the OpenRouter branch via the `OPENROUTER_API_KEY` repo secret.)
-- Local-dev regression: `MODEL=ollama-qwen-coder-7b RUNG=5 TARGET=mesa RUN_ID=$(uuidgen) ./orchestration/launch_run.sh` against a host ollama produces a populated workspace with no OpenRouter API key set.
+- ✓ A single agent run produces a non-empty `dns.log` containing the allowlisted host(s) the agent reached during code generation. *(Verified in workflow run 26001455587 and locally.)*
+- ✓ **Stronger version actually built**: a kernel-level firewall, not just a tripwire — `firewall-probe` CI job asserts `openrouter.ai` + `mesa.readthedocs.io` connect; `pypi.org` + `stackoverflow.com` REJECT. Reaches into the sidecar's `ipset` and iptables counters to prove enforcement. *(Verified green in every smoke run since PR #13.)*
+- ⏳ **[Phase 4c]** `./orchestration/launch_batch.sh --model claude --rung 5 --target josh --runs 4` runs four concurrent agent invocations to completion, each with its own isolated workspace and DNS log.
+- ⏳ **[Phase 4d]** After a single agent run, `mc ls $alias/${MINIO_BUCKET}/${BATCH_TAG}/<RUN_ID>/` lists every file from the local `runs/<RUN_ID>/` directory.
+- ⏳ **[Phase 4d]** A run with deliberately-broken HMAC credentials records `upload_status=failed` in `run_meta.json` and the run itself still completes (upload is opportunistic, not gating).
+- ✓ `gh workflow run smoke.yml` (or pushing any branch) completes green; both `scorer-fixtures` and `firewall-probe` jobs pass.
+- ✓ `gh workflow run integration.yml -f model=claude -f rung=5 -f target=mesa` completes, agent exits 0, `report.md` lands in the Summary tab. *(Verified after PR #17's heartbeat fix — runs no longer false-stall on sub-agent activity.)*
+- ✓ Local-dev regression: `MODEL=ollama-qwen-coder-7b RUNG=5 TARGET=mesa RUN_ID=$(uuidgen) ./orchestration/launch_run.sh` against a host ollama produces a populated workspace with no OpenRouter API key set.
 
 ## Phase 5 — Full 5-step orchestrated run, one cell
 
