@@ -1,0 +1,34 @@
+{
+  "name": "josh-llm-experiment",
+  // Python 3.11 to match the in-image pin (see config/VERSIONS.md). The
+  // devcontainer hosts the *orchestrator* — it runs launch_batch.py +
+  // launch_cell.sh and shells out to `docker run` for the agent and
+  // scorer containers. It does NOT carry the scientific stack; that
+  // lives inside fortree:agent / fortree:scorer.
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
+  "features": {
+    // docker-in-docker so `docker build` + `docker run` work from
+    // inside the container. This is the same pattern that lets the
+    // existing GitHub-codespace devbox build the fortree images.
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  // Orchestrator-only Python deps. The scientific stack (mesa, numpy,
+  // xarray, ...) is installed inside the fortree images via
+  // config/requirements.txt and is not needed here.
+  "postCreateCommand": "pip install pyyaml",
+  // The image's default user. Owns /workspaces and the docker socket
+  // (via the docker-in-docker feature).
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  }
+}

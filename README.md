@@ -58,7 +58,7 @@ are present on the current branch.
 │   └── recovery_template.md      # (planned)
 ├── harness/                      # acceptance_ranges.json today;
 │                                 # scoring entry point + runners + validators planned, phase 2b
-├── orchestration/                # (planned, phase 3+) — launch_run.sh, launch_batch.sh, dnsmasq.conf
+├── orchestration/                # (planned, phase 3+) — launch_run.sh, launch_batch.py, dnsmasq.conf
 ├── .github/workflows/            # CI: smoke.yml (deterministic, every push) + integration.yml (workflow_dispatch, ollama or openrouter)
 └── results/                      # (planned, phase 5) — per-run JSON manifests
 ```
@@ -177,29 +177,30 @@ Output lands in `runs/<RUN_ID>/`: the agent workspace, `scorer.json`,
 
 ### Running a batch locally
 
-`launch_batch.sh` fans out N cells concurrently on the local host via
-GNU `parallel`. Each cell owns its own bridge network + dnsmasq
-sidecar (named by `RUN_ID`); the only shared mount is read-only
-`data/`. Two CLI forms:
+`launch_batch.py` fans out N cells concurrently on the local host
+using a `ThreadPoolExecutor` over `launch_cell.sh` subprocesses. Each
+cell owns its own bridge network + dnsmasq sidecar (named by
+`RUN_ID`); the only shared mount is read-only `data/`. Two CLI forms:
 
 ```sh
 # Single cell × N replicates
-./orchestration/launch_batch.sh \
+./orchestration/launch_batch.py \
   --model claude --rung 5 --target josh --runs 4 --jobs 4
 
 # Matrix via CSV (header: model,rung,target,replicates; '#' comments OK)
-./orchestration/launch_batch.sh --cells cells.csv --jobs 8
+./orchestration/launch_batch.py --cells cells.csv --jobs 8
 ```
 
 Per-cell outputs go to `runs/<RUN_ID>/` (same layout as a single cell).
 Batch metadata goes to a sibling `runs/<BATCH_TAG>/`:
 
-| File             | Contents |
-| ---------------- | -------- |
-| `worklist.tsv`   | `model rung target run_id` per cell |
-| `joblog.tsv`     | GNU parallel's joblog (per-cell exit code + wall time); supports `parallel --retry-failed --joblog ...` |
-| `manifest.jsonl` | One JSON object per cell with `run_meta` + `cell` (step statuses) + full `scorer.json` |
-| `summary.txt`    | Totals: succeeded / failed / concurrency |
+| File                     | Contents |
+| ------------------------ | -------- |
+| `worklist.tsv`           | `model rung target run_id` per cell |
+| `joblog.tsv`             | Per-cell `seq model rung target run_id started_at runtime_s exit_code` |
+| `manifest.jsonl`         | One JSON object per cell with `run_meta` + `cell` (step statuses) + full `scorer.json`, preserved in worklist order |
+| `summary.txt`            | Totals: succeeded / failed / concurrency |
+| `cell-logs/<run_id>.log` | Per-cell stdout+stderr capture (so concurrent cells don't interleave on the terminal) |
 
 Concurrency caps and what binds them, roughly worst-binding first:
 
@@ -213,17 +214,22 @@ Concurrency caps and what binds them, roughly worst-binding first:
 - **CPU** is rarely binding: most wall time is API wait, with short
   bursts during `./run.sh` and JVM startup.
 
-Host prerequisites beyond what `launch_run.sh` already needs:
+Host prerequisites for the orchestrator: Python 3.11+ and `pyyaml`.
+The cleanest setup is to open the repo in the included
+[`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json),
+which provides Python 3.11 + docker-in-docker out of the box (same
+pattern the existing GitHub codespace uses). For a bare SSH host
+without devcontainers:
 
 ```sh
-sudo apt-get install -y parallel jq   # debian/ubuntu
-brew install parallel jq              # macOS
+sudo apt-get install -y python3 python3-pip  # debian/ubuntu
+pip install pyyaml
 ```
 
 The batch driver also runs a pre-sweep cleanup of any orphan
 `fortree-run-*` networks / `dnsmasq-*` containers left behind by a
 prior SIGKILL'd batch, so a hard-kill of the driver is recoverable —
-the next `launch_batch.sh` invocation scrubs whatever leaked.
+the next `launch_batch.py` invocation scrubs whatever leaked.
 
 ### Full sweep *(planned, phase 6+)*
 
@@ -231,7 +237,7 @@ the next `launch_batch.sh` invocation scrubs whatever leaked.
 for model in claude gemma kimi minimax mistral; do
   for rung in 1 2 3 4 5; do
     for target in josh mesa; do
-      ./orchestration/launch_batch.sh \
+      ./orchestration/launch_batch.py \
         --model "$model" --rung "$rung" --target "$target" --runs 3
     done
   done
@@ -248,7 +254,7 @@ factors. See
 for model in claude mistral; do
   for rung in 1 5; do
     for target in josh mesa; do
-      ./orchestration/launch_batch.sh \
+      ./orchestration/launch_batch.py \
         --model "$model" --rung "$rung" --target "$target" --runs 2
     done
   done
