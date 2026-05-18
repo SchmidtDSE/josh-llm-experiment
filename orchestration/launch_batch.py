@@ -461,6 +461,7 @@ def emit_manifest_line(run_id: str) -> Optional[dict]:
         return None
     cell_path = run_dir / "run_meta.cell.json"
     scorer_path = run_dir / "scorer.json"
+    time_path = run_dir / "time_breakdown.json"
     cell = (
         json.loads(cell_path.read_text())
         if cell_path.exists() and cell_path.stat().st_size
@@ -471,6 +472,11 @@ def emit_manifest_line(run_id: str) -> Optional[dict]:
         if scorer_path.exists() and scorer_path.stat().st_size
         else None
     )
+    time_breakdown = (
+        json.loads(time_path.read_text())
+        if time_path.exists() and time_path.stat().st_size
+        else None
+    )
     return {
         "run_id": meta.get("run_id"),
         "model": meta.get("model"),
@@ -478,6 +484,7 @@ def emit_manifest_line(run_id: str) -> Optional[dict]:
         "target": meta.get("target"),
         "cell": cell,
         "scorer": scorer,
+        "time_breakdown": time_breakdown,
         "run_meta": meta,
     }
 

@@ -101,6 +101,24 @@ if [ "$REPORT_EXIT" -ne 0 ]; then
   echo "⚠ report render exited $REPORT_EXIT"
 fi
 
+# --- Step 4: extractors (transcript + time breakdown) ---
+# Best-effort, host-side, stdlib-only. Run after the report so a passing
+# cell ships transcript.md + time_breakdown.json alongside report.md. A
+# failure here doesn't gate the cell — the artifacts already in the run
+# dir are the source of truth.
+set +e
+python3 "$REPO_ROOT/orchestration/extract_transcript.py" "$RUN_DIR" >&2
+TRANSCRIPT_EXIT=$?
+python3 "$REPO_ROOT/orchestration/extract_time_breakdown.py" "$RUN_DIR" >&2
+BREAKDOWN_EXIT=$?
+set -e
+if [ "$TRANSCRIPT_EXIT" -ne 0 ]; then
+  echo "⚠ transcript extractor exited $TRANSCRIPT_EXIT (non-fatal)"
+fi
+if [ "$BREAKDOWN_EXIT" -ne 0 ]; then
+  echo "⚠ time-breakdown extractor exited $BREAKDOWN_EXIT (non-fatal)"
+fi
+
 # --- Per-cell status record ---
 cat > "$RUN_DIR/run_meta.cell.json" <<META
 {
@@ -110,7 +128,9 @@ cat > "$RUN_DIR/run_meta.cell.json" <<META
   "target": "$TARGET",
   "agent": {"status": "$AGENT_STATUS", "exit_code": $AGENT_EXIT},
   "scorer": {"status": "$SCORER_STATUS", "exit_code": $SCORER_EXIT},
-  "report": {"status": "$REPORT_STATUS", "exit_code": $REPORT_EXIT}
+  "report": {"status": "$REPORT_STATUS", "exit_code": $REPORT_EXIT},
+  "transcript": {"exit_code": $TRANSCRIPT_EXIT},
+  "time_breakdown": {"exit_code": $BREAKDOWN_EXIT}
 }
 META
 
