@@ -14,23 +14,24 @@ Your working directory is `/sandbox`. Read, write, and edit any file inside it. 
 
 ## External Inputs
 
-Two external data sources are required. Both must provide one value per (cell, step) pair across the full spatial and temporal extent of the simulation.
+Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings over the bounding box specified in the prompt. Both are indexed by `(calendar_year, lat, lon)` and span 2024–2054; the simulation uses years 2024–2034 inclusive.
 
-| Input            | Native unit       | Used as     |
-|------------------|-------------------|-------------|
-| Air temperature  | Kelvin (K)        | Drives the temperature impact on growth. |
-| Precipitation    | mm/year (see note)| Drives the precipitation impact on growth. |
+- `data/maxtemp_synthetic.nc` — data variable `tasmax` (annual maximum air temperature, K).
+- `data/precip_synthetic.nc`  — data variable `pr` (precipitation flux).
 
-For this task, two netCDF files containing data from Tulare County, California via [Cal-Adapt](https://cal-adapt.org/) are provided:
+### Temperature
 
-- `data/precip_tulare_annual.nc`
-- `data/maxtemp_tulare_annual.nc`
+The `tasmax` variable is in **Kelvin (K)**. Use the values directly. The growth equation's `T_min` and `T_max` defaults are already in Kelvin, so no unit conversion is needed; pass the netCDF values straight into the temperature impact calculation.
 
-The provided netCDF reports precipitation as a flux in kg m⁻² s⁻¹. Because 1 kg of water spread over 1 m² is equivalent to 1 mm of depth, the conversion to mm/year is (31,536,000 = seconds in a 365-day year):
+### Precipitation
+
+The `pr` variable is a precipitation flux in `kg m⁻² s⁻¹`. Convert to mm/year via the standard physical conversion (1 kg of water spread over 1 m² is equivalent to 1 mm of depth):
 
 ```
-precipitation_mm_per_year = precipitation_kgm2s * 31_536_000
+precipitation_mm_per_year = precipitation_value_from_netcdf * 31_536_000
 ```
+
+where `31_536_000` is the number of seconds in a 365-day year.
 
 ## What you must produce
 

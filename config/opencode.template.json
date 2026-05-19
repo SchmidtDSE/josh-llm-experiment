@@ -27,39 +27,12 @@
         "glob":     true,
         "grep":     true,
         "bash":     true,
-        "webfetch": true
+        "webfetch": true,
+        "task":     false
       },
       "permission": {
-        "bash": {
-          "./run.sh":    "allow",
-          "./run.sh *":  "allow",
-          "ls":          "allow",
-          "ls *":        "allow",
-          "cat":         "allow",
-          "cat *":       "allow",
-          "head":        "allow",
-          "head *":      "allow",
-          "tail":        "allow",
-          "tail *":      "allow",
-          "find":        "allow",
-          "find *":      "allow",
-          "wc":          "allow",
-          "wc *":        "allow",
-          "tree":        "allow",
-          "tree *":      "allow",
-          "python":      "allow",
-          "python *":    "allow",
-          "python3":     "allow",
-          "python3 *":   "allow",
-          "java":        "allow",
-          "java *":      "allow",
-          "josh":        "allow",
-          "josh *":      "allow",
-          "mkdir":       "allow",
-          "mkdir *":     "allow",
-          "*":           "deny"
-        },
-        "webfetch": "allow",
+        "bash":               "allow",
+        "webfetch":           "allow",
         "external_directory": "allow"
       }
     }
