@@ -27,7 +27,8 @@
         "glob":     true,
         "grep":     true,
         "bash":     true,
-        "webfetch": true
+        "webfetch": true,
+        "task":     false
       },
       "permission": {
         "bash": {
