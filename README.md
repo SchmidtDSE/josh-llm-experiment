@@ -48,14 +48,17 @@ are present on the current branch.
 │   ├── precip_tulare_annual.nc
 │   └── maxtemp_tulare_annual.nc
 ├── prompts/
-│   ├── BASE_PROMPT.md            # Full ForeverTree spec (becomes rung 5)
+│   ├── BASE_PROMPT.md            # Full ForeverTree spec (used as rung 5)
 │   ├── SIDECAR.md                # Boilerplate footer appended to every rung
-│   ├── rung1_minimal.md          # (planned)
-│   ├── rung2_basic.md            # (planned)
-│   ├── rung3_specified.md        # (planned)
-│   ├── rung4_detailed.md         # (planned)
-│   ├── rung5_master.md           # (planned)
-│   └── recovery_template.md      # (planned)
+│   ├── PLAN_TEMPLATE.md          # Seed for /sandbox/PLAN.md (multi-invocation working doc)
+│   ├── rungs/
+│   │   └── rung1_minimal.md      # rungs 2–4 deferred until headline-batch authoring
+│   ├── steps/
+│   │   └── step_01..08_*.md      # Per-todo step injections (8 files, repo-static)
+│   ├── targets/
+│   │   ├── josh.md
+│   │   └── mesa.md
+│   └── recovery_template.md      # (planned, phase 5b)
 ├── harness/                      # acceptance_ranges.json today;
 │                                 # scoring entry point + runners + validators planned, phase 2b
 ├── orchestration/                # (planned, phase 3+) — launch_run.sh, launch_batch.py, dnsmasq.conf
@@ -295,10 +298,11 @@ listed here so the variable contract is visible from the start.
 | `MINIO_ACCESS_KEY`       | phase 4    | yes      | HMAC access key for the bucket (GCS HMAC pair). |
 | `MINIO_SECRET_KEY`       | phase 4    | yes      | HMAC secret. |
 | `BATCH_TAG`              | phase 4    | yes      | Identifier prefixed to every object path; bumped per experimental batch. |
-| `WALL_CLOCK_BACKSTOP_SEC`| phase 3    | no       | Hard ceiling on agent wall time per phase. Default 1800. |
+| `WALL_CLOCK_BACKSTOP_SEC`| phase 3    | no       | Hard ceiling on agent wall time for the full 8-step multi-invocation chain. Default 1800. |
 | `IDLE_THRESHOLD_SEC`     | phase 3    | no       | Kill the agent if no new trajectory event lands for this many seconds. Default 120. Catches silent LLM-stream stalls distinct from the wall-clock backstop. |
-| `TOKEN_BACKSTOP`         | phase 3    | no       | Completion-token cap per phase. Default 100000. |
+| `TOKEN_BACKSTOP`         | phase 3    | no       | Completion-token cap per opencode invocation (per step). Default 100000. |
 | `SKIP_FUZZY_CONFORMANCE` | phase 5    | no       | Skip the optional LLM-judge target check. Default false; set true for cost-sensitive runs. |
+| `FAIL_FAST_ON_STEP_ERROR`| phase 5c   | no       | Multi-invocation failure mode. `false` (default, production): per-step failures are logged and the loop continues. `true` (dev/CI): the first non-zero opencode exit aborts the loop — surfaces broken plumbing fast. |
 
 ## Authentication
 

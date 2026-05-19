@@ -40,10 +40,12 @@ invocation pattern per cell (orchestrated by orchestration/launch_*.sh):
    carve-outs for lo/conntrack/upstream-DNS/bridge-gateway/allowlist).
 3. Start `fortree:agent` joining the sidecar's netns
    (`--network=container:dnsmasq-<run-id>`); agent's egress is hard-
-   filtered at the kernel.
-4. After agent exits, run `fortree:scorer` against the workspace
-   under `--network=none` with a writable `results/` and read-only
-   data/ + workspace mounts.
+   filtered at the kernel. Inside the container, agent-entrypoint.sh
+   invokes opencode **eight times in a row**, one per todo, against
+   a shared `/sandbox/PLAN.md` working document (see "Phase 5c" below).
+4. After the multi-invocation chain finishes, run `fortree:scorer`
+   against the workspace under `--network=none` with a writable
+   `results/` and read-only data/ + workspace mounts.
 5. Generate per-cell `report.md`. Tear down network + sidecar.
 6. Per-batch driver aggregates all cells into `manifest.jsonl` and
    renders `batch_report.md`.
@@ -196,21 +198,101 @@ that together delivered the post-pilot scoring infrastructure:
 **Phase 5b — Recovery loop — PENDING.** See *Pending engineering
 work* below.
 
+### Phase 5c — Multi-invocation planning flow ✓
+
+The agent phase now invokes opencode **eight times in a row** against
+the same per-cell workspace, one invocation per todo, with a shared
+`/sandbox/PLAN.md` working document carrying state across steps.
+Sessions are fresh per invocation (no `--continue`) — all continuity
+lives on disk in `PLAN.md` and the workspace.
+
+Motivation: small / local models struggle without explicit planning
+scaffolding. Splitting the work into discrete, plan-anchored steps
+gives them a structured "read PLAN.md → list actions → do one thing →
+mark `[x]` → exit" rhythm and makes their planning artefacts
+inspectable.
+
+**Files**:
+- [prompts/PLAN_TEMPLATE.md](prompts/PLAN_TEMPLATE.md) — seed for
+  `/sandbox/PLAN.md`. Carries the 8 fixed todos and an empty `## Plan`
+  section.
+- [prompts/steps/step_NN_*.md](prompts/steps/) — 8 pre-committed
+  per-step injection files. Static across all runs.
+- [prompts/SIDECAR.md](prompts/SIDECAR.md) — rewritten around the
+  procedure narrative + AI environment / inputs / success criteria /
+  working-document sections.
+- [prompts/](prompts/) — reorganised into `rungs/`, `steps/`,
+  `targets/` subfolders. `prompts/rung5_master.md` retired (rung 5
+  now reads `prompts/BASE_PROMPT.md` directly).
+- [agent-entrypoint.sh](agent-entrypoint.sh) — loops over
+  `/opt/steps/step_*.md`, builds each per-step prompt in-memory as
+  `prompt_body + step_file`, runs opencode, exports per-step session,
+  writes `step_meta.json`. Honours `FAIL_FAST_ON_STEP_ERROR`.
+- [orchestration/launch_run.sh](orchestration/launch_run.sh) — renders
+  `prompt_body.md` once and seeds `workspace/PLAN.md` from the
+  template. No per-step rendering at runtime — the 8 step files are
+  bind-mounted straight from the repo.
+- [orchestration/run_agent.sh](orchestration/run_agent.sh) — new
+  bind mounts (`/opt/prompt_body.md`, `/opt/steps/`); passes
+  `FAIL_FAST_ON_STEP_ERROR` into the agent container.
+
+**Knob (`.env`)**:
+- `FAIL_FAST_ON_STEP_ERROR=false` (default, production) — log per-step
+  failures and continue. Partial completion is data.
+- `FAIL_FAST_ON_STEP_ERROR=true` (dev / CI) — first non-zero step
+  aborts the loop. Used to surface broken plumbing fast.
+
+**Per-step artefacts under `runs/<batch>/<id>/agent_artifacts/steps/step_NN/`**:
+- `trajectory.jsonl` — that step's opencode events
+- `agent_stderr.log` — that step's stderr
+- `session_export.json` — that step's opencode export
+- `step_meta.json` — `{step_n, step_name, started_at, ended_at, exit_code}`
+
+The cell-level rollups (`trajectory.jsonl`, `agent_stderr.log`,
+`agent_artifacts/session_export.json`) remain at their legacy paths
+so downstream consumers (`generate_run_report.py`,
+`extract_transcript.py`, `extract_time_breakdown.py`) keep working;
+they now see the in-order concatenation of all 8 steps and the
+final step's export respectively. Cross-step token / timing
+aggregation is a follow-up.
+
+**Example multi-invocation pattern (operator-level reference)**:
+
+```sh
+# What agent-entrypoint.sh effectively runs, inside one container:
+opencode run "<prompt_body>\n\n<step_01_make_plan_section>"
+opencode run "<prompt_body>\n\n<step_02_describe_geospatial>"
+...
+opencode run "<prompt_body>\n\n<step_08_cleanup_code>"
+```
+
+Each `<step_NN_*>` file tells the model "your assigned todo is N: …;
+read /sandbox/PLAN.md; list your actions; complete only this todo;
+mark [x]; exit." Cross-step state lives entirely in `PLAN.md` and
+the workspace files.
+
 ## Current state
 
 Scorer JSON schema: `phase5a-v1` (`harness/run_metrics.py:SCHEMA_VERSION`).
 
 Per-cell artefacts under `runs/<batch-tag>/<run_id>/`:
-- `workspace/` — agent-authored files
-- `prompt.md` — rendered prompt
-- `trajectory.jsonl` — opencode's per-tool log
-- `agent_artifacts/` — opencode session export
-- `agent_stderr.log` — opencode stderr
+- `workspace/` — agent-authored files (including `PLAN.md`, the
+  multi-invocation working document)
+- `prompt_body.md` — rendered shared body (rung + target + SIDECAR);
+  `prompt.md` is a back-compat symlink to it
+- `trajectory.jsonl` — in-order concatenation of all 8 steps' opencode
+  events
+- `agent_stderr.log` — in-order concatenation of all 8 steps' stderr
+- `agent_artifacts/session_export.json` — final attempted step's
+  opencode export
+- `agent_artifacts/steps/step_NN/` — per-step `trajectory.jsonl`,
+  `agent_stderr.log`, `session_export.json`, `step_meta.json`
 - `dns.log` — every DNS query the agent container made
 - `scorer.json` — full scoring record (`phase5a-v1` schema)
 - `report.md` — Jinja2-rendered per-cell report
-- `transcript.md` — human-readable opencode transcript
-- `time_breakdown.json` — phase timings
+- `transcript.md` — human-readable opencode transcript (from the
+  final step's export)
+- `time_breakdown.json` — phase timings (from the final step's export)
 - `run_meta.json`, `run_meta.cell.json`, `run_meta.final.json` — orchestration metadata
 
 Per-batch artefacts under `runs/<batch-tag>/`:

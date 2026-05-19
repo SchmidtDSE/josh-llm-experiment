@@ -1,4 +1,8 @@
-## Your environment
+## Procedure
+
+To implement this, multiple AI agents will run one at a time to complete a todo list. Each time the AI agent starts its work it should read this document with specific attention paid to its assigned todo item. It should complete that todo item, update this document with status, and mark its item complete. Before starting work, each agent should list the actions it needs to take to complete its assigned todo item.
+
+### AI environment
 
 You are running inside a container with the following pre-installed:
 
@@ -8,22 +12,22 @@ You are running inside a container with the following pre-installed:
 
 You may invoke `./run.sh` freely to self-test. Use what is already installed; do not assume internet access for package installation.
 
-## Your workspace
+### AI workspace
 
 Your working directory is `/sandbox`. Read, write, and edit any file inside it. You can also read installed package source on disk (useful: `python -c "import mesa; print(mesa.__file__)"`).
 
-## External Inputs
+### AI Inputs
 
 Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings over the bounding box specified in the prompt. Both are indexed by `(calendar_year, lat, lon)` and span 2024–2054; the simulation uses years 2024–2034 inclusive.
 
 - `data/maxtemp_synthetic.nc` — data variable `tasmax` (annual maximum air temperature, K).
 - `data/precip_synthetic.nc`  — data variable `pr` (precipitation flux).
 
-### Temperature
+#### Temperature
 
 The `tasmax` variable is in **Kelvin (K)**. Use the values directly. The growth equation's `T_min` and `T_max` defaults are already in Kelvin, so no unit conversion is needed; pass the netCDF values straight into the temperature impact calculation.
 
-### Precipitation
+#### Precipitation
 
 The `pr` variable is a precipitation flux in `kg m⁻² s⁻¹`. Convert to mm/year via the standard physical conversion (1 kg of water spread over 1 m² is equivalent to 1 mm of depth):
 
@@ -33,7 +37,7 @@ precipitation_mm_per_year = precipitation_value_from_netcdf * 31_536_000
 
 where `31_536_000` is the number of seconds in a 365-day year.
 
-## What you must produce
+### Success criteria
 
 A single executable file `./run.sh` in the workspace root, plus whatever source files it invokes. When invoked:
 
@@ -63,3 +67,7 @@ The CSV is UTF-8, comma-separated, with a header row. Columns, in order:
 | `precipitation` | float  | mm/year       |
 
 One row per (cell, year) for the eleven years 2024–2034 inclusive. `cell_id` format: `{i}_{j}` where `i` is the lat index (0-indexed, south → north) and `j` is the lon index (0-indexed, west → east) of the simulation grid.
+
+### Working document
+
+A `PLAN.md` file in `/sandbox` holds the shared todo list and a `### Plan` section that agents append to as they work. Read it at the start of every invocation. Complete only your assigned todo, summarise what you did under that todo as a 1–2 sentence note, and mark the item complete by changing `[ ]` to `[x]` in the todo list. Do not edit todos other than your assigned one.
