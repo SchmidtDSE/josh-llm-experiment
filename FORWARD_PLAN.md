@@ -35,22 +35,20 @@ path to a defensible headline run. Supersedes the May-18 `DEBUG_PLAN.md`
 
 ## What's pending (in priority order)
 
-### 1. Climate dataset swap — synthetic data
+### 1. Climate dataset swap — synthetic data *(complete, awaiting merge)*
 
-The current Cal-Adapt files have two compounding issues that make any
+The original Cal-Adapt files had two compounding issues that made any
 H1/H2 measurement uninterpretable:
 
-- `precip_tulare_annual.nc` reports `units = kg m⁻² s⁻¹` but the values
-  are a sum of daily rates (per Lucia's pipeline). The correct
-  conversion is `× 86_400`, not `× 31_536_000`. SIDECAR now teaches
-  this explicitly, but the underlying data is still mislabeled.
-- With the corrected conversion, Tulare precipitation lands in 1–75
-  mm/year. The spec's defaults `P_low=300, P_high=500` mean every cell
-  is below threshold and growth is essentially zero. Spec-faithful
-  models produce mean heights of 8e-10 m and pass `height_in_range=[0,11]`
-  vacuously. We've validated this is a real signal (`sp_P=0.98` proves
-  the model responds correctly to the climate it sees) but it's not a
-  useful experimental probe of LLM modeling quality.
+- `precip_tulare_annual.nc` reported `units = kg m⁻² s⁻¹` but the values
+  were a sum of daily rates (per Lucia's upstream pipeline). The
+  correct conversion was `× 86_400`, not `× 31_536_000`.
+- With the corrected conversion, Tulare precipitation landed in 1–75
+  mm/year. The spec's defaults `P_low=300, P_high=500` meant every cell
+  was below threshold and growth was essentially zero. Spec-faithful
+  models produced mean heights of 8e-10 m and passed
+  `height_in_range=[0,11]` vacuously. The dataset was calibrated for a
+  much wetter region than Tulare.
 
 **Decision: switch to a synthetic dataset designed for the spec.**
 
@@ -60,9 +58,10 @@ script that produces them:
 - `data/maxtemp_synthetic.nc` — annual maximum temperature, K, shape
   `(31, 31, 50)`. Linear south-to-north gradient 315K → 285K plus +0.15
   K/year warming trend plus ±0.4K noise.
-- `data/precip_synthetic.nc` — precipitation in raw `kg m⁻² s⁻¹` units
-  matching the prior file's convention (multiply by 86_400 for mm/year).
-  Linear west-to-east gradient ~700 → ~100 mm/year plus ±40 mm/year
+- `data/precip_synthetic.nc` — precipitation as a physically-honest
+  flux in `kg m⁻² s⁻¹` (multiply by 31_536_000 for mm/year — the
+  standard physics conversion, no upstream-pipeline quirk). Linear
+  west-to-east gradient ~700 → ~100 mm/year plus ±40 mm/year
   interannual noise.
 - `data/generate_synthetic_climate.py` — deterministic generator. Two
   invocations produce byte-identical netCDFs (sha256 match verified).
@@ -125,11 +124,14 @@ similar maps; deviations are interpretable as specific spec violations.
 
 **No NaN cells. No edge masking.** All 1550 cells are valid.
 
-**The SIDECAR will need a small update** to point at the new file
-paths and to drop the Tulare-specific sanity-check paragraph (which
-becomes misleading on the synthetic data). The `× 86_400` instruction
-stays — the synthetic precip uses the same units convention so the
-agent still converts the same way.
+**SIDECAR has been updated** (`feature/synthetic-climate-data` /
+PR #27) to point at the new file paths, drop the Tulare-specific
+sanity-check paragraph and the "sum of daily rates" forensic
+explanation, and use the standard `× 31_536_000` (seconds per year)
+conversion. The synthetic generator was changed in the same PR to emit
+a real flux — values are now `mm_per_year / 31_536_000` rather than
+`mm_per_year / 86_400` — so the agent contract is the standard
+physics conversion with no anti-pattern warning needed.
 
 ### 2. Acceptance-range methodology
 
@@ -203,34 +205,53 @@ Two patterns observed on the 4-cell mini-batch and earlier:
 
 ## Staged execution
 
-### Stage 1 — Land the synthetic-climate swap (1 PR, no agent runs)
+### Stage 1 — Land the synthetic-climate swap *(in PR #27)*
 
-1. Commit the synthetic dataset + generator (`data/generate_synthetic_climate.py`,
+1. ✓ Synthetic dataset + generator + CF-1.8 validator committed
+   (`data/generate_synthetic_climate.py`,
+   `data/validate_synthetic_climate.py`,
    `data/maxtemp_synthetic.nc`, `data/precip_synthetic.nc`).
-2. Update `prompts/SIDECAR.md`:
-   - Point file paths at `data/maxtemp_synthetic.nc` and `data/precip_synthetic.nc`.
-   - Drop the Tulare-specific sanity-check paragraph.
-   - Keep the `× 86_400` conversion instruction (same units convention).
-3. Decide on acceptance-range option **A / B / C** above and apply.
-4. CI smoke green; no batch needed at this stage.
+2. ✓ `prompts/SIDECAR.md` updated to point at the new files, use the
+   standard `× 31_536_000` conversion, drop the Tulare sanity-check
+   paragraph.
+3. ⏳ Acceptance-range decision (option A/B/C below) — pending; the
+   working hypothesis after Stage 2's results is **B-or-C** (drop the
+   bare ranges, gate on a derived field with consistency + conformance
+   components).
+4. ✓ CI smoke green.
 
-### Stage 2 — Validate against the 4-cell mini-batch
+### Stage 2 — Validate against the 4-cell mini-batch *(done)*
 
-1. `experimental_cells.csv` → `claude × r5 × {mesa, josh} × 2 replicates`.
-2. Launch:
-   ```sh
-   uv run orchestration/launch_batch.py --cells experimental_cells.csv --jobs 4 \
-     --batch-tag synthetic-validate-$(date -u +%Y%m%dT%H%MZ)
-   ```
-3. Expected outcomes:
-   - All 4 cells `script_was_executable=True` (bash exposure stays
-     fixed across the data swap).
-   - At least 1 mesa cell `target_conformance=True AND
-     growth_rate_mean_m ∈ [0.1, 1.0] AND growth_precip_spearman > 0.5`.
-     This is the strongest single signal that the synthetic data is
-     producing a working experimental probe.
-   - Year-10 mean heights distributed in roughly [0, 10] m across cells
-     (per the calibration above).
+`batch-claude-r5-both-n4-20260519T1655Z` and
+`batch-synthetic-validate-20260519T1753Z` (run with claude × r5 ×
+{mesa, josh} × 2 replicates) are the validation batches. Combined
+findings:
+
+- **4/4 cells `did_run=True` and `script_was_executable=True`** across
+  both batches. Bash-exposure fix and chmod self-heal survived the
+  data swap.
+- **Mesa reproducibility is essentially perfect.** Two independent
+  claude r5 mesa replicates landed at `h@10 = 4.970` vs `4.969 m` —
+  within 0.001 m of each other and within 1% of the validator's
+  predicted 0.449 m/yr mean growth rate.
+- **Josh split into two distinct failure modes**:
+  - One cell (`24970aac`, then `2f68aa11`) wrote `.josh` + `.jshd`
+    but the agent's `josh validate` returned non-zero →
+    `target_conformance=False`. CSV still produced (Python fallback).
+    Caught cleanly by the new conformance check.
+  - One cell (`8223003e`) passed every existing gate (`did_run`,
+    `schema_ok`, `target_conformance`, `x_bit`, `height_in_range`)
+    but had **`gr_max = 8.63 m/yr` (7.5× the spec ceiling) and
+    `gr_min = -10.0 m/yr` (trees shrinking)**. The internal-consistency
+    metrics caught this where the existing gates couldn't — exactly
+    the diagnostic capability they were designed for.
+- **Temporal Spearmans are uninformative on this dataset by design.**
+  Within-cell year-over-year variance is tiny (±0.4K T, ±40 mm/yr P)
+  while the cross-cell spatial gradient is huge (30K T span, 0–800
+  mm/yr P span). Per-cell-across-years Spearman averages to noise
+  (range −0.09 to +0.10 across all 4 cells, regardless of
+  correctness). This motivates the metric redesign in §Open
+  questions.
 
 ### Stage 3 — Re-introduce the model panel
 
@@ -255,24 +276,39 @@ Once Stages 1–3 are done, run the full panel:
 None are blockers, but each deserves an answer before the headline
 batch:
 
-1. **Should `target_conformance=False` runs count toward the
+1. **Replace the temporal Spearman metrics with predicted-vs-observed
+   correctness.** Stage-2 confirmed `growth_temp_spearman` and
+   `growth_precip_spearman` are noise on this dataset by design (low
+   within-cell temporal variance, huge cross-cell spatial variance).
+   The recommended replacement: compute the spec's predicted Δh per
+   `(cell, year)` from the netCDF and compare against the agent's
+   observed Δh — Pearson `r²` and OLS slope. Perfect spec faithful: r²
+   > 0.95, slope ≈ 1.0. Random/constant growth: r² ≈ 0. Right structure
+   wrong constants: 0.5–0.9 with slope ≠ 1. Also add
+   `height_year10_spatial_r2` between observed and predicted year-10
+   height maps for visualizable validation. Land this *before* Stage 3
+   so the new metrics calibrate against the existing 4-cell baseline.
+2. **Should `target_conformance=False` runs count toward the
    denominator of any headline metric?** A claude run that produces a
    valid CSV without using Mesa is technically "did the task" but
    doesn't measure what we're trying to measure. Recommend reporting
    pass rates *conditional* on conformance, plus a separate
    conformance-rate-per-model figure.
-2. **Should rungs 2–4 be authored before the headline batch?** Phase 5
-   left them as deferred. The 4-cell mini-batch above will tell us
-   whether rung 5 produces clean signals; rungs 2–4 give the
+3. **Should rungs 2–4 be authored before the headline batch?** Phase 5
+   left them as deferred. Stage-2 has now validated that rung 5
+   produces clean signals at least on mesa; rungs 2–4 give the
    "increasing detail → decreasing variance" axis the paper claims.
-   Recommend writing them after Stage 2 validates rung 5.
-3. **Is the recovery loop in scope for this paper?** Phase 5b (recovery
-   prompts) is built mentally but not implemented. With synthetic data
-   producing real failures we'd actually want to see if agents can
-   recover, but that's a 2× cost multiplier on every batch. Decide
-   based on Stage 2 results — if one-shot quality is already high
-   enough to be informative, recovery is gravy; if one-shot is sparse,
-   recovery is the only way to get to interpretable H1/H2 numbers.
+   Recommend writing them between Stage 3 and Stage 4.
+4. **Is the recovery loop in scope for this paper?** Phase 5b (recovery
+   prompts) is designed in IMPLEMENTATION_PLAN.md but not implemented.
+   H2 ("Recovery quality") in EXPERIMENTAL_DESIGN.md is currently
+   unmeasurable as a result. With synthetic data producing real
+   failures (Stage 2's 8223003e is the prototype) we'd actually want
+   to see if agents can recover, but it's a 2× cost multiplier per
+   batch. Decide based on Stage 3 results — if one-shot quality is
+   already high enough to be informative, recovery is gravy; if
+   one-shot is sparse, recovery is the only way to get to
+   interpretable H1/H2 numbers.
 
 ## Status of resolved concerns (for the record)
 
@@ -286,8 +322,10 @@ the categories below.
   rejecting NaN cells.
 - **Resolved by config changes**: `task` tool looping in gemma;
   `permission.bash` syntax not surfacing bash to the model.
-- **Resolved by SIDECAR changes**: precipitation unit conversion factor
-  (× 86_400 vs × 31_536_000); dropping the FGOALS-g3 attribution.
+- **Resolved by SIDECAR + dataset changes**: the precipitation unit
+  conversion ambiguity (Cal-Adapt's `× 86_400` quirk) was eliminated
+  by switching to physically-honest synthetic data using the standard
+  `× 31_536_000` conversion. The FGOALS-g3 attribution was also dropped.
 - **Superseded** (no longer applicable): `did_run=rc=0` gating
   (replaced by `script_was_executable` + cleaner derived fields);
   Mesa NaN systematic pattern (schema now filters; synthetic data
