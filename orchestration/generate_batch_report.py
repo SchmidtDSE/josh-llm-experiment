@@ -96,15 +96,17 @@ def render_matrix(rows: list[dict]) -> str:
 def render_per_cell_table(rows: list[dict]) -> str:
     header = (
         "| run | model | r | tgt | conf | schema | run | h@10 | h✓ | occ@10 | occ✓ | "
-        "gr_neg% | gr_ovr% | sp_T | sp_P | dropped | first_error |"
+        "gr_neg% | gr_ovr% | sp_T | sp_P | dropped | first_error | report |"
     )
-    sep = "|" + "|".join(["---"] * 17) + "|"
+    sep = "|" + "|".join(["---"] * 18) + "|"
     lines = [header, sep]
     for r in sorted(rows, key=lambda x: (x["model"], x["rung"], x["target"], x["run_id"])):
         s = _scorer(r)
         c = _consistency(r)
         rid_short = r["run_id"][:8]
-        rid_link = f"[`{rid_short}`](./{r['run_id']}/report.md)"
+        report_rel = f"./{r['run_id']}/report.md"
+        rid_link = f"[`{rid_short}`]({report_rel})"
+        report_link = f"[📄 open]({report_rel})"
         first_err = _short(_first_error(r), 50).replace("|", "\\|")
         lines.append("| " + " | ".join([
             rid_link,
@@ -124,6 +126,7 @@ def render_per_cell_table(rows: list[dict]) -> str:
             _fmt_num(c.get("growth_precip_spearman"), ".2f"),
             str(s.get("csv_rows_dropped_nan") or 0),
             first_err,
+            report_link,
         ]) + " |")
     return "\n".join(lines)
 
@@ -156,10 +159,11 @@ def render_promising_callouts(rows: list[dict]) -> str:
     lines = []
     for r in sorted(promising, key=lambda x: (x["model"], x["rung"], x["target"])):
         rid_short = r["run_id"][:8]
-        rid_link = f"[`{rid_short}`](./{r['run_id']}/report.md)"
+        report_rel = f"./{r['run_id']}/report.md"
         err = _short(_first_error(r), 100)
         lines.append(
-            f"- {rid_link} — {r['model']} r{r['rung']} {r['target']} — `{err}`"
+            f"- `{rid_short}` — {r['model']} r{r['rung']} {r['target']} — "
+            f"`{err}` — [📄 open report]({report_rel})"
         )
     return "\n".join(lines)
 
@@ -171,15 +175,16 @@ def render_passing_callouts(rows: list[dict]) -> str:
     lines = []
     for r in sorted(passing, key=lambda x: (x["model"], x["rung"], x["target"])):
         rid_short = r["run_id"][:8]
-        rid_link = f"[`{rid_short}`](./{r['run_id']}/report.md)"
+        report_rel = f"./{r['run_id']}/report.md"
         s = _scorer(r)
         c = _consistency(r)
         lines.append(
-            f"- {rid_link} {r['model']} r{r['rung']} {r['target']} — "
+            f"- `{rid_short}` {r['model']} r{r['rung']} {r['target']} — "
             f"h@10={_fmt_num(s.get('height_year10_mean'), '.2f')}, "
             f"occ={_fmt_num(s.get('occupancy_year10_mean'), '.1f')}, "
             f"sp_P={_fmt_num(c.get('growth_precip_spearman'), '.2f')}, "
-            f"gr_ovr={_fmt_num(c.get('growth_rate_above_ceiling_frac'), '.2f')}"
+            f"gr_ovr={_fmt_num(c.get('growth_rate_above_ceiling_frac'), '.2f')} — "
+            f"[📄 open report]({report_rel})"
         )
     return "\n".join(lines)
 
