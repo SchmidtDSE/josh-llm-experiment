@@ -119,9 +119,29 @@ OPENCODE_DB_DIR="$RUN_DIR/opencode_data"
     fi
     idle_for=$(( $(date +%s) - last_change_ts ))
     if [ "$idle_for" -ge "$IDLE_THRESHOLD_SEC" ]; then
-      printf '[heartbeat] opencode DB+WAL idle for %ds, terminating %s\n' "$idle_for" "$CONTAINER_NAME" >&2
-      printf '{"idle_seconds": %d, "killed_at": "%s"}\n' \
+      # Distinguish "agent did its work and is now idle" from "agent stalled
+      # mid-work and produced nothing useful". Both end in the same SIGTERM,
+      # but for the manifest's stream_stalled signal we want the former to
+      # read as false (success) and the latter as true (genuine stall). The
+      # heuristic is artifact-based: if the agent wrote a `run.sh` AND a
+      # non-empty `output/results.csv`, it completed its loop before going
+      # idle. This is the same shape the scorer cares about, so it's a
+      # consistent definition of "the agent finished its job".
+      RUN_SH_PRESENT=false
+      RESULTS_CSV_BYTES=0
+      [ -f "$RUN_DIR/workspace/run.sh" ] && RUN_SH_PRESENT=true
+      if [ -f "$RUN_DIR/workspace/output/results.csv" ]; then
+        RESULTS_CSV_BYTES=$(stat -c%s "$RUN_DIR/workspace/output/results.csv" 2>/dev/null || echo 0)
+      fi
+      PRESUMED_DONE=false
+      if [ "$RUN_SH_PRESENT" = "true" ] && [ "$RESULTS_CSV_BYTES" -gt 0 ]; then
+        PRESUMED_DONE=true
+      fi
+      printf '[heartbeat] opencode DB+WAL idle for %ds, terminating %s (presumed_done=%s)\n' \
+        "$idle_for" "$CONTAINER_NAME" "$PRESUMED_DONE" >&2
+      printf '{"idle_seconds": %d, "killed_at": "%s", "presumed_done": %s, "artifacts": {"run_sh": %s, "results_csv_bytes": %d}}\n' \
         "$idle_for" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$PRESUMED_DONE" "$RUN_SH_PRESENT" "$RESULTS_CSV_BYTES" \
         > "$RUN_DIR/stream_stalled.flag"
       docker kill --signal=SIGTERM "$CONTAINER_NAME" 2>/dev/null || true
       # Grace window for the TERM trap to: wait for opencode to flush
