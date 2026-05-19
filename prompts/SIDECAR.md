@@ -1,6 +1,6 @@
 ## Procedure
 
-To implement this, multiple AI agents will run one at a time to complete a todo list. Each agent is assigned exactly one todo per invocation. The shared todo list lives in `/sandbox/PLAN.md`; the prompt you receive only names which todo number is yours, so you must read `PLAN.md` to find the full description of what to do. Before doing any work, briefly list the actions you intend to take to complete your assigned todo. When done, mark your item complete (change `[ ]` to `[x]`) and append a 1–2 sentence summary of what you did under that todo line. Do not touch any other todo. Then exit.
+To implement this, multiple AI agents will run one at a time to complete a todo list. Each agent is assigned exactly one todo per invocation. The shared todo list lives in `/sandbox/PLAN.md`; the prompt you receive only names which todo number is yours, so you must read `PLAN.md` to find the full description of what to do. Before doing any work, briefly (in 1–2 sentences) list the actions you intend to take to complete your assigned todo. Then carry them out by calling the available tools — listing the plan is a preamble, not the task itself. When done, mark your item complete (change `[ ]` to `[x]`) and append a 1–2 sentence summary of what you did under that todo line. Do not touch any other todo. Then exit.
 
 ### AI environment
 
@@ -52,13 +52,10 @@ Two requirements that are part of the delivery, not optional:
 - `./run.sh` must be executable. After writing it, run `chmod +x run.sh`. The scorer invokes the file as `./run.sh`; a script without the executable bit will not run.
 - Before you declare yourself done, execute `./run.sh` at least once yourself. Confirm it exits 0 and writes `./output/results.csv`. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
 
-The CSV is UTF-8, comma-separated, with a header row. Columns, in order:
+The CSV is UTF-8, comma-separated, with a header row. Required data columns:
 
 | Column          | Type   | Unit          |
 |-----------------|--------|---------------|
-| `cell_id`       | string |               |
-| `lat`           | float  | degrees       |
-| `lon`           | float  | degrees       |
 | `year`          | int    | calendar year |
 | `nTrees`        | int    | count         |
 | `meanAge`       | float  | years         |
@@ -66,7 +63,14 @@ The CSV is UTF-8, comma-separated, with a header row. Columns, in order:
 | `temperature`   | float  | Kelvin        |
 | `precipitation` | float  | mm/year       |
 
-One row per (cell, year) for the eleven years 2024–2034 inclusive. `cell_id` format: `{i}_{j}` where `i` is the lat index (0-indexed, south → north) and `j` is the lon index (0-indexed, west → east) of the simulation grid.
+Plus a per-cell identifier. The scorer accepts either of:
+
+- A single string column `cell_id` formatted as `{i}_{j}` (lat index `_` lon index), **or**
+- Two numeric columns `position.x` and `position.y` carrying your framework's native cell coordinates (this is Josh's default export).
+
+Use whichever your chosen framework produces naturally — you do not need to rename your tool's native cell-coordinate fields to match `cell_id`. Optional spatial fields (`lat`, `lon`, `position.latitude`, `position.longitude`) and extra columns (`step`, `replicate`, etc.) are accepted and ignored by the scorer. Column order is unconstrained.
+
+One row per (cell, year) for the eleven years 2024–2034 inclusive.
 
 ### Working document
 

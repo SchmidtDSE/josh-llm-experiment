@@ -22,10 +22,8 @@ from pathlib import Path
 
 import pandas as pd
 
-REQUIRED_COLUMNS = [
-    "cell_id",
-    "lat",
-    "lon",
+# Data columns the scorer actually consumes. Required on every CSV.
+REQUIRED_DATA_COLUMNS = [
     "year",
     "nTrees",
     "meanAge",
@@ -34,19 +32,56 @@ REQUIRED_COLUMNS = [
     "precipitation",
 ]
 
+# Cell-identity is provided EITHER by a `cell_id` string column OR by the
+# `position.x` + `position.y` pair (Josh's default export). At least one
+# alternative below must be fully present. When only the position pair is
+# present, `load_clean_results` synthesises a `cell_id` from it so
+# downstream consumers (internal_consistency, etc.) can keep grouping by
+# a single column.
+CELL_IDENTITY_ALTERNATIVES = [
+    ["cell_id"],
+    ["position.x", "position.y"],
+]
+
 INTEGER_COLUMNS = ("year", "nTrees")
-NUMERIC_COLUMNS = ("lat", "lon", "meanAge", "meanHeight", "temperature", "precipitation")
+# Lat/lon are not required, but if present they must be numeric. Same for
+# Josh's native spatial fields. The scorer never consumes any of these
+# mathematically; they're descriptive metadata.
+NUMERIC_COLUMNS = (
+    "lat",
+    "lon",
+    "meanAge",
+    "meanHeight",
+    "temperature",
+    "precipitation",
+    "position.x",
+    "position.y",
+    "position.latitude",
+    "position.longitude",
+)
 
 
 def _check_required_columns_present(df: pd.DataFrame) -> list[str]:
     actual = set(df.columns)
-    missing = [c for c in REQUIRED_COLUMNS if c not in actual]
-    if missing:
-        return [
-            f"missing required columns: {missing} "
+    errors: list[str] = []
+    missing_data = [c for c in REQUIRED_DATA_COLUMNS if c not in actual]
+    if missing_data:
+        errors.append(
+            f"missing required columns: {missing_data} "
             f"(got: {list(df.columns)})"
-        ]
-    return []
+        )
+    has_cell_identity = any(
+        all(c in actual for c in alt) for alt in CELL_IDENTITY_ALTERNATIVES
+    )
+    if not has_cell_identity:
+        alts = " or ".join(
+            "(" + ", ".join(a) + ")" for a in CELL_IDENTITY_ALTERNATIVES
+        )
+        errors.append(
+            f"missing required columns for cell identity; need one of: {alts} "
+            f"(got: {list(df.columns)})"
+        )
+    return errors
 
 
 def _check_required_columns_numeric_coercible(df: pd.DataFrame) -> list[str]:
@@ -134,6 +169,12 @@ def load_clean_results(workspace: Path) -> tuple[pd.DataFrame, int]:
     confirmed `csv_schema_ok=true` via `check_output_schema`. The required
     numeric columns are coerced to float before filtering, so string
     values that survived the gate become NaN and get dropped here too.
+
+    Cell-identity normalisation: when the CSV uses Josh's default schema
+    (only `position.x` + `position.y`, no `cell_id`), a synthetic
+    `cell_id` column is constructed as `f"{position.x}_{position.y}"` so
+    downstream consumers can groupby a single key without caring which
+    alternative the agent emitted.
     """
     csv_path = workspace.resolve() / "output" / "results.csv"
     df = pd.read_csv(csv_path)
@@ -149,4 +190,8 @@ def load_clean_results(workspace: Path) -> tuple[pd.DataFrame, int]:
         df["year"] = pd.to_numeric(df["year"], errors="coerce").astype("Int64")
         df = df.dropna(subset=["year"])
         df["year"] = df["year"].astype(int)
+    if "cell_id" not in df.columns and {"position.x", "position.y"}.issubset(df.columns):
+        df["cell_id"] = (
+            df["position.x"].astype(str) + "_" + df["position.y"].astype(str)
+        )
     return df.reset_index(drop=True), n_before - len(df)

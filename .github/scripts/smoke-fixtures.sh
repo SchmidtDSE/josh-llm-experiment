@@ -22,6 +22,7 @@ SCORER_IMAGE="${1:-fortree:scorer}"
 # entry: <fixture-dir>|<expected csv_schema_ok>|<errors[0] substring or empty>|<expected csv_rows_dropped_nan or empty>
 FIXTURES=(
   "reference/golden|true||0"
+  "reference/golden-josh-defaults|true||0"
   "reference/broken/nan-heights|true||15"
   "reference/broken/nan-precip|true||9"
   "reference/broken/schema|false|missing required columns|"
