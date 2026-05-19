@@ -1,15 +1,14 @@
 # Experimental design — ForeverTree LLM Experiments
 
-The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the current state of work and forward plan, see [`FORWARD_PLAN.md`](FORWARD_PLAN.md); for the historical staged-build record, see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the engineering build state and pending work (phase 4d durable upload, phase 5b recovery loop, rungs 2–4), see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
 
-> **Status (post phase-5a).** Phases 1–4 are merged and the
+> **Status (post phase-5a).** Phases 1–4c are merged and the
 > scoring-revision half of phase 5 (conformance, internal-consistency
 > metrics, chmod self-heal, schema loosening) is also merged. What
 > remains: the recovery loop (phase 5b), durable upload (phase 4d),
 > rungs 2–4. The synthetic-climate dataset described in §External
-> Inputs replaces the original Cal-Adapt files for the pilot and
-> headline batches. See [FORWARD_PLAN.md](FORWARD_PLAN.md) for staged
-> next steps and open methodology questions.
+> climate inputs replaces the original Cal-Adapt files for the pilot
+> and headline batches.
 
 This is the AI-evaluation experiment reported in our USRSE'26 submission on the [Josh][josh] vegetation modeling platform.
 
@@ -31,9 +30,10 @@ predictions:
 
 Each prediction is measured separately. The headline figure reports
 both. **As of phase-5a, only H1 is directly measurable** — the
-recovery loop (phase 5b) is designed in IMPLEMENTATION_PLAN.md but
-not implemented. See [FORWARD_PLAN.md](FORWARD_PLAN.md) for the
-open question about whether recovery lands before the headline batch.
+recovery loop (phase 5b) is designed in
+[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) but not implemented;
+whether it lands before the headline batch is an open scoping
+question (see §Open methodology questions).
 
 ## Task
 
@@ -140,8 +140,8 @@ flags drift.
 
 `gemma4` is a newer release than `gemma`; pilot batches have used
 `gemma4` so its behaviour is more characterised. The headline panel
-will pick one (likely `gemma4`) once Stage-3 model-panel
-reintroduction is complete (see [FORWARD_PLAN.md](FORWARD_PLAN.md)).
+will pick one (likely `gemma4`) after pilot validation across
+single-cell mini-batches per model.
 
 ### Targets
 
@@ -164,8 +164,8 @@ generations** (× 2 phases — see [Run flow](#run-flow) — so 300 agent
 invocations total). N can scale up freely within OpenRouter cost
 budget; the practical ceiling is set by the cost of any downstream
 manual review rather than the runs themselves. See
-[FORWARD_PLAN.md §Open methodology questions](FORWARD_PLAN.md) for
-sample-size and target_conformance accounting considerations.
+§Open methodology questions below for sample-size and
+target_conformance accounting considerations.
 
 Each run is one container invocation for the one-shot phase and one
 follow-up container invocation for the recovery phase (see flow
@@ -367,11 +367,11 @@ constraints? Hard structural checks (negative growth fraction,
 growth-rate ceiling fraction, age-step != 1 fraction, nTrees-change
 fraction). All four should be 0 under any faithful implementation;
 non-zero values are direct spec violations the other gates can't see.
-A predicted-vs-observed Δh `r²` is planned per
-[FORWARD_PLAN.md §Open methodology questions](FORWARD_PLAN.md) — the
-within-cell-across-years Spearmans currently in the manifest are
-noise on the synthetic dataset (low temporal variance by design) and
-will be replaced with a spatial `r²` against the spec's prediction.
+A predicted-vs-observed Δh `r²` is planned (see §Open methodology
+questions below) — the within-cell-across-years Spearmans currently
+in the manifest are noise on the synthetic dataset (low temporal
+variance by design) and will be replaced with a spatial `r²` against
+the spec's prediction.
 
 **4. Spec-parameter conformance.** Did mean tree height and mean
 occupancy at year 10 fall in the pre-registered acceptance ranges
@@ -655,8 +655,52 @@ paper:
   Hard-layer filtering can be added later if observation reveals
   meaningful leaks.
 - Several methodological choices are still open and will affect
-  what the experiment can claim. See
-  [`FORWARD_PLAN.md` §Open methodology questions](FORWARD_PLAN.md).
+  what the experiment can claim. See §Open methodology questions
+  below.
+
+## Open methodology questions
+
+Decisions still open at the time of writing. None are blockers but
+each shapes what the experiment can claim.
+
+1. **Replace the temporal Spearman metrics with predicted-vs-observed
+   correctness.** The current `consistency.growth_temp_spearman` and
+   `consistency.growth_precip_spearman` correlate Δh against climate
+   proxies within each cell across years, then average across cells.
+   Stage-2 confirmed they are noise on the synthetic dataset by
+   design: within-cell year-over-year variance is tiny (±0.4 K T,
+   ±40 mm/yr P) while the cross-cell spatial gradient is huge
+   (30 K T span, 0–800 mm/yr P span). The replacement: compute the
+   spec's predicted Δh per (cell, year) from the netCDF and compare
+   against the agent's observed Δh — Pearson `r²` and OLS slope.
+   Perfect spec-faithful: r² > 0.95, slope ≈ 1.0. Random/constant
+   growth: r² ≈ 0. Right structure / wrong constants: 0.5–0.9, slope
+   ≠ 1. Also add a year-10 spatial-map `r²` between observed and
+   predicted height fields.
+
+2. **Should `target_conformance=False` runs count toward the
+   denominator of any headline metric?** A run that produces a valid
+   CSV without using the named framework is technically "did the
+   task" but doesn't measure what we're trying to measure. Likely:
+   report pass rates *conditional* on conformance plus a separate
+   conformance-rate-per-model figure.
+
+3. **Acceptance ranges as a gate.** `height_year10` and
+   `occupancy_year10` ranges in `harness/acceptance_ranges.json`
+   currently pass scientifically-broken runs (e.g. mean tree height
+   of 8 × 10⁻¹⁰ m falls vacuously inside `[0, 11]`). Three options
+   to settle before the headline batch: (a) drop them and rely on
+   the internal-consistency block, (b) tighten to growth-equation-
+   consistent bounds, (c) replace with a derived `cell_passed` field
+   ANDing `did_run`, `target_conformance`, growth-rate stats, and
+   climate response. The phase-5a pilot favours (c).
+
+4. **Is the recovery loop in scope for this paper?** Phase 5b
+   delivers H2's measurement infrastructure but doubles the per-cell
+   cost. Decide after the model-panel reintroduction pilots: if
+   one-shot pass rates are already high enough to be informative
+   across the panel, recovery is gravy; if one-shot is sparse,
+   recovery is the only way to reach interpretable H2 numbers.
 
 ## Citation
 
