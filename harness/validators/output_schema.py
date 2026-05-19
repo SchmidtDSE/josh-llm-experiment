@@ -1,8 +1,19 @@
-"""Validate `output/results.csv` against the SIDECAR contract.
+"""Validate `output/results.csv` is parseable and carries the required columns.
 
-Each check appends a string to `csv_schema_errors` on failure; any
-non-empty error list flips `csv_schema_ok=false`. NaN in numeric columns
-is treated as a schema violation rather than a downstream range issue.
+The check is a gate, not a substantive correctness measure. It exists to
+distinguish "the agent produced a CSV with the columns we need somewhere
+in it" from "the agent produced nothing usable". Substantive checks live
+in `acceptance.py` and `internal_consistency.py`.
+
+Rules:
+- Required columns must be a subset of the actual columns; extras and
+  arbitrary column order are accepted.
+- Required numeric/integer columns must be coercible to numeric (string
+  values in `meanHeight` etc. fail; NaN does not).
+- The acceptance target year (e.g. 2034) must appear in the `year` column.
+- NaN in numeric columns is *not* a schema failure: rows with NaN in any
+  required numeric column are counted (`csv_rows_dropped_nan`) and
+  downstream modules filter them before computing means.
 """
 
 from __future__ import annotations
@@ -11,7 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
-EXPECTED_COLUMNS = [
+REQUIRED_COLUMNS = [
     "cell_id",
     "lat",
     "lon",
@@ -23,62 +34,66 @@ EXPECTED_COLUMNS = [
     "precipitation",
 ]
 
-# Spec: 11 rows per cell (years 2024 through 2034 inclusive).
-ROWS_PER_CELL = 11
-
 INTEGER_COLUMNS = ("year", "nTrees")
 NUMERIC_COLUMNS = ("lat", "lon", "meanAge", "meanHeight", "temperature", "precipitation")
 
 
-def _check_columns_match_spec(df: pd.DataFrame) -> list[str]:
-    actual = list(df.columns)
-    if actual != EXPECTED_COLUMNS:
-        return [f"columns mismatch: expected {EXPECTED_COLUMNS}, got {actual}"]
-    return []
-
-
-def _check_column_dtypes(df: pd.DataFrame) -> list[str]:
-    errors: list[str] = []
-    if "cell_id" in df.columns and not pd.api.types.is_object_dtype(df["cell_id"]):
-        errors.append(f"cell_id dtype: expected object/str, got {df['cell_id'].dtype}")
-    for col in INTEGER_COLUMNS:
-        if col in df.columns and not pd.api.types.is_integer_dtype(df[col]):
-            errors.append(f"{col} dtype: expected integer, got {df[col].dtype}")
-    for col in NUMERIC_COLUMNS:
-        if col in df.columns and not pd.api.types.is_float_dtype(df[col]):
-            errors.append(f"{col} dtype: expected float, got {df[col].dtype}")
-    return errors
-
-
-def _check_row_count_matches_grid(df: pd.DataFrame) -> list[str]:
-    if "cell_id" not in df.columns:
-        return []
-    n_cells = df["cell_id"].nunique()
-    expected = n_cells * ROWS_PER_CELL
-    if len(df) != expected:
+def _check_required_columns_present(df: pd.DataFrame) -> list[str]:
+    actual = set(df.columns)
+    missing = [c for c in REQUIRED_COLUMNS if c not in actual]
+    if missing:
         return [
-            f"row count: expected {expected} "
-            f"({n_cells} cells × {ROWS_PER_CELL} years), got {len(df)}"
+            f"missing required columns: {missing} "
+            f"(got: {list(df.columns)})"
         ]
     return []
 
 
-def _check_no_nan_in_numeric_columns(df: pd.DataFrame) -> list[str]:
+def _check_required_columns_numeric_coercible(df: pd.DataFrame) -> list[str]:
     errors: list[str] = []
-    for col in NUMERIC_COLUMNS:
-        if col in df.columns and df[col].isna().any():
-            n_nan = int(df[col].isna().sum())
-            errors.append(f"{col}: {n_nan} NaN values (numeric cols must be finite)")
+    for col in (*INTEGER_COLUMNS, *NUMERIC_COLUMNS):
+        if col not in df.columns:
+            continue
+        try:
+            pd.to_numeric(df[col], errors="raise")
+        except (ValueError, TypeError) as exc:
+            errors.append(f"{col} not numeric-coercible: {exc}")
     return errors
 
 
-def check_output_schema(workspace: Path) -> dict:
+def _check_target_year_present(df: pd.DataFrame, target_year: int) -> list[str]:
+    if "year" not in df.columns:
+        return []
+    years = pd.to_numeric(df["year"], errors="coerce").dropna()
+    if target_year not in set(years.astype(int).tolist()):
+        present = sorted({int(y) for y in years.astype(int).tolist()})
+        return [
+            f"target year {target_year} not in CSV "
+            f"(years present: {present[:20]}{'...' if len(present) > 20 else ''})"
+        ]
+    return []
+
+
+def _count_rows_with_nan_in_required_numeric(df: pd.DataFrame) -> int:
+    cols = [
+        c for c in (*INTEGER_COLUMNS, *NUMERIC_COLUMNS)
+        if c in df.columns and c != "year"
+    ]
+    if not cols:
+        return 0
+    # Coerce non-numeric to NaN so we count both literal NaN and unparseable cells.
+    coerced = df[cols].apply(pd.to_numeric, errors="coerce")
+    return int(coerced.isna().any(axis=1).sum())
+
+
+def check_output_schema(workspace: Path, target_year: int) -> dict:
     csv_path = workspace.resolve() / "output" / "results.csv"
 
     if not csv_path.is_file():
         return {
             "csv_exists": False,
             "csv_row_count": None,
+            "csv_rows_dropped_nan": None,
             "csv_schema_ok": False,
             "csv_schema_errors": [f"missing: {csv_path}"],
         }
@@ -89,19 +104,49 @@ def check_output_schema(workspace: Path) -> dict:
         return {
             "csv_exists": True,
             "csv_row_count": None,
+            "csv_rows_dropped_nan": None,
             "csv_schema_ok": False,
             "csv_schema_errors": [f"pandas read_csv failed: {exc!r}"],
         }
 
     errors: list[str] = []
-    errors += _check_columns_match_spec(df)
-    errors += _check_column_dtypes(df)
-    errors += _check_row_count_matches_grid(df)
-    errors += _check_no_nan_in_numeric_columns(df)
+    errors += _check_required_columns_present(df)
+    # Only run the column-level checks once all required cols exist.
+    if not errors:
+        errors += _check_required_columns_numeric_coercible(df)
+        errors += _check_target_year_present(df, target_year)
+
+    rows_dropped = _count_rows_with_nan_in_required_numeric(df)
 
     return {
         "csv_exists": True,
         "csv_row_count": len(df),
+        "csv_rows_dropped_nan": rows_dropped,
         "csv_schema_ok": not errors,
         "csv_schema_errors": errors,
     }
+
+
+def load_clean_results(workspace: Path) -> tuple[pd.DataFrame, int]:
+    """Load results.csv and drop rows with NaN in any required numeric column.
+
+    Returns (filtered_df, n_dropped). Caller is expected to have already
+    confirmed `csv_schema_ok=true` via `check_output_schema`. The required
+    numeric columns are coerced to float before filtering, so string
+    values that survived the gate become NaN and get dropped here too.
+    """
+    csv_path = workspace.resolve() / "output" / "results.csv"
+    df = pd.read_csv(csv_path)
+    n_before = len(df)
+    numeric_cols = [
+        c for c in (*INTEGER_COLUMNS, *NUMERIC_COLUMNS)
+        if c in df.columns and c != "year"
+    ]
+    if numeric_cols:
+        df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+        df = df.dropna(subset=numeric_cols)
+    if "year" in df.columns:
+        df["year"] = pd.to_numeric(df["year"], errors="coerce").astype("Int64")
+        df = df.dropna(subset=["year"])
+        df["year"] = df["year"].astype(int)
+    return df.reset_index(drop=True), n_before - len(df)

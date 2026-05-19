@@ -19,12 +19,15 @@ import sys
 import traceback
 from pathlib import Path
 
+import conformance
+import conformance_fuzzy
 import entropy
+import internal_consistency
 import loc
 import runner
 from validators import acceptance, output_schema
 
-SCHEMA_VERSION = "phase2-v1"
+SCHEMA_VERSION = "phase5a-v1"
 DEFAULT_TIMEOUT_S = 900
 DEFAULT_ACCEPTANCE_RANGES = Path("/opt/harness/acceptance_ranges.json")
 
@@ -34,8 +37,11 @@ def _ordered_record(
     target: str,
     target_year: int | None,
     runner_out: dict,
+    conformance_out: dict,
+    conformance_fuzzy_out: dict,
     schema_out: dict,
     accept_out: dict,
+    consistency_out: dict,
     loc_out: dict,
     entropy_out: dict,
     did_run: bool,
@@ -61,8 +67,15 @@ def _ordered_record(
         "timed_out": runner_out.get("timed_out", False),
         "stdout_tail": runner_out.get("stdout_tail", ""),
         "stderr_tail": runner_out.get("stderr_tail", ""),
+        "target_conformance": conformance_out.get("target_conformance", False),
+        "conformance": conformance_out,
+        "target_conformance_fuzzy": conformance_fuzzy_out.get("target_conformance_fuzzy"),
+        "target_conformance_fuzzy_reason": conformance_fuzzy_out.get(
+            "target_conformance_fuzzy_reason"
+        ),
         "csv_exists": schema_out.get("csv_exists", False),
         "csv_row_count": schema_out.get("csv_row_count"),
+        "csv_rows_dropped_nan": schema_out.get("csv_rows_dropped_nan"),
         "csv_schema_ok": schema_out.get("csv_schema_ok", False),
         "csv_schema_errors": schema_out.get("csv_schema_errors", []),
         "height_year10_mean": _finite_or_none(accept_out.get("height_year10_mean")),
@@ -70,6 +83,7 @@ def _ordered_record(
         "height_in_range": accept_out.get("height_in_range", False),
         "occupancy_in_range": accept_out.get("occupancy_in_range", False),
         "acceptance_ranges_used": accept_out.get("acceptance_ranges_used", {}),
+        "consistency": consistency_out,
         "src_loc": loc_out.get("src_loc", 0),
         "comment_loc": loc_out.get("comment_loc", 0),
         "imports_loc": loc_out.get("imports_loc", 0),
@@ -95,44 +109,62 @@ def main(argv: list[str] | None = None) -> int:
     harness_errors: list[str] = []
 
     runner_out: dict = {}
+    conformance_out: dict = {}
+    conformance_fuzzy_out: dict = {}
     schema_out: dict = {}
     accept_out: dict = {}
+    consistency_out: dict = {}
     loc_out: dict = {}
     entropy_out: dict = {}
     target_year: int | None = None
+
+    # Read target_year up front so it can drive the schema-level year check.
+    try:
+        with open(args.acceptance_ranges) as f:
+            ranges = json.load(f)
+        target_year = int(ranges.get("target_year"))
+    except Exception:
+        harness_errors.append(f"acceptance ranges read:\n{traceback.format_exc()}")
+        ranges = {}
 
     try:
         runner_out = runner.run(workspace, args.timeout)
     except Exception:
         harness_errors.append(f"runner.run:\n{traceback.format_exc()}")
 
+    # Conformance runs regardless of whether ./run.sh succeeded — the
+    # absence of framework-use is its own data point.
     try:
-        schema_out = output_schema.check_output_schema(workspace)
+        conformance_out = conformance.check(workspace, args.target)
+    except Exception:
+        harness_errors.append(f"conformance.check:\n{traceback.format_exc()}")
+    try:
+        conformance_fuzzy_out = conformance_fuzzy.check(workspace, args.target)
+    except Exception:
+        harness_errors.append(f"conformance_fuzzy.check:\n{traceback.format_exc()}")
+
+    try:
+        schema_out = output_schema.check_output_schema(workspace, target_year or 0)
     except Exception:
         harness_errors.append(f"output_schema.check_output_schema:\n{traceback.format_exc()}")
 
     if schema_out.get("csv_schema_ok"):
         try:
             accept_out = acceptance.check_output_acceptable(workspace, args.acceptance_ranges)
-            target_year = accept_out.get("acceptance_ranges_used", {}).get("target_year")
         except Exception:
             harness_errors.append(f"acceptance.check_output_acceptable:\n{traceback.format_exc()}")
-    else:
         try:
-            with open(args.acceptance_ranges) as f:
-                ranges = json.load(f)
-            target_year = int(ranges.get("target_year"))
-            accept_out = {
-                "height_year10_mean": None,
-                "occupancy_year10_mean": None,
-                "height_in_range": False,
-                "occupancy_in_range": False,
-                "acceptance_ranges_used": ranges,
-            }
+            consistency_out = internal_consistency.compute(workspace)
         except Exception:
-            harness_errors.append(
-                f"acceptance ranges read:\n{traceback.format_exc()}"
-            )
+            harness_errors.append(f"internal_consistency.compute:\n{traceback.format_exc()}")
+    else:
+        accept_out = {
+            "height_year10_mean": None,
+            "occupancy_year10_mean": None,
+            "height_in_range": False,
+            "occupancy_in_range": False,
+            "acceptance_ranges_used": ranges,
+        }
 
     try:
         loc_out = loc.count(workspace, args.target)
@@ -154,8 +186,11 @@ def main(argv: list[str] | None = None) -> int:
         target=args.target,
         target_year=target_year,
         runner_out=runner_out,
+        conformance_out=conformance_out,
+        conformance_fuzzy_out=conformance_fuzzy_out,
         schema_out=schema_out,
         accept_out=accept_out,
+        consistency_out=consistency_out,
         loc_out=loc_out,
         entropy_out=entropy_out,
         did_run=did_run,

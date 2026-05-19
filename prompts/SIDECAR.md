@@ -1,9 +1,3 @@
-# Sidecar — appended to every rung's prompt
-
-This text describes the runtime environment your code runs in, the external inputs available, and the file contract your output must satisfy. It is the fixed boilerplate footer attached to every rung.
-
----
-
 ## Your environment
 
 You are running inside a container with the following pre-installed:
@@ -32,7 +26,7 @@ For this task, two netCDF files containing data from Tulare County, California v
 - `data/precip_tulare_annual.nc`
 - `data/maxtemp_tulare_annual.nc`
 
-The data comes from the FGOALS-g3 climate model under the SSP2-4.5 emissions scenario (2015-2100). The FGOALS-g3 climate model outputs report precipitation as a flux in kg m⁻² s⁻¹. Because 1 kg of water spread over 1 m² is equivalent to 1 mm of depth, the conversion to mm/year is (31,536,000 = seconds in a 365-day year):
+The provided netCDF reports precipitation as a flux in kg m⁻² s⁻¹. Because 1 kg of water spread over 1 m² is equivalent to 1 mm of depth, the conversion to mm/year is (31,536,000 = seconds in a 365-day year):
 
 ```
 precipitation_mm_per_year = precipitation_kgm2s * 31_536_000
@@ -48,9 +42,9 @@ cd /sandbox && ./run.sh
 
 Your code must exit 0 and write `./output/results.csv`.
 
-Two requirements that are part of the delivery, not optional polish:
+Two requirements that are part of the delivery, not optional:
 
-- `./run.sh` must have the executable bit set. After writing it, run `chmod +x run.sh`. The scorer invokes the file as `./run.sh`; a script without the executable bit will not run.
+- `./run.sh` must be executable. After writing it, run `chmod +x run.sh`. The scorer invokes the file as `./run.sh`; a script without the executable bit will not run.
 - Before you declare yourself done, execute `./run.sh` at least once yourself. Confirm it exits 0 and writes `./output/results.csv`. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
 
 The CSV is UTF-8, comma-separated, with a header row. Columns, in order:
