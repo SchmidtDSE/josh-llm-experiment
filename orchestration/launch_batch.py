@@ -450,6 +450,63 @@ def write_joblog(joblog_path: Path, cells_in_seq_order: list[CellState]) -> None
             )
 
 
+def _collect_step_status(run_dir: Path) -> Optional[dict]:
+    """Walk agent_artifacts/steps/step_*/step_meta.json into a compact
+    summary the batch report can render at a glance. Returns None if the
+    run pre-dates the multi-invocation flow (no steps/ dir)."""
+    steps_root = run_dir / "agent_artifacts" / "steps"
+    if not steps_root.is_dir():
+        return None
+    per_step = []
+    for step_dir in sorted(steps_root.glob("step_*")):
+        meta_path = step_dir / "step_meta.json"
+        if not (meta_path.exists() and meta_path.stat().st_size):
+            continue
+        try:
+            sm = json.loads(meta_path.read_text())
+        except json.JSONDecodeError:
+            continue
+        per_step.append({
+            "n": sm.get("step_n"),
+            "name": sm.get("step_name"),
+            "exit_code": sm.get("exit_code"),
+            "started_at": sm.get("started_at"),
+            "ended_at": sm.get("ended_at"),
+        })
+    if not per_step:
+        return None
+    completed = sum(1 for s in per_step if s.get("exit_code") == 0)
+    return {
+        "step_count": len(per_step),
+        "completed_count": completed,
+        "per_step": per_step,
+    }
+
+
+def _count_plan_todos(run_dir: Path) -> Optional[dict]:
+    """Count `[ ]` / `[x]` checkboxes in workspace/PLAN.md. Returns None if
+    PLAN.md doesn't exist (pre-multi-invocation runs)."""
+    plan = run_dir / "workspace" / "PLAN.md"
+    if not plan.is_file():
+        return None
+    try:
+        text = plan.read_text(errors="replace")
+    except OSError:
+        return None
+    checked = 0
+    unchecked = 0
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("- [x]") or stripped.startswith("- [X]"):
+            checked += 1
+        elif stripped.startswith("- [ ]"):
+            unchecked += 1
+    total = checked + unchecked
+    if total == 0:
+        return None
+    return {"checked": checked, "total": total}
+
+
 def emit_manifest_line(run_id: str, batch_dir: Path) -> Optional[dict]:
     """Build one manifest row for run_id. Returns None if run_meta.json is
     missing (launch_run.sh failed before workspace setup — joblog records
@@ -489,6 +546,8 @@ def emit_manifest_line(run_id: str, batch_dir: Path) -> Optional[dict]:
         "scorer": scorer,
         "time_breakdown": time_breakdown,
         "run_meta": meta,
+        "steps": _collect_step_status(run_dir),
+        "plan_todos": _count_plan_todos(run_dir),
     }
 
 
