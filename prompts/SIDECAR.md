@@ -25,15 +25,13 @@ The `tasmax` variable is in **Kelvin (K)**. Use the values directly. The growth 
 
 ### Precipitation
 
-The `pr` variable carries `units = kg m⁻² s⁻¹` but the values are **not** an instantaneous flux — they are a sum of daily mean rates. Each daily rate represented an accumulation of `rate × 86_400` mm over that day, so the sum-of-N-daily-rates in the file represents the total accumulation once you multiply by seconds-per-day.
-
-The correct conversion to mm/year is therefore:
+The `pr` variable is a precipitation flux in `kg m⁻² s⁻¹`. Convert to mm/year via the standard physical conversion (1 kg of water spread over 1 m² is equivalent to 1 mm of depth):
 
 ```
-precipitation_mm_per_year = precipitation_value_from_netcdf * 86_400
+precipitation_mm_per_year = precipitation_value_from_netcdf * 31_536_000
 ```
 
-**Do not multiply by 31,536,000 (seconds in a year).** That factor is correct for a true instantaneous flux but the values in this file have already been time-aggregated. Using seconds-per-year over-estimates annual precipitation by a factor of ~365 and will push every cell well past `P_high`, saturating the precipitation impact term so growth becomes effectively independent of rainfall.
+where `31_536_000` is the number of seconds in a 365-day year.
 
 ## What you must produce
 

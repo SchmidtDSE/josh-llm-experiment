@@ -69,13 +69,15 @@ EXPECTED = {
         "path": HERE / "precip_synthetic.nc",
         "variable": "pr",
         "units": "kg m-2 s-1",
-        "sha256": "414b4d33ca8f4ca498eea71fd30d12e43c50f9c45543aa939de341eaf672333c",
-        # Precipitation checks are in mm/year (raw × 86_400) for legibility.
+        "sha256": "1e9ff0818754b6428f6ee8c8935614b858ba1c334f9dac7a0d436b5172e6cd65",
+        # Precipitation checks are in mm/year (raw × seconds-per-year) for legibility.
         "value_min": 10.0,            # mm/yr
         "value_max": 900.0,           # mm/yr
         "mean_in": (350.0, 450.0),    # mm/yr
     },
 }
+
+SECONDS_PER_YEAR = 31_536_000  # used for converting `pr` (kg m-2 s-1) → mm/year
 
 EXPECTED_DIMS = {"calendar_year": 31, "lat": 31, "lon": 50}
 LAT_BBOX = (35.80, 36.73)
@@ -189,7 +191,7 @@ def validate_precipitation() -> None:
     check(arr.attrs.get("units") == spec["units"], f"units == {spec['units']!r}")
     values = arr.values
     check(np.isfinite(values).all(), "all values finite (no NaN/inf)")
-    mm_yr = values * 86_400  # raw kg/m²/s → mm/year
+    mm_yr = values * SECONDS_PER_YEAR  # raw kg/m²/s → mm/year
     check(
         mm_yr.min() >= spec["value_min"],
         f"min {mm_yr.min():.1f} mm/yr ≥ {spec['value_min']}",
@@ -204,8 +206,8 @@ def validate_precipitation() -> None:
         f"mean {mm_yr.mean():.1f} mm/yr in [{mlo}, {mhi}]",
     )
     # Generator orients lon ascending (west → east), so lon-index 0 is west.
-    west_mean = float(arr.isel(lon=0).mean()) * 86_400
-    east_mean = float(arr.isel(lon=-1).mean()) * 86_400
+    west_mean = float(arr.isel(lon=0).mean()) * SECONDS_PER_YEAR
+    east_mean = float(arr.isel(lon=-1).mean()) * SECONDS_PER_YEAR
     check(
         west_mean > east_mean + 200.0,
         f"west wetter than east by ≥ 200 mm/yr (west={west_mean:.0f}, east={east_mean:.0f})",
@@ -226,7 +228,7 @@ def validate_growth_implication() -> None:
     p_raw = xr.open_dataset(EXPECTED["precip"]["path"])[
         EXPECTED["precip"]["variable"]
     ].isel(calendar_year=0).values
-    p = p_raw * 86_400
+    p = p_raw * SECONDS_PER_YEAR
 
     x_T = np.clip((t - 270.0) / (330.0 - 270.0), 0.0, 1.0)
     pct_T = 4 * x_T * (1 - x_T)

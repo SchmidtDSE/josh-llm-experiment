@@ -12,10 +12,11 @@ exercise the spec's growth equation cleanly:
   the spec's optimal 300K.
 
 - **Precipitation** varies linearly with longitude (wetter west → drier
-  east), in raw `kg m⁻² s⁻¹` units consistent with SIDECAR's `× 86_400`
-  conversion. After the conversion, values span roughly 100–700 mm/year,
-  so the spec's sigmoid (`P_low=300, P_high=500`) is active across the
-  grid — some cells well below threshold, some well above.
+  east), as a physically-honest precipitation flux in `kg m⁻² s⁻¹`.
+  After the standard `× 31_536_000` (seconds per year) conversion,
+  values span roughly 100–700 mm/year — so the spec's sigmoid
+  (`P_low=300, P_high=500`) is active across the grid: some cells
+  well below threshold, some well above.
 
 The two gradients are orthogonal (T along lat, P along lon), so a
 correctly-implemented model should produce a clean diagonal pattern in
@@ -72,12 +73,19 @@ def build_temperature(years: list[int], lats: np.ndarray, lons: np.ndarray) -> n
     return out
 
 
-def build_precipitation_raw(years: list[int], lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
-    """Longitude-driven precipitation in raw `kg m⁻² s⁻¹` units.
+SECONDS_PER_YEAR = 31_536_000  # 365 × 86_400 (no leap-day handling)
 
-    Target post-conversion range (× 86_400) is 100–700 mm/year, putting
-    the sigmoid threshold band (P_low=300 → P_high=500) right in the
-    middle of the grid.
+
+def build_precipitation_raw(years: list[int], lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
+    """Longitude-driven precipitation as a true flux in `kg m⁻² s⁻¹`.
+
+    Internally constructed in mm/year then divided by seconds-per-year,
+    so the raw netCDF values are a physical mass-flux density (no
+    misleading unit labels, no pipeline-history quirks). Standard
+    `× 31_536_000` conversion recovers mm/year.
+
+    Target mm/year range is 100–700, putting the sigmoid threshold band
+    (P_low=300 → P_high=500) right in the middle of the grid.
     """
     rng = np.random.default_rng(SEED + 1)
     _, lon_grid = np.meshgrid(lats, lons, indexing="ij")
@@ -86,11 +94,11 @@ def build_precipitation_raw(years: list[int], lats: np.ndarray, lons: np.ndarray
 
     out = np.empty((len(years), N_LAT, N_LON), dtype=np.float64)
     for i, year in enumerate(years):
-        # In mm/year, then convert at the end.
+        # Build in mm/year, then convert to kg/m²/s by dividing by seconds-per-year.
         base_mm_yr = 100.0 + 600.0 * lon_frac   # 100mm east → 700mm west
         interannual = rng.normal(0.0, 40.0, (N_LAT, N_LON))
         mm_yr = np.clip(base_mm_yr + interannual, 20.0, 850.0)
-        out[i] = mm_yr / 86_400.0
+        out[i] = mm_yr / SECONDS_PER_YEAR
     return out
 
 
@@ -195,9 +203,9 @@ def main() -> None:
             "variable_id": "pr",
             "extended_description": (
                 "Synthetic. Linear west-to-east longitude gradient (~700 mm/yr west, "
-                "~100 mm/yr east) with ±40 mm/yr interannual noise. Values are in "
-                "raw `kg m⁻² s⁻¹` units matching the Cal-Adapt convention; multiplying "
-                "by 86_400 yields mm/year."
+                "~100 mm/yr east) with ±40 mm/yr interannual noise. Values are a true "
+                "precipitation flux in `kg m⁻² s⁻¹`; multiplying by 31_536_000 "
+                "(seconds per year) yields mm/year."
             ),
         },
         years=YEARS, lats=lats, lons=lons,
@@ -207,7 +215,7 @@ def main() -> None:
     print(f"  temperature K: min={temp.min():.2f} max={temp.max():.2f} mean={temp.mean():.2f}")
     print(f"Wrote {here / 'precip_synthetic.nc'}")
     print(f"  precip raw:    min={precip.min():.3e} max={precip.max():.3e} mean={precip.mean():.3e}")
-    print(f"  precip mm/yr:  min={precip.min()*86_400:.1f} max={precip.max()*86_400:.1f} mean={precip.mean()*86_400:.1f}")
+    print(f"  precip mm/yr:  min={precip.min()*SECONDS_PER_YEAR:.1f} max={precip.max()*SECONDS_PER_YEAR:.1f} mean={precip.mean()*SECONDS_PER_YEAR:.1f}")
 
 
 if __name__ == "__main__":
