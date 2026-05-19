@@ -728,6 +728,15 @@ def main() -> int:
         summary_path, batch_tag, len(cells_in_seq), succeeded, failed, args.jobs
     )
 
+    batch_report_path = batch_dir / "batch_report.md"
+    try:
+        import generate_batch_report
+        md = generate_batch_report.build_report(batch_dir)
+        batch_report_path.write_text(md, encoding="utf-8")
+    except Exception as exc:
+        console.print(f"  [yellow]batch_report.md generation failed:[/] {exc}")
+        batch_report_path = None
+
     console.print()
     print_final_table(console, cells_in_seq)
     console.print()
@@ -738,6 +747,8 @@ def main() -> int:
     )
     console.print(f"  Summary:   {summary_path}")
     console.print(f"  Manifest:  {manifest_path}")
+    if batch_report_path is not None:
+        console.print(f"  Report:    {batch_report_path}")
     if failed > 0:
         console.print(f"  Failed cell logs: {cell_logs_dir}/<run_id>.log")
         return 1
