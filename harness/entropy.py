@@ -1,8 +1,11 @@
 """Token-level Shannon entropy of generated source.
 
 Uses tiktoken `cl100k_base` as a fixed generic tokenizer so the metric is
-comparable across Python (.py) and Josh (.josh / .jshd) source. The file
-selection mirrors `loc.py` via the shared `_files` helper.
+comparable across Python (.py) and Josh (.josh) source. The file
+selection mirrors `loc.py` via the shared `_files` helper. Binary
+artefacts like Josh's `.jshd` preprocessed data are excluded by that
+helper — their byte-entropy is not meaningfully comparable to
+source-code entropy.
 
 Returns 0.0 when there are no source files (empty workspace / no relevant
 files for the target).
