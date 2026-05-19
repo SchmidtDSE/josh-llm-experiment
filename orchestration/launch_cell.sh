@@ -37,8 +37,17 @@ set -euo pipefail
 : "${TARGET:?TARGET not set}"
 : "${RUN_ID:?RUN_ID not set; use \$(uuidgen)}"
 
+: "${BATCH_DIR:?BATCH_DIR not set. Set it to a parent dir for the run, e.g. BATCH_DIR=runs/interactive. launch_batch.py exports it automatically for batch-driven sweeps.}"
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUN_DIR="$REPO_ROOT/runs/$RUN_ID"
+# BATCH_DIR may be relative (resolved against REPO_ROOT) or absolute. The
+# downstream `realpath` calls in run_agent.sh + scorer mounts need an
+# absolute path, so canonicalise here once.
+case "$BATCH_DIR" in
+  /*) ;;
+  *)  BATCH_DIR="$REPO_ROOT/$BATCH_DIR" ;;
+esac
+RUN_DIR="$BATCH_DIR/$RUN_ID"
 
 echo "▶ launch_cell.sh: $MODEL rung=$RUNG target=$TARGET run=$RUN_ID"
 

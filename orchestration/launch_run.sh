@@ -46,7 +46,17 @@ set -a
 . "$REPO_ROOT/.env"
 set +a
 
-RUN_DIR="$REPO_ROOT/runs/$RUN_ID"
+# BATCH_DIR is the parent dir for this cell's artifacts. launch_batch.py
+# exports it per-cell during a sweep (runs/<batch-tag>/); for one-off
+# operator invocations, set it explicitly (e.g. runs/interactive). It can
+# be relative (resolved against REPO_ROOT) or absolute. Downstream
+# `realpath` calls require absolute, so canonicalise once.
+: "${BATCH_DIR:?BATCH_DIR not set. Set it to a parent dir for the run, e.g. BATCH_DIR=runs/interactive. launch_batch.py exports it automatically for batch-driven sweeps.}"
+case "$BATCH_DIR" in
+  /*) ;;
+  *)  BATCH_DIR="$REPO_ROOT/$BATCH_DIR" ;;
+esac
+RUN_DIR="$BATCH_DIR/$RUN_ID"
 if [ -e "$RUN_DIR" ]; then
   echo "Run dir already exists: $RUN_DIR — refusing to overwrite" >&2
   exit 3
