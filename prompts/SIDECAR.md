@@ -1,6 +1,6 @@
 ## Procedure
 
-To implement this, multiple AI agents will run one at a time to complete a todo list. Each time the AI agent starts its work it should read this document with specific attention paid to its assigned todo item. It should complete that todo item, update this document with status, and mark its item complete. Before starting work, each agent should list the actions it needs to take to complete its assigned todo item.
+To implement this, multiple AI agents will run one at a time to complete a todo list. Each agent is assigned exactly one todo per invocation. The shared todo list lives in `/sandbox/PLAN.md`; the prompt you receive only names which todo number is yours, so you must read `PLAN.md` to find the full description of what to do. Before doing any work, briefly list the actions you intend to take to complete your assigned todo. When done, mark your item complete (change `[ ]` to `[x]`) and append a 1–2 sentence summary of what you did under that todo line. Do not touch any other todo. Then exit.
 
 ### AI environment
 
@@ -70,4 +70,4 @@ One row per (cell, year) for the eleven years 2024–2034 inclusive. `cell_id` f
 
 ### Working document
 
-A `PLAN.md` file in `/sandbox` holds the shared todo list and a `### Plan` section that agents append to as they work. Read it at the start of every invocation. Complete only your assigned todo, summarise what you did under that todo as a 1–2 sentence note, and mark the item complete by changing `[ ]` to `[x]` in the todo list. Do not edit todos other than your assigned one.
+`/sandbox/PLAN.md` is the shared working document across agent invocations. It carries the 8-item todo list (the full description of what each step entails) and a `## Plan` section where agents append architectural decisions and notes that later steps need. See the Procedure section at the top of this document for the per-invocation contract.
