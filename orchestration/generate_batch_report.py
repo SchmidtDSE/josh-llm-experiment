@@ -95,10 +95,10 @@ def render_matrix(rows: list[dict]) -> str:
 
 def render_per_cell_table(rows: list[dict]) -> str:
     header = (
-        "| run | model | r | tgt | conf | schema | run | h@10 | h✓ | occ@10 | occ✓ | "
+        "| run | model | r | tgt | conf | x_bit | schema | run | h@10 | h✓ | occ@10 | occ✓ | "
         "gr_neg% | gr_ovr% | sp_T | sp_P | dropped | first_error | report |"
     )
-    sep = "|" + "|".join(["---"] * 18) + "|"
+    sep = "|" + "|".join(["---"] * 19) + "|"
     lines = [header, sep]
     for r in sorted(rows, key=lambda x: (x["model"], x["rung"], x["target"], x["run_id"])):
         s = _scorer(r)
@@ -114,6 +114,7 @@ def render_per_cell_table(rows: list[dict]) -> str:
             str(r["rung"]),
             r["target"],
             _fmt_bool(s.get("target_conformance")),
+            _fmt_bool(s.get("script_was_executable")),
             _fmt_bool(s.get("csv_schema_ok")),
             _fmt_bool(s.get("did_run")),
             _fmt_num(s.get("height_year10_mean"), ".2f"),

@@ -65,6 +65,7 @@ def _ordered_record(
         "exit_code": runner_out.get("exit_code"),
         "wall_time_seconds": runner_out.get("wall_time_seconds"),
         "timed_out": runner_out.get("timed_out", False),
+        "script_was_executable": runner_out.get("script_was_executable"),
         "stdout_tail": runner_out.get("stdout_tail", ""),
         "stderr_tail": runner_out.get("stderr_tail", ""),
         "target_conformance": conformance_out.get("target_conformance", False),
