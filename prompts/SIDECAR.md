@@ -14,18 +14,18 @@ Your working directory is `/sandbox`. Read, write, and edit any file inside it. 
 
 ## External Inputs
 
-Two netCDF files in `data/` provide climate forcings for Tulare County, California via [Cal-Adapt](https://cal-adapt.org/). Both are indexed by `(calendar_year, lat, lon)` and span 2024–2053; the simulation uses years 2024–2034 inclusive.
+Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings over the bounding box specified in the prompt. Both are indexed by `(calendar_year, lat, lon)` and span 2024–2054; the simulation uses years 2024–2034 inclusive.
 
-- `data/maxtemp_tulare_annual.nc` — annual maximum air temperature.
-- `data/precip_tulare_annual.nc`  — annual precipitation.
+- `data/maxtemp_synthetic.nc` — data variable `tasmax` (annual maximum air temperature, K).
+- `data/precip_synthetic.nc`  — data variable `pr` (precipitation flux).
 
 ### Temperature
 
-The data variable in `maxtemp_tulare_annual.nc` is in **Kelvin (K)**. Use the values directly. The growth equation's `T_min` and `T_max` defaults are already in Kelvin, so no unit conversion is needed; pass the netCDF values straight into the temperature impact calculation.
+The `tasmax` variable is in **Kelvin (K)**. Use the values directly. The growth equation's `T_min` and `T_max` defaults are already in Kelvin, so no unit conversion is needed; pass the netCDF values straight into the temperature impact calculation.
 
-### Precipitation — read this carefully, the unit label is misleading
+### Precipitation
 
-The data variable in `precip_tulare_annual.nc` is labeled `units = kg m⁻² s⁻¹`. **That label is misleading.** The values are *not* an instantaneous flux. The upstream pipeline downloaded daily precipitation rates (each in kg m⁻² s⁻¹) and **summed them across days** to build this file; the unit string was never updated. Each daily rate represented an accumulation of `rate × 86_400` mm over that day, so the sum-of-N-daily-rates in the file represents the same total in (mm/day) units summed across the days — i.e., mm — once you multiply by seconds-per-day.
+The `pr` variable carries `units = kg m⁻² s⁻¹` but the values are **not** an instantaneous flux — they are a sum of daily mean rates. Each daily rate represented an accumulation of `rate × 86_400` mm over that day, so the sum-of-N-daily-rates in the file represents the total accumulation once you multiply by seconds-per-day.
 
 The correct conversion to mm/year is therefore:
 
@@ -33,9 +33,7 @@ The correct conversion to mm/year is therefore:
 precipitation_mm_per_year = precipitation_value_from_netcdf * 86_400
 ```
 
-**Do not multiply by 31,536,000 (seconds in a year).** That factor is correct for a true instantaneous flux but the values in this file have already been time-aggregated by the pipeline. Using seconds-per-year over-estimates annual precipitation by a factor of ~365 and will push every cell well past `P_high`, saturating the precipitation impact term so growth becomes effectively independent of rainfall.
-
-Sanity check after conversion: Tulare County annual precipitation should land in the low hundreds of mm/year (historical norm ~200–400 mm/year in the valley, higher in the Sierras). If your converted values are in the thousands of mm/year, the conversion factor is wrong.
+**Do not multiply by 31,536,000 (seconds in a year).** That factor is correct for a true instantaneous flux but the values in this file have already been time-aggregated. Using seconds-per-year over-estimates annual precipitation by a factor of ~365 and will push every cell well past `P_high`, saturating the precipitation impact term so growth becomes effectively independent of rainfall.
 
 ## What you must produce
 
