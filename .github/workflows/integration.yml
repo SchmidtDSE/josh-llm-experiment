@@ -101,20 +101,23 @@ jobs:
         run: |
           set -euo pipefail
           RUN_ID="ci-$(uuidgen)"
+          BATCH_DIR="runs/ci-${{ github.run_id }}"
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "batch_dir=$BATCH_DIR" >> "$GITHUB_OUTPUT"
           MODEL="${{ inputs.model }}" \
           RUNG="${{ inputs.rung }}" \
           TARGET="${{ inputs.target }}" \
           RUN_ID="$RUN_ID" \
+          BATCH_DIR="$BATCH_DIR" \
           WALL_CLOCK_BACKSTOP_SEC=1800 \
           IDLE_THRESHOLD_SEC=600 \
             ./orchestration/launch_cell.sh || true
           echo "--- run_meta.cell.json ---"
-          cat "runs/$RUN_ID/run_meta.cell.json" 2>/dev/null || echo "(no run_meta.cell.json)"
+          cat "$BATCH_DIR/$RUN_ID/run_meta.cell.json" 2>/dev/null || echo "(no run_meta.cell.json)"
           echo "--- scorer.json ---"
-          cat "runs/$RUN_ID/scorer.json" 2>/dev/null || echo "(no scorer.json)"
+          cat "$BATCH_DIR/$RUN_ID/scorer.json" 2>/dev/null || echo "(no scorer.json)"
           echo "--- report.md (head) ---"
-          head -50 "runs/$RUN_ID/report.md" 2>/dev/null || echo "(no report.md)"
+          head -50 "$BATCH_DIR/$RUN_ID/report.md" 2>/dev/null || echo "(no report.md)"
 
       - name: Publish report.md to the workflow Summary tab
         # Posts the rendered Markdown into the workflow run's Summary so a
@@ -124,7 +127,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          REPORT="runs/${{ steps.run.outputs.run_id }}/report.md"
+          REPORT="${{ steps.run.outputs.batch_dir }}/${{ steps.run.outputs.run_id }}/report.md"
           if [ -s "$REPORT" ]; then
             cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
           else
@@ -134,12 +137,12 @@ jobs:
       - name: Collect ollama logs (ollama path only)
         if: always() && startsWith(inputs.model, 'ollama-')
         run: |
-          docker logs ollama > "runs/${{ steps.run.outputs.run_id }}/ollama.log" 2>&1 || true
+          docker logs ollama > "${{ steps.run.outputs.batch_dir }}/${{ steps.run.outputs.run_id }}/ollama.log" 2>&1 || true
 
       - name: Upload run artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: run-${{ steps.run.outputs.run_id }}-${{ inputs.model }}-rung${{ inputs.rung }}-${{ inputs.target }}
-          path: runs/${{ steps.run.outputs.run_id }}/
+          path: ${{ steps.run.outputs.batch_dir }}/${{ steps.run.outputs.run_id }}/
           if-no-files-found: warn

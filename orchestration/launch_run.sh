@@ -46,18 +46,17 @@ set -a
 . "$REPO_ROOT/.env"
 set +a
 
-# Batch driver (launch_batch.py) exports BATCH_DIR so all cells in a sweep
-# land under runs/<batch-tag>/<run_id>/ next to that batch's worklist /
-# joblog / manifest. Operator-invoked single cells get the legacy
-# runs/<run_id>/ layout when BATCH_DIR is unset. The path may be relative
-# or absolute; resolve to absolute so downstream `realpath` calls in
-# run_agent.sh see the same string regardless of how it was passed.
-RUNS_PARENT="${BATCH_DIR:-$REPO_ROOT/runs}"
-case "$RUNS_PARENT" in
+# BATCH_DIR is the parent dir for this cell's artifacts. launch_batch.py
+# exports it per-cell during a sweep (runs/<batch-tag>/); for one-off
+# operator invocations, set it explicitly (e.g. runs/interactive). It can
+# be relative (resolved against REPO_ROOT) or absolute. Downstream
+# `realpath` calls require absolute, so canonicalise once.
+: "${BATCH_DIR:?BATCH_DIR not set. Set it to a parent dir for the run, e.g. BATCH_DIR=runs/interactive. launch_batch.py exports it automatically for batch-driven sweeps.}"
+case "$BATCH_DIR" in
   /*) ;;
-  *)  RUNS_PARENT="$REPO_ROOT/$RUNS_PARENT" ;;
+  *)  BATCH_DIR="$REPO_ROOT/$BATCH_DIR" ;;
 esac
-RUN_DIR="$RUNS_PARENT/$RUN_ID"
+RUN_DIR="$BATCH_DIR/$RUN_ID"
 if [ -e "$RUN_DIR" ]; then
   echo "Run dir already exists: $RUN_DIR — refusing to overwrite" >&2
   exit 3
