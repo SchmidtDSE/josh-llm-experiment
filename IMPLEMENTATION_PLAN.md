@@ -1,8 +1,18 @@
 # Implementation plan — Build out the ForeverTree LLM experiment harness (phases 1–5)
 
+> **Status (post phase-5a).** This document is a **historical record**
+> of the staged build plan as originally scoped. Phases 1, 2, 3, 4a,
+> 4b, 4c, and the conformance-check half of phase 5 (now called
+> "phase 5a" in commits) are all complete. Phase 4d (durable upload)
+> and the recovery-loop half of phase 5 remain pending. For the
+> current state of work and what comes next, see
+> [FORWARD_PLAN.md](FORWARD_PLAN.md) — it supersedes this document
+> for "what to do next" questions. Kept around so the original
+> phase-by-phase rationale and validation gates remain auditable.
+
 ## Context
 
-[README.md](README.md) describes an experiment harness for measuring how prompt-detail affects LLM-generated code on a fixed task (ForeverTree), comparing a constrained DSL target (Josh) against a general framework (Mesa). The README is aspirational: only itself, [prompts/BASE_PROMPT.md](prompts/BASE_PROMPT.md) (the ForeverTree spec content), and the two netCDF climate inputs under [data/](data/) currently exist. ~95% of the repo listed in the README's "Repository layout" must be built.
+[README.md](README.md) describes an experiment harness for measuring how prompt-detail affects LLM-generated code on a fixed task (ForeverTree), comparing a constrained DSL target (Josh) against a general framework (Mesa). When this plan was authored (May-18), only the README, [prompts/BASE_PROMPT.md](prompts/BASE_PROMPT.md), and the two netCDF climate inputs under [data/](data/) existed; ~95% of the repo listed in the README's "Repository layout" needed building. That work is now substantially complete — see the per-phase ✓ markers below.
 
 We will stair-step the build so that each phase produces a demonstrable artifact that validates the foundation for the next phase, rather than building monolithically and running once at the end. **Scope of this plan is phases 1–5 only** — env bootstrap through a single successful 5-step orchestrated run for one (model × rung × target) cell. The pilot sweep and headline sweep get their own subsequent plans, after pilot data is in hand and prompts can be frozen.
 
@@ -215,19 +225,38 @@ Motivation: OpenRouter integration tests cost real money per run and gate replic
 
 ## Phase 5 — Full 5-step orchestrated run, one cell
 
+**Status**: split into 5a (scoring revision — conformance + internal
+consistency + chmod self-heal + schema loosening) and 5b (recovery
+loop) during execution.
+
+- **5a (scoring revision)** — *complete*, merged via PR #25 plus the
+  fixes in #26/#27 that addressed the bash-tool surfacing bug and
+  the climate-data swap. The scorer JSON now carries
+  `target_conformance`, `consistency.*`, `script_was_executable`,
+  `csv_rows_dropped_nan`, and the schema validator is subset-match
+  / NaN-tolerant. See `harness/conformance.py`,
+  `harness/internal_consistency.py`, and `harness/run_metrics.py`.
+- **5b (recovery loop)** — *pending*. The full agent → scorer →
+  recovery-prompt → agent → scorer flow described below is the
+  unfinished half. See [FORWARD_PLAN.md](FORWARD_PLAN.md) for the
+  open question about whether to land it before the headline batch.
+
+The "files to author" list below describes the **originally planned**
+phase-5 scope. Items marked ✓ landed in 5a; items marked ⏳ are 5b.
+
 **Files to author**
-- [prompts/recovery_template.md](prompts/recovery_template.md) — Markdown skeleton with these placeholders, filled by `render_recovery_prompt.py`:
+- ⏳ **[5b]** [prompts/recovery_template.md](prompts/recovery_template.md) — Markdown skeleton with these placeholders, filled by `render_recovery_prompt.py`:
   - `{{ORIGINAL_RUNG_PROMPT}}` — the same rung-N body the agent originally received.
   - `{{ORIGINAL_TARGET_DIRECTIVE}}` — the same "Implement this using Mesa / the Josh DSL" line.
   - `{{BINARY_OUTCOMES_BLOCK}}` — a Markdown block built from the step-3 scorer JSON, carrying only the binary / structural fields: `did_run`, `exit_code`, `timed_out`, `csv_exists`, `csv_schema_ok`, `csv_schema_errors` (the exact validator messages, which already name columns and row counts), and `stderr_tail` (truncated to ~500 chars — the agent's own runtime errors are fair feedback).
   - `{{SIDECAR}}` — same SIDECAR footer as the original prompt, unchanged.
   - **Explicitly excluded** (per EXPERIMENTAL_DESIGN.md "does not include the acceptance ranges or any new information about correctness criteria"): `height_year10_mean`, `occupancy_year10_mean`, `height_in_range`, `occupancy_in_range`, `acceptance_ranges_used`, `src_loc`, `comment_loc`, `imports_loc`, `entropy_bits`.
-- [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py) — strict whitelist over the scorer JSON. Asserts the expected `schema_version`, copies only the named fields through. Anything new added to scorer.json in the future does NOT automatically leak into recovery prompts.
-- [harness/conformance.py](harness/conformance.py) — step 2 mechanical check: greps for `import mesa` / `from mesa` / Mesa base-class instantiation on Mesa runs; for Josh, looks for `*.josh` files, `*.jshd`, and `josh parse` exit zero on the produced files.
-- [harness/conformance_fuzzy.py](harness/conformance_fuzzy.py) — optional, gated by `SKIP_FUZZY_CONFORMANCE`; deferable but stub it so the manifest schema is complete.
-- [harness/docs_log.py](harness/docs_log.py) — joins opencode's trajectory log (WebFetch URLs) with the dnsmasq DNS log to produce the `docs_*` metric fields per README's metrics table, categorized via `config/docs_categories.yaml`.
-- [results/manifest.jsonl](results/manifest.jsonl) — empty, committed; the orchestrator appends per-run JSON records.
-- Update [orchestration/launch_run.sh](orchestration/launch_run.sh) to implement all five steps end-to-end and append the manifest row. The recovery flow:
+- ⏳ **[5b]** [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py) — strict whitelist over the scorer JSON. Asserts the expected `schema_version`, copies only the named fields through. Anything new added to scorer.json in the future does NOT automatically leak into recovery prompts.
+- ✓ **[5a]** [harness/conformance.py](harness/conformance.py) — step 2 mechanical check: greps for `import mesa` / `from mesa` / Mesa base-class instantiation on Mesa runs; for Josh, looks for `*.josh` files, `*.jshd`, and `josh validate` exit zero on the produced files. (Implemented as `josh validate` rather than `josh parse` since that's the actual subcommand.)
+- ✓ **[5a]** [harness/conformance_fuzzy.py](harness/conformance_fuzzy.py) — stub that returns `{target_conformance_fuzzy: null, reason: "deferred"}` so the manifest schema stays complete. LLM-judge variant deferred.
+- ⏳ **[5b]** [harness/docs_log.py](harness/docs_log.py) — joins opencode's trajectory log (WebFetch URLs) with the dnsmasq DNS log to produce the `docs_*` metric fields per README's metrics table, categorized via `config/docs_categories.yaml`.
+- ⏳ **[5b]** [results/manifest.jsonl](results/manifest.jsonl) — empty, committed; the orchestrator appends per-run JSON records. (Superseded in practice by per-batch `runs/<batch-tag>/manifest.jsonl` from phase 4c's `launch_batch.py`; the committed flat-file variant from this plan is still pending.)
+- ⏳ **[5b]** Update [orchestration/launch_run.sh](orchestration/launch_run.sh) to implement all five steps end-to-end and append the manifest row. The recovery flow:
   1. Step 3 scorer runs (already in scope from Phase 3).
   2. If `did_run=true AND height_in_range=true AND occupancy_in_range=true` → record `recovery_attempted=false`, skip steps 4-5.
   3. Else: render the recovery prompt via `render_recovery_prompt.py` into `runs/<RUN_ID>/recovery_prompt.md`.
@@ -267,9 +296,9 @@ Phase 5: [prompts/recovery_template.md](prompts/recovery_template.md), [orchestr
 
 - Prompt rungs 2–4 (write during the pilot phase, after rung1+rung5 prove the template).
 - `orchestration/collect_results.py` (pilot tooling).
-- Hard-layer egress enforcement (OpenShell policy, mitmproxy, or equivalent). Phases 1–5 rely on opencode's tool allowlists plus the dnsmasq tripwire.
+- ~~Hard-layer egress enforcement~~ **(landed in PR #13, phase 4b)**. The kernel-level dnsmasq + iptables + ipset allowlist is enforcing, not just passive.
 - [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) and [LICENSE](LICENSE) — referenced by README but not on the critical path for phases 1–5.
-- The headline 150-generation sweep — needs post-pilot prompt freeze and a tagged batch.
+- The headline 150-generation sweep — needs post-pilot prompt freeze and a tagged batch. See [FORWARD_PLAN.md](FORWARD_PLAN.md) for the path through model-panel reintroduction to that sweep.
 
 ## Open items the user owns
 
