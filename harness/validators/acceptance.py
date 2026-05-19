@@ -3,6 +3,10 @@
 Reads /opt/harness/acceptance_ranges.json (or an override path for tests).
 Only runs after the schema check passed — caller's responsibility to gate
 on csv_schema_ok.
+
+Means are computed on the NaN-filtered DataFrame from
+`output_schema.load_clean_results`, so partial / NaN-laced CSVs don't
+poison the height/occupancy aggregates.
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pandas as pd
+from .output_schema import load_clean_results
 
 
 def check_output_acceptable(workspace: Path, ranges_path: Path) -> dict:
@@ -23,8 +27,7 @@ def check_output_acceptable(workspace: Path, ranges_path: Path) -> dict:
     occ_lo = float(ranges["occupancy_year10"]["lo_count"])
     occ_hi = float(ranges["occupancy_year10"]["hi_count"])
 
-    csv_path = workspace.resolve() / "output" / "results.csv"
-    df = pd.read_csv(csv_path)
+    df, _ = load_clean_results(workspace)
     year_df = df[df["year"] == target_year]
 
     if year_df.empty:
