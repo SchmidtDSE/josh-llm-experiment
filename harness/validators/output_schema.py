@@ -3,14 +3,14 @@
 The check is a gate, not a substantive correctness measure. It exists to
 distinguish "the agent produced a CSV with the columns we need somewhere
 in it" from "the agent produced nothing usable". Substantive checks live
-in `acceptance.py` and `internal_consistency.py`.
+in `acceptance.py`.
 
 Rules:
 - Required columns must be a subset of the actual columns; extras and
   arbitrary column order are accepted.
 - Required numeric/integer columns must be coercible to numeric (string
   values in `meanHeight` etc. fail; NaN does not).
-- The acceptance target year (e.g. 2034) must appear in the `year` column.
+- The acceptance target year (e.g. 2123) must appear in the `year` column.
 - NaN in numeric columns is *not* a schema failure: rows with NaN in any
   required numeric column are counted (`csv_rows_dropped_nan`) and
   downstream modules filter them before computing means.
@@ -36,8 +36,7 @@ REQUIRED_DATA_COLUMNS = [
 # `position.x` + `position.y` pair (Josh's default export). At least one
 # alternative below must be fully present. When only the position pair is
 # present, `load_clean_results` synthesises a `cell_id` from it so
-# downstream consumers (internal_consistency, etc.) can keep grouping by
-# a single column.
+# downstream consumers can keep grouping by a single column.
 CELL_IDENTITY_ALTERNATIVES = [
     ["cell_id"],
     ["position.x", "position.y"],
