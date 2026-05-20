@@ -42,9 +42,9 @@ This simulation requires operating across both space and time.
 
 ### Temporal domain
 
-- Each simulation step represents **one calendar year**.
-- The simulation runs **years 2024 through 2123 inclusive — 100 calendar years, 100 growth steps**.
-- **Trees are initialised at `age = 0`, `height = 0` *before* the simulation begins**; that initial state is *not* a CSV row. During every year of the run (starting with year 2024), each tree undergoes exactly one growth event using that year's climate. **Each CSV row reflects the post-growth state for that year** — so the year-2024 row already shows `age = 1` and `height = Δh(year-2024 climate)`, and the year-2123 row reflects 100 accumulated growth events. This convention matters; see §Growth Model and §Outputs below.
+- Each simulation step represents one calendar year.
+- The simulation runs years 2024 through 2123 inclusive — 100 calendar years, one growth event per tree per year.
+- Trees start at `age = 0`, `height = 0` and grow once per year. Whether your framework emits the year-2024 row pre-growth (`height = 0`) or post-growth (`height ≈ Δh`) is fine — pick whichever is natural for your framework and stay consistent.
 - The implementing engine is expected to evaluate every patch and every
   agent within a patch exactly once per step.
 
@@ -81,12 +81,10 @@ A ForeverTree is an individual tree.
 | `age`     | $y$         | The tree's age in years.                 |
 | `height`  | $h$         | The tree's height in meters.             |
 
-All trees start at `age = 0` years and `height = 0` m **before** the simulation begins. That pre-simulation state is *not* emitted as a CSV row. During every year of the run, including year 2024, each tree:
+All trees start at `age = 0` years and `height = 0` m. Each year of the simulation:
 
 - `age` increases by exactly 1 year ($y_{i} = y_{i-1} + 1$).
 - `height` increases by an amount called `newGrowth` ($\Delta h$), which depends on the climate at the tree's patch this step. See Section 5.
-
-Each CSV row reflects the post-growth state for that year. Across the 100-year span there are therefore **100 growth events per tree, one per year**. A faithful implementation produces year-2024 rows with `meanAge = 1` and `meanHeight = Δh(year-2024 climate)`, and year-2123 rows reflecting the accumulation of all 100 climate-driven growth events.
 
 ForeverTrees in this specification do **not** die, reproduce, or move. In other words, the population on each patch is fixed for the entire run.
 
@@ -155,6 +153,6 @@ The model should export **per cell, per step, per replicate**:
 | `temperature`   | The patch's annual mean temperature this step (K).      |
 | `precipitation` | The patch's annual precipitation this step (mm/year).   |
 
-This should happen as a CSV where each cell is identified either by latitude / longitude or a cell index, and where the replicate index is exposed as its own column (Josh's default schema includes a `replicate` column; Mesa implementations should emit one explicitly). The full CSV therefore has `n_cells × 100 years × 100 replicates` rows. Per the temporal-domain convention above, every row reflects post-growth state: the year-2024 rows already show `meanAge = 1` and a non-zero `meanHeight` from one growth event; year 2123 reflects 100 accumulated growth events.
+This should happen as a CSV where each cell is identified either by latitude / longitude or a cell index, and where the replicate index is exposed as its own column (Josh's default schema includes a `replicate` column; Mesa implementations should emit one explicitly). The full CSV therefore has `n_cells × 100 years × 100 replicates` rows.
 
 <br>

@@ -18,7 +18,7 @@ Your working directory is `/sandbox`. Read, write, and edit any file inside it. 
 
 ### AI Inputs
 
-Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings over the bounding box specified in the prompt. Both are indexed by `(calendar_year, lat, lon)` and span 2024–2124; the simulation uses years 2024–2123 inclusive (100 calendar years, 100 growth events — every year is a growth step, see the §Temporal domain section of the spec above).
+Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings over the bounding box specified in the prompt. Both are indexed by `(calendar_year, lat, lon)` and span 2024–2124; the simulation uses years 2024–2123 inclusive (100 calendar years).
 
 - `data/maxtemp_synthetic.nc` — data variable `tasmax` (annual maximum air temperature, K).
 - `data/precip_synthetic.nc`  — data variable `pr` (precipitation flux).
@@ -68,7 +68,7 @@ The CSV is UTF-8, comma-separated, with a header row. Required data columns:
 
 Plus a per-cell identifier — either a string column `cell_id` or the pair `position.x` and `position.y`. Plus a `replicate` column (integer index, 0..99) identifying which of the 100 replicates each row came from. Josh's default export already includes `replicate`; Mesa implementations must emit it explicitly. Other columns are accepted and ignored.
 
-**One row per (cell, year, replicate)** for the 100 years 2024–2123 inclusive × 100 replicates. Every row reflects post-growth state for that year: year-2024 rows show `meanAge = 1` and a non-zero `meanHeight` (one growth event has occurred); year-2123 rows reflect 100 accumulated growth events. The h=0 / age=0 initial state is *before* the simulation and is not a CSV row. See the §Temporal domain section of the spec above for the convention.
+**One row per (cell, year, replicate)** for the 100 years 2024–2123 inclusive × 100 replicates. Whether the year-2024 row reflects pre-growth state (`meanHeight = 0`) or post-growth state (`meanHeight ≈ Δh`) is up to your framework — pick whichever is natural.
 
 ### Working document
 
