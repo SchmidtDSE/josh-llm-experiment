@@ -65,16 +65,24 @@ fi
 
 RESOLVED_JUDGE_MODEL_ID="$("$REPO_ROOT/orchestration/resolve_model.py" "$JUDGE_MODEL")"
 
-# Per-batch opencode config + data dirs keep the judge's session DB
-# and config segregated from each cell's agent-phase opencode_data/.
+# Per-batch opencode config + data dirs keep the judge's session DB and
+# config segregated from each cell's agent-phase opencode_data/.
 # opencode 1.14.50 discovers its config at $XDG_CONFIG_HOME/opencode/
 # opencode.json AND merges any .opencode/opencode.json in the working
 # dir hierarchy, so the cell's agent-phase config (defining the `coder`
 # agent + agent model) and the judge config (defining the `reviewer`
 # agent + judge model) coexist; `--agent reviewer` picks ours.
-JUDGE_XDG_HOME="$BATCH_DIR/.opencode_judge"
+#
+# XDG_CONFIG_HOME goes to /tmp, NOT inside $BATCH_DIR: opencode treats
+# $XDG_CONFIG_HOME/opencode/ as a project dir and installs its plugin
+# tree (node_modules/, ~58 MB) there on first init. With XDG inside
+# the batch dir, `mc mirror` swept all of that to GCS. /tmp/<batch-tag>/
+# is per-batch (still segregated across concurrent batches on one host),
+# torn down on exit, and never seen by the upload.
+JUDGE_XDG_HOME="${TMPDIR:-/tmp}/fortree_judge_xdg/$(basename "$BATCH_DIR")"
 JUDGE_DATA_HOME="$BATCH_DIR/fuzzy_opencode_data"
 mkdir -p "$JUDGE_XDG_HOME/opencode" "$JUDGE_DATA_HOME"
+trap 'rm -rf "$JUDGE_XDG_HOME" 2>/dev/null || true' EXIT
 
 sed "s|\${RESOLVED_JUDGE_MODEL_ID}|$RESOLVED_JUDGE_MODEL_ID|g" \
   "$REPO_ROOT/config/opencode.judge.json" \
@@ -94,9 +102,12 @@ echo "  Judge model: $JUDGE_MODEL → $RESOLVED_JUDGE_MODEL_ID" | tee -a "$FUZZY
 echo "  Force:       $FORCE" | tee -a "$FUZZY_LOG"
 
 # Iterate plausible cell dirs. A cell dir has a `workspace/` subdir;
-# everything else under <batch-dir> (cell-logs/, .opencode_judge/,
-# fuzzy_opencode_data/, manifest.jsonl, …) is filtered out by that
-# check, so we don't need to special-case the uuid-shaped name.
+# everything else under <batch-dir> (cell-logs/, fuzzy_opencode_data/,
+# manifest.jsonl, …) is filtered out by that check, so we don't need
+# to special-case the uuid-shaped name. The .opencode_judge entry in
+# the filter list is dead code for new batches (XDG is now /tmp) but
+# kept for back-compat: re-judging a batch produced by the older
+# script leaves the legacy dir in $BATCH_DIR.
 TOTAL=0
 JUDGED=0
 SKIPPED=0
