@@ -287,15 +287,19 @@ path broken on `dev` if landed there directly.
    Q3 to `prompts/fuzzy_judge.md`. Sub-tasks:
    - **Disambiguate the year-0 question.** PR1's offline sanity check
      against the phase-5c batches found a systematic +10% slope on
-     Josh runs vs Mesa runs (β≈1.10 vs β≈1.00), almost certainly
-     because Josh implementations grow trees at step 0 too while Mesa
-     implementations treat step 0 as init-only. Pin the prompt to
-     **"year 0 is initialization, no growth"** so an N-year
-     simulation gets N-1 growth events. Matches
-     [`data/reference_sim.py`](data/reference_sim.py), which sums
-     `predicted_growth` over years 1..N-1. Whichever interpretation
-     we pick has to match the reference or the regression gate will
-     systematically detect ±10% slope on the "wrong" framework.
+     Josh runs vs Mesa runs (β≈1.10 vs β≈1.00). The cause: Josh
+     stdlib grows during step 0 (year-2024 row already shows
+     `meanAge = 1`, post-growth), while Mesa implementations were
+     treating step 0 as init-only against PR1's reference simulator
+     (which originally skipped year 0). The fix in PR2 is to pin
+     **"every year is a growth step, including 2024"** — matches
+     Josh stdlib's natural behaviour and the spec's "per step, age
+     and height change" reading. The reference simulator + validator
+     are updated to sum predicted growth over *all* years (no
+     skip-first-year filter). An N-year simulation gets N growth
+     events. Whichever interpretation we pick has to match the
+     reference, or the regression gate will systematically detect
+     ±10% slope on the "wrong" framework.
    - 100-year sim: years 2024..2123 inclusive in the CSV (100 rows
      per cell per replicate), with growth between consecutive years.
    - `--replicates 100` (or framework equivalent) in `run.sh`.

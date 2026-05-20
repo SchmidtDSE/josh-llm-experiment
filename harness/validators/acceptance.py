@@ -33,15 +33,15 @@ def _fit_observed_vs_predicted(
     """Fit observed_height ~ predicted_growth across (cell, replicate) pairs.
 
     For each (cell_id, replicate) group, build:
-        predicted = Δh_max · Σ_{y>min_year} %_T(T(y)) · %_P(P(y))
+        predicted = Δh_max · Σ_y %_T(T(y)) · %_P(P(y))
         observed  = meanHeight at year == target_year
 
-    The initial year per group is excluded from the sum — trees init
-    at h=0 on year 0 and don't grow on that step, so including it
-    would systematically bias predicted by a constant ≈ pct_T·pct_P
-    per cell (the bug I caught during diagnostic dev — pinning it
-    here so the reference and agent regressions are computed
-    identically).
+    Every year in the CSV contributes one term to the predicted sum —
+    matches the spec's "every year is a growth step" convention
+    (trees init at h=0 *before* the simulation; every CSV row is a
+    post-growth state). The reference simulator
+    (data/reference_sim.py) sums identically, so reference and agent
+    regressions are computed against the same convention.
     """
     if "replicate" not in df.columns:
         df = df.assign(replicate=0)
@@ -60,11 +60,8 @@ def _fit_observed_vs_predicted(
         * np.asarray(precip_impact(df["precipitation"].to_numpy()))
     )
 
-    # Per-group year rank: 1 = initialisation step, > 1 = growth steps.
-    df["_year_rank"] = df.groupby(["cell_id", "replicate"])["year"].rank(method="dense")
-    growth_rows = df[df["_year_rank"] > 1]
     predicted = (
-        growth_rows.groupby(["cell_id", "replicate"])["_pct_TP"].sum() * DH_MAX
+        df.groupby(["cell_id", "replicate"])["_pct_TP"].sum() * DH_MAX
     ).rename("predicted")
 
     observed = (

@@ -17,8 +17,8 @@
     "alpha_hi_m": 0.5,
     "r2_min": 0.95,
     "_reference_observed": {
-      "beta": 1.000013,
-      "alpha": -0.000249,
+      "beta": 1.000016,
+      "alpha": -0.000286,
       "r2": 0.999993,
       "n_observations": 155000
     }
@@ -26,9 +26,9 @@
   "height_year100": {
     "_metric": "Mean meanHeight across all cells \u00d7 replicates at year == target_year. Coarse secondary sanity check.",
     "lo_m": 0.0,
-    "hi_m": 152.5417,
-    "_observed_mean": 44.5608,
-    "_observed_std": 35.9936,
+    "hi_m": 154.0828,
+    "_observed_mean": 45.0101,
+    "_observed_std": 36.3576,
     "_sigma_mult": 3.0
   },
   "occupancy_year100": {

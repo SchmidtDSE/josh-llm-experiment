@@ -132,10 +132,11 @@ def simulate(
     cell_idx = np.arange(n_lat * n_lon).reshape(n_lat, n_lon).ravel()[flat_mask]
 
     # Deterministic spec prediction (no noise) — what observed should
-    # converge to in expectation. Skip year 0; trees init at h=0 and
-    # don't grow on the initial step.
+    # converge to in expectation. Every year is a growth step (trees init
+    # at h=0 *before* the sim, that init state is not a row); the sum
+    # therefore runs over every year in the range.
     per_year_predicted = predicted_growth_per_year(T_flat, P_flat)  # (n_years, n_cells)
-    predicted_growth = per_year_predicted[1:].sum(axis=0)            # (n_cells,)
+    predicted_growth = per_year_predicted.sum(axis=0)               # (n_cells,)
 
     # Stochastic simulation: 10 trees per (cell, replicate), independent
     # O per (cell, replicate, year, tree).
@@ -167,14 +168,16 @@ def simulate(
                     "precipitation": P_val,
                 })
 
-    _emit_year(start_year, 0.0, heights.mean(axis=2))
-
+    # Every year is a growth step. Trees enter the loop at h=0 (pre-sim
+    # initial state, not emitted as a row). For each year t in 0..n-1,
+    # apply that year's climate to grow once, then emit the post-growth
+    # state as the CSV row for year (start_year + t).
     # per_year_predicted[t] is already Δh_max · %_T(t) · %_P(t). Per-step
     # growth is that times the stochastic offset O ~ N(1, 0.05).
-    for t in range(1, n_years):
+    for t in range(n_years):
         O = rng.normal(NOISE_MEAN, NOISE_SIGMA, size=heights.shape)
         heights += per_year_predicted[t][:, None, None] * O
-        _emit_year(start_year + t, float(t), heights.mean(axis=2))
+        _emit_year(start_year + t, float(t + 1), heights.mean(axis=2))
 
     return {
         "height_year_final": heights.mean(axis=2),   # (n_cells, n_replicates)
