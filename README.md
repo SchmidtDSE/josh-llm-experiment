@@ -288,6 +288,33 @@ Object layout under the bucket:
 - `<prefix>/<batch-tag>/batch_report.md` — per-batch report
 - `<prefix>/<batch-tag>/manifest.jsonl` — aggregated manifest
 
+### Optional host-side opencode (for LLM-judge passes)
+
+The mechanical scorer is fully containerised — no host opencode
+required for headline-batch scoring. But the post-hoc LLM-judge
+described in [SCORING.md §LLM-judge passes](SCORING.md#llm-judge-passes-post-hoc-for-our-convenience)
+runs opencode against completed runs directly from the host (no new
+container per cell; same `OPENROUTER_API_KEY` from `.env`). To enable
+that path, install opencode on the host at the same pinned version
+the image uses (1.14.50):
+
+```sh
+curl -fsSL https://opencode.ai/install \
+  | bash -s -- --version 1.14.50 --no-modify-path
+# adds opencode to $HOME/.opencode/bin/opencode
+export PATH="$HOME/.opencode/bin:$PATH"   # add to your shell profile
+opencode --version  # → 1.14.50
+```
+
+Same upstream installer the Dockerfile invokes inside the `base`
+stage (via [scripts/install_opencode.sh](scripts/install_opencode.sh)),
+so the host opencode is byte-identical to what the agent container
+uses — no version skew between agent runs and judge runs.
+
+This is genuinely optional: only needed if you intend to run
+`orchestration/run_fuzzy_judge.sh` (the spec lives in SCORING.md;
+the script itself is a deferred-implementation item).
+
 ### Full sweep *(planned, phase 6+)*
 
 The rung-ladder was retired; headline runs are `model × target ×

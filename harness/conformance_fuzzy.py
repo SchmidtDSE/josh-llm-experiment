@@ -1,12 +1,17 @@
-"""LLM-judge fuzzy conformance check — DEFERRED in this phase.
+"""LLM-judge fuzzy conformance — schema placeholder.
 
 Returns a stable null record so the scorer JSON schema is complete and
-downstream consumers (the recovery prompt's BINARY_OUTCOMES whitelist,
-the manifest aggregator) don't have to special-case a missing field.
+downstream consumers (the manifest aggregator, batch report) don't
+have to special-case a missing field.
 
-When implemented, this module will show the agent's workspace to a
-capable model and ask "Does this implementation use $TARGET as its
-primary modeling framework? yes / no / partial, one sentence."
+The actual LLM-judge passes (the two questions described in
+SCORING.md §LLM-judge passes) run **host-side** via opencode against
+the completed run's `workspace/`, and write a sibling file
+`scorer.fuzzy.json` next to `scorer.json`. They do not flow back
+through this module — it just keeps `scorer.json`'s shape stable.
+The `target_conformance_fuzzy` field staying `null` here is
+intentional: the LLM-judge answers live in `scorer.fuzzy.json`,
+not in `scorer.json`.
 """
 
 from __future__ import annotations

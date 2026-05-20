@@ -140,40 +140,62 @@ syntax") that the mechanical metrics don't catch.
 | When run | Post-hoc — never gates the cell from completing; the operator invokes a sweep across a completed batch dir |
 | Cost | ~$0.05–0.20 per cell (rough estimate; transcripts run ~10–40k input tokens) |
 
-### Execution path: host-side, no opencode
+### Execution path: opencode on the host
 
-The LLM-judge is a **single-shot completion**, not an agent loop —
-the model is asked the two questions and answers them, with no tool
-use. That means we do not need opencode (which is built for
-multi-turn tool-using agents); a direct POST to OpenRouter's
-`/chat/completions` endpoint is the right shape. Concretely:
+The LLM-judge runs **host-side via opencode**, against the cell's
+preserved `workspace/`. No container, no bind mounts, no dnsmasq
+sidecar — opencode reads files from the host filesystem directly and
+calls OpenRouter for the completion. Same `OPENROUTER_API_KEY` from
+`.env` that everything else uses. Same image-pinned opencode 1.14.50
+on the host as in the container (see
+[`scripts/install_opencode.sh`](scripts/install_opencode.sh) — the
+same installer the Dockerfile uses).
 
-- Runs **host-side**, same way `upload_batch.sh` does. Reads
-  `OPENROUTER_API_KEY` from `.env`. No container.
-- `fortree:scorer` does carry opencode 1.14.50 inherited from the
-  `base` stage, but it's irrelevant here: the scorer runs with
-  `--network=none` (no OpenRouter reachability), and opencode's
-  orchestrator overhead doesn't buy us anything for a one-shot ask.
-- ~30 lines of Python: read `workspace/*.{py,josh}` + `transcript.md`
-  + `scorer.json`, build the two prompts, POST, parse JSON answer,
-  write `scorer.fuzzy.json`.
+Why this shape, not a separate judge container or a vanilla REST
+POST against OpenRouter:
+
+- **Single inference path.** Agent uses opencode → OpenRouter; judge
+  uses opencode → OpenRouter. No alternative REST route to maintain.
+- **Mechanical scorer stays hermetic.** `fortree:scorer` still runs
+  with `--network=none`, so the agent's `./run.sh` re-execution
+  during scoring cannot phone home. The judge is a separate post-hoc
+  step against the already-frozen workspace; it doesn't need to live
+  inside the scorer container.
+- **No new container per cell.** The judge is one host command per
+  cell (parallelisable trivially), in the same style as
+  `upload_batch.sh`.
+
+opencode in non-agent mode (read + glob + grep tools enabled, write/
+edit/bash/webfetch disabled) is the right surface — the judge needs
+to look at workspace files but should never modify them.
 
 ### Implementation status
 
-Not yet implemented. The skeleton lives in
-[`harness/conformance_fuzzy.py`](harness/conformance_fuzzy.py) (stub).
+Not yet implemented. Skeleton in
+[`harness/conformance_fuzzy.py`](harness/conformance_fuzzy.py) is a
+schema placeholder (always returns `target_conformance_fuzzy=null`)
+and stays that way — the host-side judge writes to a sibling file
+`scorer.fuzzy.json`, separate from the mechanical `scorer.json`.
+
 Plan when picked up:
 
-- `harness/conformance_fuzzy.py` — `judge_cell(run_dir, judge_model_id)`
-  reads workspace + transcript + `scorer.json`, builds a single
-  prompt, POSTs to OpenRouter via plain `requests`, writes
-  `scorer.fuzzy.json`. Idempotent: if `scorer.fuzzy.json` already
-  exists and `schema_version` matches, skip.
-- `orchestration/run_fuzzy_judge.sh` (new) — walks a batch dir,
-  calls `judge_cell` per cell, accumulates a `fuzzy_summary.md`
-  rolling up Q1 yes/no/partial counts and Q2 cross-cell themes.
-- `batch_report.md` gains a `fuzzy_q1` column (yes/no/partial glyph
-  per cell) when fuzzy results are present; absent otherwise.
+- `prompts/fuzzy_judge.md` (new) — prompt template with the two
+  questions and a JSON output contract (`{"q1": {...}, "q2": {...}}`).
+- `config/opencode.judge.json` (new) — opencode config for judge
+  mode: read/glob/grep enabled, write/edit/bash/webfetch disabled,
+  model pinned to `${RESOLVED_JUDGE_MODEL_ID}` (rendered per run from
+  a new `JUDGE_MODEL` env var defaulting to `claude`).
+- `orchestration/run_fuzzy_judge.sh` (new) — walks a batch dir, runs
+  one `opencode run --dir <cell>/workspace --agent reviewer
+  --format json --print-logs "$(cat prompts/fuzzy_judge.md)"` per
+  cell, parses the final JSON message, writes
+  `runs/<batch>/<cell>/scorer.fuzzy.json`. Idempotent: skip cells
+  that already have a `scorer.fuzzy.json` with the expected
+  `schema_version`. Builds a `fuzzy_summary.md` per batch rolling up
+  Q1 yes/no/partial counts and Q2 cross-cell themes.
+- `orchestration/generate_batch_report.py` — adds a `fuzzy_q1`
+  column (yes/no/partial glyph per cell) when `scorer.fuzzy.json`
+  exists; absent otherwise.
 
 The judge sees the SAME `claude-opus-4.7` we score under, so there's
 a same-model-judges-itself caveat for any cell where claude is the
