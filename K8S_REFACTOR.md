@@ -325,7 +325,25 @@ host-side batch-orchestration tree goes.
 
 ## Sequencing
 
-Suggested PR order so each step is reviewable in isolation:
+### Branching strategy
+
+All PRs in this series land on a long-lived integration branch
+**`feat/k8s-refactor`**, *not* directly on `dev`. The integration
+branch is cut from `dev` once at the start of the refactor and only
+merges back to `dev` after the full 7-PR series has been validated
+end-to-end (smoke CI green, one successful k8s headline batch). This
+keeps `dev` shippable while the refactor is in flight — a partial
+state of the refactor (e.g., scoring updated but prompt + k8s
+submission not) would leave the local-orchestration path broken on
+`dev` if landed there directly.
+
+Per-PR target branch: each PR (1–7) targets `feat/k8s-refactor` and
+merges into it. The final merge of `feat/k8s-refactor` → `dev` is the
+8th and last step.
+
+### PR order
+
+Each step is reviewable in isolation:
 
 1. **Scoring drop.** Delete `harness/internal_consistency.py`,
    strip consistency fields from `run_metrics.py`, update
@@ -380,6 +398,11 @@ Suggested PR order so each step is reviewable in isolation:
    Batch-tag suggestion: `headline-k8s-<date>`. This is the
    reportable batch — phase-5c artefacts are abandoned, not
    compared against.
+8. **Merge `feat/k8s-refactor` → `dev`.** Final integration. Done
+   only after PRs 1–7 have all landed on the integration branch,
+   smoke CI is green on it, and the headline batch has produced
+   the artefacts the paper will reference. Single squash or merge
+   commit on `dev` for a clean history.
 
 ## Open questions
 
