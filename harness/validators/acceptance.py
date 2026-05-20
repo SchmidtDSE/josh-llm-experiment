@@ -1,4 +1,4 @@
-"""Compare year-10 metrics from results.csv against acceptance ranges.
+"""Compare year-100 metrics from results.csv against acceptance ranges.
 
 Reads /opt/harness/acceptance_ranges.json (or an override path for tests).
 Only runs after the schema check passed — caller's responsibility to gate
@@ -22,18 +22,18 @@ def check_output_acceptable(workspace: Path, ranges_path: Path) -> dict:
         ranges = json.load(f)
 
     target_year = int(ranges["target_year"])
-    height_lo = float(ranges["height_year10"]["lo_m"])
-    height_hi = float(ranges["height_year10"]["hi_m"])
-    occ_lo = float(ranges["occupancy_year10"]["lo_count"])
-    occ_hi = float(ranges["occupancy_year10"]["hi_count"])
+    height_lo = float(ranges["height_year100"]["lo_m"])
+    height_hi = float(ranges["height_year100"]["hi_m"])
+    occ_lo = float(ranges["occupancy_year100"]["lo_count"])
+    occ_hi = float(ranges["occupancy_year100"]["hi_count"])
 
     df, _ = load_clean_results(workspace)
     year_df = df[df["year"] == target_year]
 
     if year_df.empty:
         return {
-            "height_year10_mean": None,
-            "occupancy_year10_mean": None,
+            "height_year100_mean": None,
+            "occupancy_year100_mean": None,
             "height_in_range": False,
             "occupancy_in_range": False,
             "acceptance_ranges_used": ranges,
@@ -43,8 +43,8 @@ def check_output_acceptable(workspace: Path, ranges_path: Path) -> dict:
     occupancy_mean = float(year_df["nTrees"].mean())
 
     return {
-        "height_year10_mean": height_mean,
-        "occupancy_year10_mean": occupancy_mean,
+        "height_year100_mean": height_mean,
+        "occupancy_year100_mean": occupancy_mean,
         "height_in_range": height_lo <= height_mean <= height_hi,
         "occupancy_in_range": occ_lo <= occupancy_mean <= occ_hi,
         "acceptance_ranges_used": ranges,

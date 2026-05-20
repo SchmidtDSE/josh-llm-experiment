@@ -1,17 +1,19 @@
 {
-  "schema_version": "phase2-v1",
-  "target_year": 2034,
+  "schema_version": "phase6-v1",
+  "target_year": 2123,
 
-  "_note_target_year": "Simulation runs years 2024 through 2034 inclusive (11 output rows per cell). 'Year 10' is the eleventh row, calendar year 2034. Phase-2b's validator filters the CSV to year == target_year and computes the metrics below.",
+  "_note_target_year": "Simulation runs years 2024 through 2123 inclusive (100 simulated years per replicate, with --replicates 100 per the run.sh contract). 'Year 100' is calendar year 2123 — the last year of the run. The scorer filters the CSV to year == target_year and computes the mean across cells AND across replicates.",
 
-  "height_year10": {
-    "_metric": "Mean (across all cells) of meanHeight column at year == target_year.",
+  "_note_bands_provisional": "These bands are placeholders pending Open Q #1 in K8S_REFACTOR.md (year-100 acceptance-band recalibration). They are deliberately loose so a faithful run cannot be a false negative; they will be tightened against a reference distribution once the headline batch produces one. Do not interpret a pass on these bands as proof of spec faithfulness — interpret a fail as proof of un-faithfulness.",
+
+  "height_year100": {
+    "_metric": "Mean (across all cells and all replicates) of meanHeight column at year == target_year.",
     "lo_m": 0,
-    "hi_m": 11
+    "hi_m": 100
   },
 
-  "occupancy_year10": {
-    "_metric": "Mean tree count per cell at year == target_year.",
+  "occupancy_year100": {
+    "_metric": "Mean tree count per cell at year == target_year, averaged across replicates.",
     "lo_count": 9.9,
     "hi_count": 10.1
   }

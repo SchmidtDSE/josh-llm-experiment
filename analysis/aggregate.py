@@ -67,20 +67,11 @@ ROW_FIELDS = [
     "timed_out",
     "script_was_executable",
     "csv_rows_dropped_nan",
-    # spec-parameter conformance
-    "height_year10_mean",
-    "occupancy_year10_mean",
+    # spec-parameter conformance (year 100 under phase6)
+    "height_year100_mean",
+    "occupancy_year100_mean",
     "height_in_range",
     "occupancy_in_range",
-    # internal consistency
-    "growth_rate_mean_m",
-    "growth_rate_negative_frac",
-    "growth_rate_above_ceiling_frac",
-    "age_step_off_one_frac",
-    "ntrees_change_frac",
-    "growth_temp_spearman",
-    "growth_precip_spearman",
-    "total_transition_obs",
     # code stats
     "src_loc",
     "comment_loc",
@@ -224,7 +215,6 @@ def _steps_summary(row: dict) -> tuple[Optional[int], Optional[int], Optional[bo
 def flatten(batch_tag: str, batch_dir: Path, row: dict) -> dict:
     """One manifest row + its fuzzy sidecar → one tidy CSV row."""
     scorer = row.get("scorer") or {}
-    consistency = scorer.get("consistency") or {}
     cell = row.get("cell") or {}
     run_id = row.get("run_id") or ""
     fuzzy = _load_fuzzy(batch_dir, run_id)
@@ -252,18 +242,10 @@ def flatten(batch_tag: str, batch_dir: Path, row: dict) -> dict:
         "timed_out": scorer.get("timed_out"),
         "script_was_executable": scorer.get("script_was_executable"),
         "csv_rows_dropped_nan": scorer.get("csv_rows_dropped_nan"),
-        "height_year10_mean": scorer.get("height_year10_mean"),
-        "occupancy_year10_mean": scorer.get("occupancy_year10_mean"),
+        "height_year100_mean": scorer.get("height_year100_mean"),
+        "occupancy_year100_mean": scorer.get("occupancy_year100_mean"),
         "height_in_range": scorer.get("height_in_range"),
         "occupancy_in_range": scorer.get("occupancy_in_range"),
-        "growth_rate_mean_m": consistency.get("growth_rate_mean_m"),
-        "growth_rate_negative_frac": consistency.get("growth_rate_negative_frac"),
-        "growth_rate_above_ceiling_frac": consistency.get("growth_rate_above_ceiling_frac"),
-        "age_step_off_one_frac": consistency.get("age_step_off_one_frac"),
-        "ntrees_change_frac": consistency.get("ntrees_change_frac"),
-        "growth_temp_spearman": consistency.get("growth_temp_spearman"),
-        "growth_precip_spearman": consistency.get("growth_precip_spearman"),
-        "total_transition_obs": consistency.get("total_transition_obs"),
         "src_loc": scorer.get("src_loc"),
         "comment_loc": scorer.get("comment_loc"),
         "imports_loc": scorer.get("imports_loc"),
