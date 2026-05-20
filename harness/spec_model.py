@@ -63,24 +63,19 @@ def predicted_growth_per_year(T_kelvin: np.ndarray, P_mm_yr: np.ndarray) -> np.n
 def predicted_total_growth(
     T_kelvin: np.ndarray,
     P_mm_yr: np.ndarray,
-    *,
-    initial_year_grows: bool = False,
 ) -> np.ndarray:
     """Sum of per-year predicted growth over the leading axis.
 
+    Every year contributes exactly one growth event — matches the spec's
+    "every year is a growth step" convention. Trees are initialised at
+    h=0 *before* the simulation begins; that initial state is not part
+    of the year-axis. An N-year simulation produces N growth events.
+
     Args:
         T_kelvin, P_mm_yr: arrays of shape (n_years, ...) — same shape as
-            the climate netCDFs' year-axis arrays.
-        initial_year_grows: If False (default, matches the spec), year 0
-            is the initialisation step at which trees are placed with
-            height 0 and *do not* grow that step. The summation skips
-            index 0 — only years 1..n-1 contribute. If True, every year
-            contributes (used only if a future spec revision removes
-            the initialisation step).
+            the climate netCDFs' year-axis arrays restricted to the
+            simulation's year range.
 
     Returns the integrated growth per cell — shape `T_kelvin.shape[1:]`.
     """
-    per_year = predicted_growth_per_year(T_kelvin, P_mm_yr)
-    if initial_year_grows:
-        return per_year.sum(axis=0)
-    return per_year[1:].sum(axis=0)
+    return predicted_growth_per_year(T_kelvin, P_mm_yr).sum(axis=0)

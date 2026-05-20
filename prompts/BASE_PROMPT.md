@@ -43,10 +43,14 @@ This simulation requires operating across both space and time.
 ### Temporal domain
 
 - Each simulation step represents **one calendar year**.
-- The simulation runs from a configurable start step to a configurable end
-  step (e.g. step 0 through step 10, representing years 2024–2034).
+- The simulation runs **years 2024 through 2123 inclusive — 100 calendar years, 100 growth steps**.
+- **Trees are initialised at `age = 0`, `height = 0` *before* the simulation begins**; that initial state is *not* a CSV row. During every year of the run (starting with year 2024), each tree undergoes exactly one growth event using that year's climate. **Each CSV row reflects the post-growth state for that year** — so the year-2024 row already shows `age = 1` and `height = Δh(year-2024 climate)`, and the year-2123 row reflects 100 accumulated growth events. This convention matters; see §Growth Model and §Outputs below.
 - The implementing engine is expected to evaluate every patch and every
   agent within a patch exactly once per step.
+
+### Replication
+
+Run **100 independent stochastic replicates** of the full 100-year simulation. Replicates share identical climate inputs and identical initial conditions; they differ only in the per-tree per-step stochastic growth-offset draws (§Stochasticity below). The CSV is keyed by `(cell, year, replicate)` — one row per combination — so the same `(cell, year)` appears 100 times in the output, once per replicate.
 
 <br>
 
@@ -77,10 +81,12 @@ A ForeverTree is an individual tree.
 | `age`     | $y$         | The tree's age in years.                 |
 | `height`  | $h$         | The tree's height in meters.             |
 
-All trees start with `age` of 0 years and `height` of 0 m. However, per step, they change accordingly:
+All trees start at `age = 0` years and `height = 0` m **before** the simulation begins. That pre-simulation state is *not* emitted as a CSV row. During every year of the run, including year 2024, each tree:
 
 - `age` increases by exactly 1 year ($y_{i} = y_{i-1} + 1$).
 - `height` increases by an amount called `newGrowth` ($\Delta h$), which depends on the climate at the tree's patch this step. See Section 5.
+
+Each CSV row reflects the post-growth state for that year. Across the 100-year span there are therefore **100 growth events per tree, one per year**. A faithful implementation produces year-2024 rows with `meanAge = 1` and `meanHeight = Δh(year-2024 climate)`, and year-2123 rows reflecting the accumulation of all 100 climate-driven growth events.
 
 ForeverTrees in this specification do **not** die, reproduce, or move. In other words, the population on each patch is fixed for the entire run.
 
@@ -129,6 +135,8 @@ All this in mind, $P_{low}$ of 300 mm/year and $P_high$ of 500 mm/year is recomm
 ### Stochasticity
 There is a stochastic element $O$ which is anticiated to offset the percentage used for $\Delta h_{max}$ and should be a gaussian value with mean of 1 and std deviation of 0.05. This means that it is possible that some trees may grow over $\Delta h_{max}$ under ideal conditions.
 
+$O$ is drawn independently per (tree, year, replicate). Trees on the same patch see the same `temperature` and `precipitation` each year but each gets its own draw of $O$; that's the only source of within-patch tree-to-tree variation in this spec. Across replicates of the same simulation, the climate inputs and initial conditions are identical — replicates differ only in their $O$ draws.
+
 <br>
 
 ## Style
@@ -137,7 +145,7 @@ The resultant code should be self-documenting, wherever possible, with comments 
 
 ## Outputs
 
-The model should export **per cell, per step**:
+The model should export **per cell, per step, per replicate**:
 
 | Variable        | Definition                                              |
 |-----------------|---------------------------------------------------------|
@@ -147,6 +155,6 @@ The model should export **per cell, per step**:
 | `temperature`   | The patch's annual mean temperature this step (K).      |
 | `precipitation` | The patch's annual precipitation this step (mm/year).   |
 
-This should happen as a CSV where each cell is identified either by latitude / longitude or a cell index.
+This should happen as a CSV where each cell is identified either by latitude / longitude or a cell index, and where the replicate index is exposed as its own column (Josh's default schema includes a `replicate` column; Mesa implementations should emit one explicitly). The full CSV therefore has `n_cells × 100 years × 100 replicates` rows. Per the temporal-domain convention above, every row reflects post-growth state: the year-2024 rows already show `meanAge = 1` and a non-zero `meanHeight` from one growth event; year 2123 reflects 100 accumulated growth events.
 
 <br>

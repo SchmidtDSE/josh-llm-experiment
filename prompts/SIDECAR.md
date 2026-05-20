@@ -18,7 +18,7 @@ Your working directory is `/sandbox`. Read, write, and edit any file inside it. 
 
 ### AI Inputs
 
-Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings over the bounding box specified in the prompt. Both are indexed by `(calendar_year, lat, lon)` and span 2024–2054; the simulation uses years 2024–2034 inclusive.
+Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings over the bounding box specified in the prompt. Both are indexed by `(calendar_year, lat, lon)` and span 2024–2124; the simulation uses years 2024–2123 inclusive (100 calendar years, 100 growth events — every year is a growth step, see the §Temporal domain section of the spec above).
 
 - `data/maxtemp_synthetic.nc` — data variable `tasmax` (annual maximum air temperature, K).
 - `data/precip_synthetic.nc`  — data variable `pr` (precipitation flux).
@@ -47,9 +47,12 @@ cd /sandbox && ./run.sh
 
 Your code must exit 0 and write `./output/results.csv`.
 
-Two requirements that are part of the delivery, not optional:
+**`./run.sh` is the unit of work being measured** — its wall-clock time is the headline cost metric for the experiment. It must do the **entire** workload: any preprocessing the chosen framework needs (e.g. Josh's `.jshd` build, or netCDF→DataFrame conversion for Mesa), the 100-replicate × 100-year simulation, and emission of `./output/results.csv`. No "pre-step" the user is expected to run by hand. The contract is "one script, end-to-end."
+
+Three requirements that are part of the delivery, not optional:
 
 - `./run.sh` must be executable. After writing it, run `chmod +x run.sh`. The scorer invokes the file as `./run.sh`; a script without the executable bit will not run.
+- `./run.sh` must invoke the simulation for **100 replicates × 100 years (2024–2123 inclusive)**. Use your framework's native replicate flag (`josh run --replicates 100 …` for Josh) or a loop over `n=100` independent Model instances (for Mesa). The CSV must contain `n_cells × 100 × 100` rows.
 - Before you declare yourself done, execute `./run.sh` at least once yourself. Confirm it exits 0 and writes `./output/results.csv`. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
 
 The CSV is UTF-8, comma-separated, with a header row. Required data columns:
@@ -63,9 +66,9 @@ The CSV is UTF-8, comma-separated, with a header row. Required data columns:
 | `temperature`   | float  | Kelvin        |
 | `precipitation` | float  | mm/year       |
 
-Plus a per-cell identifier — either a string column `cell_id` or the pair `position.x` and `position.y`. Other columns are accepted and ignored.
+Plus a per-cell identifier — either a string column `cell_id` or the pair `position.x` and `position.y`. Plus a `replicate` column (integer index, 0..99) identifying which of the 100 replicates each row came from. Josh's default export already includes `replicate`; Mesa implementations must emit it explicitly. Other columns are accepted and ignored.
 
-One row per (cell, year) for the eleven years 2024–2034 inclusive.
+**One row per (cell, year, replicate)** for the 100 years 2024–2123 inclusive × 100 replicates. Every row reflects post-growth state for that year: year-2024 rows show `meanAge = 1` and a non-zero `meanHeight` (one growth event has occurred); year-2123 rows reflect 100 accumulated growth events. The h=0 / age=0 initial state is *before* the simulation and is not a CSV row. See the §Temporal domain section of the spec above for the convention.
 
 ### Working document
 
