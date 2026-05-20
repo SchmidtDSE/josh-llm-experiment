@@ -93,6 +93,8 @@ ROW_FIELDS = [
     "fuzzy_q1_answer",
     "fuzzy_q1_justification",
     "fuzzy_q2_observations",
+    "fuzzy_q3_answer",
+    "fuzzy_q3_justification",
     "fuzzy_parse_error",
     "fuzzy_judge_model",
     # wall time + agent-phase cost / activity. See module docstring for
@@ -269,6 +271,8 @@ def flatten(batch_tag: str, batch_dir: Path, row: dict) -> dict:
         "fuzzy_q1_answer": _safe_get(fuzzy, "q1", "answer"),
         "fuzzy_q1_justification": _safe_get(fuzzy, "q1", "justification"),
         "fuzzy_q2_observations": _safe_get(fuzzy, "q2", "observations"),
+        "fuzzy_q3_answer": _safe_get(fuzzy, "q3", "answer"),
+        "fuzzy_q3_justification": _safe_get(fuzzy, "q3", "justification"),
         "fuzzy_parse_error": fuzzy.get("parse_error"),
         "fuzzy_judge_model": fuzzy.get("judge_model_id"),
         "sim_wall_seconds": scorer.get("wall_time_seconds"),

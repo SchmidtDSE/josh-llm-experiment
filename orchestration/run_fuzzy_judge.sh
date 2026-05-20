@@ -14,9 +14,10 @@
 #
 # Per cell: invokes opencode in non-agent ("reviewer") mode with
 # read/glob/grep only. The prompt at prompts/fuzzy_judge.md tells the
-# judge to answer two questions and emit a fenced JSON block. The script
+# judge to answer three questions (Q1 framework usage, Q2 confusion
+# patterns, Q3 run.sh shape) and emit a fenced JSON block. The script
 # greps the last ```json block from opencode's output, validates the
-# enum, wraps with judge_model_id + schema_version, and writes
+# enums, wraps with judge_model_id + schema_version, and writes
 # scorer.fuzzy.json.
 #
 # Idempotent: skips cells whose scorer.fuzzy.json already carries the
@@ -27,7 +28,7 @@
 
 set -uo pipefail
 
-SCHEMA_VERSION="fuzzy-v1"
+SCHEMA_VERSION="fuzzy-v2"
 
 BATCH_DIR="${1:-}"
 FORCE="false"

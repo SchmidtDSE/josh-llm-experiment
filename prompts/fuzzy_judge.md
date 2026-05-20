@@ -16,7 +16,8 @@ Your working directory is the cell's run dir. Read with the `read` /
 - `scorer.json` — the mechanical scorer's record. Fields of interest:
   `target_conformance` (mechanical grep / `josh validate` result),
   `did_run` (script exited 0 + CSV present + schema OK), and the
-  `consistency.*` block.
+  `regression_fit.{beta, alpha, r2}` block (per-cell observed-vs-predicted
+  fit against the spec — see SCORING.md).
 - `workspace/PLAN.md` — the agent's working document. Checked items
   show what it considered done.
 
@@ -26,7 +27,7 @@ Mesa cells, `has_josh_files` for Josh cells).
 
 ## Your task
 
-Answer two questions about this specific cell.
+Answer three questions about this specific cell.
 
 **Q1. Did the agent use the named target framework as the primary
 modelling vehicle?**
@@ -60,6 +61,36 @@ fighting `.jshd` preprocessing syntax before abandoning it",
 
 If the cell looks clean and unremarkable, say so briefly.
 
+**Q3. Does `./run.sh` carry the full workload end-to-end?**
+
+This is the apples-to-apples-wall-clock check. The contract (see
+prompts/SIDECAR.md §Success criteria) is that `./run.sh` must
+self-contain:
+
+1. **Preprocessing** — any framework-specific data preparation (Josh's
+   `.jshd` build via `josh preprocess`; netCDF→DataFrame conversion
+   for Mesa). Not a manual pre-step the user runs first.
+2. **100 replicates** — invoked via `josh run --replicates 100 …` for
+   Josh, or an explicit 100-iteration loop over Model instances for
+   Mesa. The CSV must contain 100 distinct replicate indices.
+3. **100 simulated years** — years 2024 through 2123 inclusive (100
+   calendar years, 99 growth events because year 2024 is init-only).
+
+Three-state answer:
+- `yes`: all three boxes are checked. `./run.sh` does preprocessing,
+  invokes 100 replicates, and the CSV spans 2024..2123.
+- `partial`: at least one box is missing (e.g. preprocessing is a
+  manual step the agent didn't fold into `./run.sh`, OR replicates
+  are 1 instead of 100, OR the year span is shorter than 100). Note
+  which one.
+- `no`: `./run.sh` is missing entirely, or doesn't do the simulation,
+  or fails outright.
+
+Walk the actual `./run.sh` plus its referenced source files; the
+mechanical `did_run` field doesn't decompose into these sub-claims.
+Cells flagged `partial` or `no` are not apples-to-apples comparable
+on the wall-clock axis.
+
 ## Output contract
 
 End your response with exactly one fenced JSON block matching this
@@ -75,12 +106,16 @@ parse cleanly and validate.
   },
   "q2": {
     "observations": "<2-4 sentences>"
+  },
+  "q3": {
+    "answer": "yes",
+    "justification": "<one sentence noting which of preprocess / 100-replicates / 100-years are present>"
   }
 }
 ```
 
-`q1.answer` must be one of `"yes"`, `"no"`, or `"partial"` exactly (lowercase).
-`q1.justification` must be a single sentence.
+`q1.answer` and `q3.answer` must each be one of `"yes"`, `"no"`, or `"partial"` exactly (lowercase).
+`q1.justification` and `q3.justification` must each be a single sentence.
 `q2.observations` must be free text, 2–4 sentences.
 
 Do not include any other top-level keys. Do not emit multiple JSON
