@@ -2,9 +2,11 @@
 
 Engineering-side state of the ForeverTree LLM experiment harness:
 what's built, how it's structured, and what remains. For the
-experimental methodology (hypothesis, prompt rungs, metrics, threats
-to validity), see [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md).
-For installation and how to run, see [README.md](README.md).
+experimental methodology (hypothesis, run flow, threats to validity),
+see [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md). For the scoring
+axes, metric definitions, LLM-judge spec, re-analysis recipe, and
+open scoring questions, see [SCORING.md](SCORING.md). For installation
+and how to run, see [README.md](README.md).
 
 Per-PR detail lives in `git log` and the merged PR descriptions; this
 document is a navigation map, not a complete change history.
@@ -357,17 +359,23 @@ materiality:
 
 | Item | Required? | Status |
 |---|---|---|
-| Multi-invocation flow end-to-end | yes | ✓ verified on claude × {josh,mesa} (32/32 step exits clean) and minimax × {josh,mesa} (4/4 cells passing PLAN.md update + 3/4 producing valid CSVs) |
+| Multi-invocation flow end-to-end | yes | ✓ verified on claude × {josh,mesa} and minimax × {josh,mesa} (32/32 step exits clean per cell, PLAN.md updated as expected) |
 | Permissive cell-identity schema | yes | ✓ |
 | `.jshd` LOC fix | yes | ✓ |
 | Batch-report diagnostics | yes | ✓ |
 | Durable upload to GCS | yes | ✓ host-side `orchestration/upload_batch.sh` (mc, no container path); `launch_batch.py --upload` auto-invokes it post-batch |
-| `WALL_CLOCK_BACKSTOP_SEC` bump | yes | ⚠ default 1800s is tight — observed cells run 27–39 min on claude. Bump to 3600s in `.env` before headline. |
-| Model panel finalised | yes | ⚠ gemma struggled with multi-invocation tool use (0/4 cells did any work — see panel batch). Decide before headline: drop gemma, switch to gemma4, or accept the asymmetric panel and report it. |
-| Acceptance-range methodology (EXPERIMENTAL_DESIGN Open Q #3) | yes | ⚠ ranges currently pass scientifically-broken runs. Decide drop / tighten / fold into `cell_passed`. |
-| Predicted-vs-observed r² metric (Open Q #1) | nice-to-have | ⏳ replacement for the noisy temporal Spearmans |
+| `WALL_CLOCK_BACKSTOP_SEC` bump to 3600s | yes | ✓ set in `.env` |
+| Model panel pinned to versioned slugs | yes | ✓ `config/models.yaml` pins the five-family panel (claude-opus-4.7, gemma-4-26b-a4b-it, kimi-k2.6, minimax-m2.7, mistral-medium-3.5) — verified `resolve_model.py` on each short name. The single open item: a one-cell gemma-4 sanity probe under the multi-invocation flow before the headline batch (gemma-3 failed it 0/4 in the phase-5c panel) |
+| Re-scoreable on completed runs | yes | ✓ verified by rescoring a panel-batch cell against its preserved workspace — same metrics modulo Mesa's stochastic O term. Recipe documented in [SCORING.md §Re-analysing completed runs](SCORING.md#re-analysing-completed-runs); a `rescore_batch.sh` wrapper is on the to-author list once a concrete methodology revision is in hand |
+| Acceptance-range methodology (SCORING.md Open Q #1) | post-headline | 📋 intentionally deferred — re-score path lets us revise the gate against frozen workspaces |
+| Predicted-vs-observed r² metric (SCORING.md Open Q #3) | post-headline | 📋 nice-to-have; same re-score-on-completed-runs path |
+| LLM-judge passes (SCORING.md §LLM-judge passes) | post-headline | 📋 not implemented; convenience-tier, not in the experimental yardstick |
 
-## Pending engineering work
+## Phase decisions (post-pilot)
+
+Three phase items that were previously listed as "pending" have all
+resolved — kept here so the record of *why* the decision went the
+way it did is preserved for future contributors.
 
 ### Phase 4d — Durable upload to GCS via S3 interop ✓
 

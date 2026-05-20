@@ -2,13 +2,29 @@
 # to resolve MODEL into the slug opencode sends to the provider.
 # The leading path component (openrouter/ or ollama/) is what opencode
 # uses to dispatch to the matching provider block in opencode.json.
-# Frozen for the headline experiment; bump the batch tag if any entry changes.
-claude:   openrouter/anthropic/claude-sonnet-4.5
-gemma:    openrouter/google/gemma-3-27b-it
-gemma4:   openrouter/google/gemma-4-26b-a4b-it
-kimi:     openrouter/moonshotai/kimi-k2
-minimax:  openrouter/minimax/minimax-m2
-mistral:  openrouter/mistralai/mistral-large-2411
+#
+# Frozen for the headline experiment as of 2026-05-20; bump the batch
+# tag if any entry changes. Pins are versioned slugs (no rolling
+# `*-latest` aliases) so re-running a batch later resolves to the same
+# weights the headline saw.
+#
+# OpenRouter catalog re-check on 2026-05-20:
+#   - claude-sonnet-4.5 retired from the catalog; sonnet only available
+#     via rolling `~claude-sonnet-latest`. Switched to claude-opus-4.7
+#     (versioned, current Anthropic main line).
+#   - gemma-3-27b-it still listed but underperformed catastrophically
+#     in our phase-5c panel batch (0/4 cells did any tool work).
+#     Collapsed to one `gemma` entry pinned at gemma-4-26b-a4b-it,
+#     previously wired as the `gemma4` short name.
+#   - kimi-k2 → kimi-k2.6 (the v2 generation got a patch bump).
+#   - minimax-m2 → minimax-m2.7 (same shape).
+#   - mistral-large-2411 retired; mistral-medium-3.5 is the current
+#     main-line dense Mistral.
+claude:   openrouter/anthropic/claude-opus-4.7
+gemma:    openrouter/google/gemma-4-26b-a4b-it
+kimi:     openrouter/moonshotai/kimi-k2.6
+minimax:  openrouter/minimax/minimax-m2.7
+mistral:  openrouter/mistralai/mistral-medium-3.5
 
 # Local-LLM path for CI smoke + key-free replication. The underscore in
 # 1_5b is to keep YAML from coercing "1.5b" to a float.

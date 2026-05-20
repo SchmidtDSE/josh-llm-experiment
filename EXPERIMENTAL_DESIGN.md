@@ -1,6 +1,6 @@
 # Experimental design — ForeverTree LLM Experiments
 
-The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the engineering build state, the readiness checklist for the headline batch, and what's still open, see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the engineering build state and the readiness checklist for the headline batch, see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md); for the scoring axes, metric definitions, LLM-judge spec, re-analysis recipe, and open scoring questions, see [`SCORING.md`](SCORING.md).
 
 > **Status (post phase-5c).** Phases 1–4d are merged, the
 > scoring-revision phase 5a is in, and the multi-invocation planning
@@ -158,25 +158,20 @@ variable we care about.
 Configured via `MODEL` environment variable. All models are accessed
 through OpenRouter using a single API key.
 
-| Short name | OpenRouter ID                            | Status in current batches |
-| ---------- | ---------------------------------------- | ------------------------- |
-| claude     | `anthropic/claude-sonnet-4.5`            | active panel              |
-| gemma      | `google/gemma-3-27b-it`                  | retained for headline run |
-| gemma4     | `google/gemma-4-26b-a4b-it`              | active panel (pilots use this) |
-| kimi       | `moonshotai/kimi-k2`                     | active panel              |
-| minimax    | `minimax/minimax-m2`                     | active panel              |
-| mistral    | `mistralai/mistral-large-2411`           | active panel              |
+| Short name | OpenRouter ID                            |
+| ---------- | ---------------------------------------- |
+| claude     | `anthropic/claude-opus-4.7`              |
+| gemma      | `google/gemma-4-26b-a4b-it`              |
+| kimi       | `moonshotai/kimi-k2.6`                   |
+| minimax    | `minimax/minimax-m2.7`                   |
+| mistral    | `mistralai/mistral-medium-3.5`           |
 
 The mapping lives in [`config/models.yaml`](config/models.yaml).
-Model IDs are pinned to specific versions for reproducibility and
-noted in the run manifest. The orchestrator logs the resolved
-`model_id` returned by OpenRouter alongside the requested one and
-flags drift.
-
-`gemma4` is a newer release than `gemma`; pilot batches have used
-`gemma4` so its behaviour is more characterised. The headline panel
-will pick one (likely `gemma4`) after pilot validation across
-single-cell mini-batches per model.
+Pins are versioned slugs (not rolling `*-latest` aliases) so
+re-running a batch later resolves to the same weights the headline
+saw. The orchestrator logs the resolved `model_id` returned by
+OpenRouter alongside the requested one and flags drift. Bump the
+batch tag if any entry changes.
 
 ### Targets
 
@@ -354,112 +349,28 @@ final attempt — even if the CSV turns out to be malformed when
 validated in step 3. Self-correction across the 8 sub-invocations is
 the agent's responsibility; the scorer judges only the final state.
 
-## Scoring axes
+## Scoring
 
-Four orthogonal scoring axes, all applied at step 3 validation:
+Four orthogonal scoring axes — target conformance, schema gate,
+internal consistency, spec-parameter conformance — all evaluated at
+step 3 against the workspace the agent container left behind.
+Multi-invocation diagnostics (`steps[*].exit_code`,
+`plan_todos.checked/.total`) are reported per-cell alongside the
+scoring metrics so the in-cell self-correction is inspectable.
 
-**1. Target conformance.** Did the agent use the named framework, or
-sidestep it? Mechanical greps for `import mesa` / Mesa-class
-subclassing on Mesa runs; `josh validate` exit zero on `.josh` files
-for Josh runs. Caught the "agent produces a valid CSV via a Python
-fallback instead of using Josh" loophole in the phase-5a pilot batch.
-
-**2. Schema gate.** Did the agent's `./run.sh` produce
-`./output/results.csv` and does the CSV carry the required columns?
-The gate is subset-match (extras OK, order irrelevant), NaN-tolerant
-(rows with NaN in required numeric cols are filtered and counted, not
-failed), and demands the acceptance target year is present. The
-scorer self-heals `chmod +x run.sh` so the agent's failure to chmod
-is captured separately (`script_was_executable`) without gating the
-measurement.
-
-**3. Internal consistency.** Given the agent's own outputs, does the
-simulation behave self-consistently with respect to the spec's
-constraints? Hard structural checks (negative growth fraction,
-growth-rate ceiling fraction, age-step != 1 fraction, nTrees-change
-fraction). All four should be 0 under any faithful implementation;
-non-zero values are direct spec violations the other gates can't see.
-A predicted-vs-observed Δh `r²` is planned (see §Open methodology
-questions below) — the within-cell-across-years Spearmans currently
-in the manifest are noise on the synthetic dataset (low temporal
-variance by design) and will be replaced with a spatial `r²` against
-the spec's prediction.
-
-**4. Spec-parameter conformance.** Did mean tree height and mean
-occupancy at year 10 fall in the pre-registered acceptance ranges
-(`height_year10` and `occupancy_year10` in
-[`harness/acceptance_ranges.json`](harness/acceptance_ranges.json))?
-The rung-5 master prompt specifies the relevant parameters (10
-trees/patch, Δh_max = 1 m/yr, etc.) so these ranges are meaningful
-for every cell in the headline panel. **The methodology of these
-ranges is under review** —
-they currently pass scientifically-broken runs (e.g. h@10 = 8e-10 m
-on the prior Cal-Adapt-based pilot). The plan is to either drop them
-or fold them into a derived `cell_passed` field combining
-conformance, schema, consistency, and parameter signals.
-
-## Metrics
-
-All scoring is mechanical at experiment time. Manual review of the
-archived artifacts can supplement post-hoc. Per-batch rollups
-generated automatically by `orchestration/generate_batch_report.py`
-into `runs/<batch-tag>/batch_report.md`.
-
-The current scorer JSON schema is `phase5a-v1` (see
-`harness/run_metrics.py:SCHEMA_VERSION`).
-
-| Metric                          | Phase        | Type    | Source |
-| ------------------------------- | ------------ | ------- | ------ |
-| `target_conformance`            | step 2       | bool    | Mechanical: Mesa imports + class subclassing, or `josh validate` exit zero. |
-| `conformance.{imports_mesa, subclasses_model, has_josh_files, has_jshd_files, josh_validate_exit_code}` | step 2 | mixed | Per-target evidence fields backing the `target_conformance` rollup. |
-| `target_conformance_fuzzy`      | step 2 (opt) | enum    | `null` placeholder; LLM-judge variant deferred. |
-| `csv_exists`                    | step 3       | bool    | `./output/results.csv` was written. |
-| `csv_schema_ok`                 | step 3       | bool    | Subset-match required columns + target year present + required cols numeric-coercible. |
-| `csv_schema_errors`             | step 3       | list    | Specific failure messages when `csv_schema_ok=false`. |
-| `csv_row_count`                 | step 3       | int     | Total rows in the CSV (pre-filter). |
-| `csv_rows_dropped_nan`          | step 3       | int     | Rows dropped during NaN-filtering on required numeric cols. |
-| `script_was_executable`         | step 3       | bool    | `True` if the agent self-chmod'd; `False` if the scorer's runner had to. |
-| `did_run`                       | step 3       | bool    | `exit_code == 0 AND csv_exists AND csv_schema_ok`. |
-| `exit_code`                     | step 3       | int     | `./run.sh` exit status. |
-| `consistency.growth_rate_{min,max,mean}_m` | step 3 | float | Descriptive stats on Δh across all `(cell, year→year+1)` transitions. |
-| `consistency.growth_rate_negative_frac`    | step 3 | float | Fraction of transitions with Δh < 0. Spec value: 0. |
-| `consistency.growth_rate_above_ceiling_frac` | step 3 | float | Fraction with Δh > 1.15 m/yr (Δh_max × (1+3σ)). Spec value: 0. |
-| `consistency.age_step_{mean, off_one_frac}` | step 3 | float | Mean age increment and fraction != 1.0. |
-| `consistency.ntrees_change_frac`           | step 3 | float | Fraction of transitions where `nTrees` changed. Spec value: 0. |
-| `consistency.growth_temp_spearman`         | step 3 | float | Currently per-cell-across-years; **scheduled for replacement** (see open questions). |
-| `consistency.growth_precip_spearman`       | step 3 | float | Same; same caveat. |
-| `height_year10_mean`            | step 3       | float   | Mean of `meanHeight` at target year. |
-| `occupancy_year10_mean`         | step 3       | float   | Mean of `nTrees` at target year. |
-| `height_in_range`               | step 3       | bool    | `height_year10_mean` within `acceptance_ranges.json` bounds. |
-| `occupancy_in_range`            | step 3       | bool    | Same for occupancy. |
-| `prompt_tokens`, `completion_tokens` | step 1  | int     | OpenRouter response. |
-| `src_loc`, `comment_loc`, `imports_loc` | step 3 | int | Lines of generated code per category (replaces planned `relevant_loc`). |
-| `entropy_bits`                  | step 3       | float   | Token-level Shannon entropy of the generated code via `tiktoken` `cl100k_base`. |
-| `wall_time_seconds`             | step 1 / 3   | float   | End-to-end time per phase. Reported, not used for scoring (provider latency confounds). |
-
-**Multi-invocation diagnostics** (`steps[*].exit_code`,
-`plan_todos.checked/.total`) are produced per-cell and surfaced in
-`batch_report.md` alongside the scoring metrics, so the model's
-in-cell self-correction is inspectable without requiring a separate
-recovery hypothesis.
-
-**Egress / docs-traffic metrics** (`webfetch_request_count`,
-`docs_*`, `dns_distinct_hosts`, `dns_unexpected_hosts`) are also
-pending — they require a separate joiner (`harness/docs_log.py`,
-phase 5b) over the existing per-run `trajectory.jsonl` and `dns.log`.
-The raw artefacts are captured per-run today; only the aggregated
-metrics await implementation.
-
-The path-level metrics (`docs_*`) come from opencode's trajectory
-log — every `webfetch` invocation records its URL. The host-level
-metrics (`dns_*`) come from the dnsmasq sidecar's query log and
-catch any non-`webfetch` egress attempt (e.g., a Python script the
-agent wrote calling `urllib.request.urlopen`).
+The full axis-by-axis specification, the metric table, the LLM-judge
+post-hoc passes (a "did it use the right tool?" judge + a "where did
+the agent get confused?" judge, both for our convenience rather than
+headline scoring), and the recipe for re-scoring completed runs after
+methodology revisions live in [SCORING.md](SCORING.md).
 
 The pre-registered acceptance ranges live in
 [`harness/acceptance_ranges.json`](harness/acceptance_ranges.json) and were
 committed before any experimental runs. **Do not modify this file
-after experiments begin.** Git history is the audit trail.
+after experiments begin.** Git history is the audit trail; revisions
+land via the re-scoring path documented in
+[SCORING.md](SCORING.md#re-analysing-completed-runs) so headline
+runs and re-analyses sit side-by-side.
 
 ## Egress observability and isolation
 
@@ -676,48 +587,25 @@ paper:
 
 ## Open methodology questions
 
-Decisions still open at the time of writing. None are blockers but
-each shapes what the experiment can claim.
+Scoring-specific open items — acceptance-range methodology,
+target_conformance denominator, predicted-vs-observed r² metric,
+LLM-judge design — live in
+[SCORING.md §Open methodology questions](SCORING.md#open-methodology-questions)
+because we plan to defer them until after the headline runs and
+re-score against frozen workspaces.
 
-1. **Replace the temporal Spearman metrics with predicted-vs-observed
-   correctness.** The current `consistency.growth_temp_spearman` and
-   `consistency.growth_precip_spearman` correlate Δh against climate
-   proxies within each cell across years, then average across cells.
-   Stage-2 confirmed they are noise on the synthetic dataset by
-   design: within-cell year-over-year variance is tiny (±0.4 K T,
-   ±40 mm/yr P) while the cross-cell spatial gradient is huge
-   (30 K T span, 0–800 mm/yr P span). The replacement: compute the
-   spec's predicted Δh per (cell, year) from the netCDF and compare
-   against the agent's observed Δh — Pearson `r²` and OLS slope.
-   Perfect spec-faithful: r² > 0.95, slope ≈ 1.0. Random/constant
-   growth: r² ≈ 0. Right structure / wrong constants: 0.5–0.9, slope
-   ≠ 1. Also add a year-10 spatial-map `r²` between observed and
-   predicted height fields.
+The remaining design-level open question:
 
-2. **Should `target_conformance=False` runs count toward the
-   denominator of any headline metric?** A run that produces a valid
-   CSV without using the named framework is technically "did the
-   task" but doesn't measure what we're trying to measure. Likely:
-   report pass rates *conditional* on conformance plus a separate
-   conformance-rate-per-model figure.
-
-3. **Acceptance ranges as a gate.** `height_year10` and
-   `occupancy_year10` ranges in `harness/acceptance_ranges.json`
-   currently pass scientifically-broken runs (e.g. mean tree height
-   of 8 × 10⁻¹⁰ m falls vacuously inside `[0, 11]`). Three options
-   to settle before the headline batch: (a) drop them and rely on
-   the internal-consistency block, (b) tighten to growth-equation-
-   consistent bounds, (c) replace with a derived `cell_passed` field
-   ANDing `did_run`, `target_conformance`, growth-rate stats, and
-   climate response. The phase-5a pilot favours (c).
-
-4. **Model panel finalisation.** The phase-5c panel batch surfaced
+1. **Model panel finalisation.** The phase-5c panel batch surfaced
    that gemma3-27b-it fails to invoke tools under the multi-invocation
    procedure prompt (0/4 cells did any work; the model listed
-   actions then stopped). gemma4 has not yet been pilot-tested under
-   the new flow. Decide before headline: drop gemma entirely, swap
-   in gemma4, or accept gemma's degenerate panel rows as data
-   showing the model class can't follow the procedure.
+   actions then stopped). The headline pin in
+   [`config/models.yaml`](config/models.yaml) is now
+   `google/gemma-4-26b-a4b-it` (the gemma-4 26B MoE; previously wired
+   as our `gemma4` short name). gemma-4 has not yet been pilot-tested
+   under the multi-invocation flow specifically; a single-cell
+   `FAIL_FAST=true` probe before the headline batch is the cheap
+   sanity-check to run.
 
 ## Citation
 
