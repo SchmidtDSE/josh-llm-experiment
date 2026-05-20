@@ -134,6 +134,25 @@ This is the multi-invocation planning flow described in
 working document `PLAN.md` is both an output artefact and a working
 reference re-read at the start of every sub-invocation.
 
+**Why force this structure rather than trust the agent framework to
+decompose the task?** Pre-phase-5c trials with both commercial
+(claude) and open (gemma, minimax) models surfaced a recurring
+failure mode: agents got caught up in orchestration concerns —
+making `run.sh` executable, parsing the netCDFs, getting filenames
+right — and skipped the actual ecological-modelling step. They'd
+declare done when `run.sh` exited 0 and produced a CSV, even if the
+CSV's growth values were nonsensical. opencode's native sub-agent
+dispatch (the `task` tool) was the obvious affordance for
+decomposition but proved unreliable — gemma issued malformed `task`
+calls in tight loops; claude routed bash through it as a workaround
+for the earlier per-pattern bash allowlist. We disabled the `task`
+tool entirely and force-decompose orchestrator-side via the 8-step
+external loop, taking some agency away from opencode in exchange for
+a more controllable evaluation. The hypothesis is about how well the
+models build broadly-correct *ecological* models, not how well they
+overcome environment quirks; forcing the decomposition isolates the
+variable we care about.
+
 ### Models
 
 Configured via `MODEL` environment variable. All models are accessed

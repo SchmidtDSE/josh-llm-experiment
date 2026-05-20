@@ -646,6 +646,18 @@ def parse_args() -> argparse.Namespace:
         default=REPO_ROOT / "orchestration" / "launch_cell.sh",
         help="Per-cell driver path. Override to swap in a stub for tests.",
     )
+    parser.add_argument(
+        "--upload",
+        action="store_true",
+        help=(
+            "Auto-invoke orchestration/upload_batch.sh against the completed "
+            "batch dir. Convenience for the common case where archiving is "
+            "the next step. Failure is non-fatal — the batch artefacts stay "
+            "on disk and `upload_batch.sh` is idempotent, so a host crash "
+            "or transient upload failure can be recovered by re-running the "
+            "standalone script."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -804,6 +816,31 @@ def main() -> int:
     except Exception as exc:
         console.print(f"  [yellow]batch_report.md generation failed:[/] {exc}")
         batch_report_path = None
+
+    # Opportunistic auto-upload. Non-fatal on failure: the standalone
+    # upload_batch.sh script is idempotent, so the operator can recover
+    # from a host crash / transient upload error by re-running it
+    # against the same batch_dir.
+    upload_log_path: Optional[Path] = None
+    if args.upload:
+        upload_script = REPO_ROOT / "orchestration" / "upload_batch.sh"
+        upload_log_path = batch_dir / "upload.log"
+        console.print(f"  Uploading: {upload_script} {batch_dir}")
+        try:
+            with upload_log_path.open("wb") as logf:
+                proc = subprocess.run(
+                    [str(upload_script), str(batch_dir)],
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                )
+            if proc.returncode != 0:
+                console.print(
+                    f"  [yellow]upload returned exit {proc.returncode} — see "
+                    f"{upload_log_path}; rerun "
+                    f"`./orchestration/upload_batch.sh {batch_dir}` to retry[/]"
+                )
+        except Exception as exc:  # noqa: BLE001 — keep batch driver alive
+            console.print(f"  [yellow]upload invocation failed:[/] {exc}")
 
     console.print()
     print_final_table(console, cells_in_seq)

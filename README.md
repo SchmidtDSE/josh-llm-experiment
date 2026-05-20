@@ -249,19 +249,30 @@ the next `launch_batch.py` invocation scrubs whatever leaked.
 
 ### Archiving a batch to GCS (S3 interop)
 
-After a batch finishes, ship its run dir to long-term storage so the
-artefacts survive local-disk churn:
+Add `--upload` to `launch_batch.py` and the batch driver invokes
+`orchestration/upload_batch.sh` against the completed batch dir at
+the end of the run:
+
+```sh
+uv run orchestration/launch_batch.py --cells headline_panel.csv \
+  --jobs 4 --batch-tag headline-2026-05 --upload
+```
+
+For crash recovery (or to opt into the upload after-the-fact), run
+the standalone script directly:
 
 ```sh
 ./orchestration/upload_batch.sh runs/batch-experimental_cells-panel
 ```
 
-Reads `MINIO_ENDPOINT` / `MINIO_BUCKET` / `MINIO_ACCESS_KEY` /
+Both paths read `MINIO_ENDPOINT` / `MINIO_BUCKET` / `MINIO_ACCESS_KEY` /
 `MINIO_SECRET_KEY` / `MINIO_PREFIX` from `.env`. Uses the [`mc` MinIO
 client][mc] host-side — the agent container is not in the upload path,
 so credentials never touch the runner, and the agent image stays free
 of the `mc` binary. The script is idempotent (`mc mirror --overwrite`)
 so re-running on the same batch dir just syncs whatever changed.
+Auto-upload failure is non-fatal: the batch artefacts stay on disk,
+and the standalone script can recover.
 
 [mc]: https://min.io/docs/minio/linux/reference/minio-mc.html
 
@@ -279,34 +290,51 @@ Object layout under the bucket:
 
 ### Full sweep *(planned, phase 6+)*
 
-The rung-ladder was retired; headline runs use the rung-5 master only,
-so the sweep is just `model × target × replicates`:
+The rung-ladder was retired; headline runs are `model × target ×
+replicates` and live in a single committed matrix CSV. Commit the
+panel description, then launch it in one invocation:
 
 ```sh
-for model in claude gemma kimi minimax mistral; do
-  for target in josh mesa; do
-    ./orchestration/launch_batch.py \
-      --model "$model" --target "$target" --runs 3 \
-      --batch-tag "headline-${model}-${target}"
-  done
-done
+./orchestration/launch_batch.py \
+  --cells headline_panel.csv --jobs 4 \
+  --batch-tag headline-2026-05
 ```
 
-(`--rung` defaults to 5; omit it.)
+`headline_panel.csv` columns are `model,rung,target,replicates`
+(header mandatory; `#` comment lines OK; column order fixed). One row
+per cell:
+
+```csv
+model,rung,target,replicates
+claude,5,josh,3
+claude,5,mesa,3
+gemma,5,josh,3
+gemma,5,mesa,3
+kimi,5,josh,3
+kimi,5,mesa,3
+minimax,5,josh,3
+minimax,5,mesa,3
+mistral,5,josh,3
+mistral,5,mesa,3
+```
 
 ### Pilot sweep *(planned, phase 6)*
 
 Before the headline run, a small pilot validates the loop and factors
-across the model panel:
+across the model panel — same shape, fewer rows / replicates:
 
 ```sh
-for model in claude mistral; do
-  for target in josh mesa; do
-    ./orchestration/launch_batch.py \
-      --model "$model" --target "$target" --runs 2 \
-      --batch-tag "pilot-${model}-${target}"
-  done
-done
+./orchestration/launch_batch.py \
+  --cells pilot_panel.csv --jobs 2 \
+  --batch-tag pilot-2026-05
+```
+
+```csv
+model,rung,target,replicates
+claude,5,josh,2
+claude,5,mesa,2
+mistral,5,josh,2
+mistral,5,mesa,2
 ```
 
 ## Environment variables

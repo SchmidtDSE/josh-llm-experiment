@@ -63,12 +63,7 @@ The CSV is UTF-8, comma-separated, with a header row. Required data columns:
 | `temperature`   | float  | Kelvin        |
 | `precipitation` | float  | mm/year       |
 
-Plus a per-cell identifier. The scorer accepts either of:
-
-- A single string column `cell_id` formatted as `{i}_{j}` (lat index `_` lon index), **or**
-- Two numeric columns `position.x` and `position.y` carrying your framework's native cell coordinates (this is Josh's default export).
-
-Use whichever your chosen framework produces naturally — you do not need to rename your tool's native cell-coordinate fields to match `cell_id`. Optional spatial fields (`lat`, `lon`, `position.latitude`, `position.longitude`) and extra columns (`step`, `replicate`, etc.) are accepted and ignored by the scorer. Column order is unconstrained.
+Plus a per-cell identifier — either a string column `cell_id` or the pair `position.x` and `position.y`. Other columns are accepted and ignored.
 
 One row per (cell, year) for the eleven years 2024–2034 inclusive.
 
