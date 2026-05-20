@@ -288,6 +288,94 @@ Object layout under the bucket:
 - `<prefix>/<batch-tag>/batch_report.md` — per-batch report
 - `<prefix>/<batch-tag>/manifest.jsonl` — aggregated manifest
 
+### Re-scoring a completed batch
+
+The scoring container is target-agnostic and stateless against an
+agent's `workspace/`, so a methodology revision (acceptance ranges,
+new consistency metric, etc.) can be applied to a frozen batch without
+re-running the agents. See
+[SCORING.md §Re-analysing-completed-runs](SCORING.md#re-analysing-completed-runs)
+for the methodology side; this is the operator interface.
+
+The rescore mirrors `launch_batch.py`'s shape for the forward path:
+[`orchestration/rescore_batch.py`](orchestration/rescore_batch.py) is
+the batch driver, with
+[`orchestration/rescore_cell.sh`](orchestration/rescore_cell.sh) as
+the per-cell scorer invocation (analog of `launch_cell.sh` Step 2 in
+isolation).
+
+```sh
+# Whole batch — discovers cells from run_meta.json under the batch dir
+uv run orchestration/rescore_batch.py runs/batch-headline-2026-05
+
+# One cell at a time (good for iterating on a methodology revision)
+uv run orchestration/rescore_batch.py runs/batch-headline-2026-05 \
+  --cell <run-id>
+
+# Archive a methodology revision under its own suffix
+uv run orchestration/rescore_batch.py runs/batch-headline-2026-05 \
+  --suffix .phase5b-v1
+
+# Parallel resume after a host crash
+uv run orchestration/rescore_batch.py runs/batch-headline-2026-05 \
+  --jobs 8 --skip-existing
+```
+
+#### What gets overwritten
+
+Outputs land alongside the originals under the suffix (default
+`.rescored`). Everything not in the left column stays untouched:
+
+| Touched                                                | Not touched (originals)                                            |
+|---|---|
+| `<run-id>/scorer.rescored.json`                        | `<run-id>/scorer.json`                                             |
+| `<run-id>/scorer.rescored.stderr`                      | `<run-id>/report.md`, `trajectory.jsonl`, `run_meta*.json`, …      |
+| `<run-id>/workspace/output/results.csv` (re-executed)  | `<batch>/manifest.jsonl`                                           |
+| `<run-id>/workspace/results/scorer.json` (legacy dup)  | `<batch>/batch_report.md`                                          |
+| `<batch>/joblog.rescored.tsv`                          | `<batch>/joblog.tsv`                                               |
+| `<batch>/manifest.rescored.jsonl`                      |                                                                    |
+| `<batch>/batch_report.rescored.md`                     |                                                                    |
+
+The two "touched workspace" rows deserve attention: the scorer's
+[`harness/runner.py`](harness/runner.py) re-executes the agent's
+`./run.sh` to get a fresh `output/results.csv`, then scores it. For
+Josh targets the CSV is byte-identical to the original. For Mesa
+targets it drifts at the 10⁻¹¹ scale (the stochastic-Gaussian noise
+term inside the agent's script). The canonical frozen-evidence record
+is `<run-id>/scorer.json` at the batch root — the workspace dup at
+`workspace/results/scorer.json` is just a convenience the scoring
+container writes inside the workspace and is not the source of truth.
+
+Re-running with the same `--suffix` overwrites the suffixed files
+in-place; `--skip-existing` short-circuits cells that already have a
+non-empty `scorer<SUFFIX>.json`.
+
+#### Interaction with `upload_batch.sh`
+
+A rescore does NOT auto-upload — `--upload` is a `launch_batch.py`
+flag, not a rescore flag. To archive rescored artefacts to the bucket:
+
+```sh
+./orchestration/upload_batch.sh runs/batch-headline-2026-05
+```
+
+`mc mirror --overwrite` (no `--remove`) means all the new suffixed
+files get uploaded **and** the mutated workspace bytes overwrite their
+bucket counterparts. The bucket's `scorer.json`, `manifest.jsonl`,
+`batch_report.md`, `joblog.tsv`, and per-cell `report.md` stay
+untouched — those names don't exist in the rescore output.
+
+If you want the bucket archive to preserve the original `workspace/`
+byte-for-byte: **upload before the first rescore**, then keep rescored
+artefacts local (skip the second `upload_batch.sh` call). The
+methodology-revision artefacts (`scorer.rescored.json`, etc.) stay in
+the local run dir; the bucket remains a snapshot of the original
+headline batch. For Josh targets the workspace mutation is a no-op so
+this matters less; for Mesa targets it's the 10⁻¹¹-scale drift, which
+is below any meaningful gate threshold but means the bucket diverges
+bit-for-bit from the agent's original output if you re-upload after
+rescoring.
+
 ### Optional host-side opencode (for LLM-judge passes)
 
 The mechanical scorer is fully containerised — no host opencode
