@@ -52,13 +52,12 @@ are present on the current branch.
 │   ├── SIDECAR.md                # Boilerplate footer appended to every rung
 │   ├── PLAN_TEMPLATE.md          # Seed for /sandbox/PLAN.md (multi-invocation working doc)
 │   ├── rungs/
-│   │   └── rung1_minimal.md      # rungs 2–4 deferred until headline-batch authoring
+│   │   └── rung1_minimal.md      # kept for future use; default RUNG is 5 (BASE_PROMPT.md)
 │   ├── steps/
 │   │   └── step_01..08_*.md      # Per-todo step injections (8 files, repo-static)
-│   ├── targets/
-│   │   ├── josh.md
-│   │   └── mesa.md
-│   └── recovery_template.md      # (planned, phase 5b)
+│   └── targets/
+│       ├── josh.md
+│       └── mesa.md
 ├── harness/                      # acceptance_ranges.json today;
 │                                 # scoring entry point + runners + validators planned, phase 2b
 ├── orchestration/                # (planned, phase 3+) — launch_run.sh, launch_batch.py, dnsmasq.conf
@@ -149,7 +148,6 @@ fallback for resource-constrained environments.
 ```sh
 ./orchestration/launch_run.sh \
   --model claude \
-  --rung 3 \
   --target josh \
   --run-id "$(uuidgen)"
 ```
@@ -249,32 +247,64 @@ The batch driver also runs a pre-sweep cleanup of any orphan
 prior SIGKILL'd batch, so a hard-kill of the driver is recoverable —
 the next `launch_batch.py` invocation scrubs whatever leaked.
 
+### Archiving a batch to GCS (S3 interop)
+
+After a batch finishes, ship its run dir to long-term storage so the
+artefacts survive local-disk churn:
+
+```sh
+./orchestration/upload_batch.sh runs/batch-experimental_cells-panel
+```
+
+Reads `MINIO_ENDPOINT` / `MINIO_BUCKET` / `MINIO_ACCESS_KEY` /
+`MINIO_SECRET_KEY` / `MINIO_PREFIX` from `.env`. Uses the [`mc` MinIO
+client][mc] host-side — the agent container is not in the upload path,
+so credentials never touch the runner, and the agent image stays free
+of the `mc` binary. The script is idempotent (`mc mirror --overwrite`)
+so re-running on the same batch dir just syncs whatever changed.
+
+[mc]: https://min.io/docs/minio/linux/reference/minio-mc.html
+
+Requires `mc` on the host. Linux one-liner:
+
+```sh
+curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o ~/.local/bin/mc
+chmod +x ~/.local/bin/mc
+```
+
+Object layout under the bucket:
+- `<prefix>/<batch-tag>/<run-id>/…` — per-cell artefacts
+- `<prefix>/<batch-tag>/batch_report.md` — per-batch report
+- `<prefix>/<batch-tag>/manifest.jsonl` — aggregated manifest
+
 ### Full sweep *(planned, phase 6+)*
+
+The rung-ladder was retired; headline runs use the rung-5 master only,
+so the sweep is just `model × target × replicates`:
 
 ```sh
 for model in claude gemma kimi minimax mistral; do
-  for rung in 1 2 3 4 5; do
-    for target in josh mesa; do
-      ./orchestration/launch_batch.py \
-        --model "$model" --rung "$rung" --target "$target" --runs 3
-    done
+  for target in josh mesa; do
+    ./orchestration/launch_batch.py \
+      --model "$model" --target "$target" --runs 3 \
+      --batch-tag "headline-${model}-${target}"
   done
 done
 ```
 
+(`--rung` defaults to 5; omit it.)
+
 ### Pilot sweep *(planned, phase 6)*
 
-Before the headline run, a small pilot validates the loop and
-factors. See
-[OPEN_QUESTIONS.md item 9](OPEN_QUESTIONS.md#9) *(planned)*:
+Before the headline run, a small pilot validates the loop and factors
+across the model panel:
 
 ```sh
 for model in claude mistral; do
-  for rung in 1 5; do
-    for target in josh mesa; do
-      ./orchestration/launch_batch.py \
-        --model "$model" --rung "$rung" --target "$target" --runs 2
-    done
+  for target in josh mesa; do
+    ./orchestration/launch_batch.py \
+      --model "$model" --target "$target" --runs 2 \
+      --batch-tag "pilot-${model}-${target}"
   done
 done
 ```
@@ -290,14 +320,14 @@ listed here so the variable contract is visible from the start.
 | `OPENROUTER_API_KEY`     | phase 1    | conditional | API key for the OpenRouter gateway. Required when `MODEL` is an `openrouter/*` short name (all of `claude`, `gemma`, `kimi`, `minimax`, `mistral`). |
 | `OLLAMA_HOST`            | phase 4    | conditional | Base URL of an Ollama server (default `http://localhost:11434`). Required when `MODEL` is an `ollama-*` short name; ignored otherwise. From inside the agent container on Linux, point this at the docker bridge gateway (typically `http://172.17.0.1:11434`); on Docker Desktop / macOS, `http://host.docker.internal:11434`. |
 | `MODEL`                  | phase 3    | yes      | Short name from `config/models.yaml`. |
-| `RUNG`                   | phase 3    | yes      | Prompt rung, 1–5. |
+| `RUNG`                   | phase 3    | no       | Prompt rung. Defaults to 5 (the master spec). Rung 1 (`prompts/rungs/rung1_minimal.md`) is wired but unused by headline runs; the rung-ladder was retired in favour of the single-prompt panel. |
 | `TARGET`                 | phase 3    | yes      | `josh` or `mesa`. |
 | `RUN_ID`                 | phase 3    | yes      | Unique identifier for this generation. UUID preferred. |
-| `MINIO_ENDPOINT`         | phase 4    | yes      | S3-compatible endpoint. Default `https://storage.googleapis.com` — we hit GCS via its S3 interop API; no MinIO server runs anywhere, `mc` is just the client. |
-| `MINIO_BUCKET`           | phase 4    | yes      | Destination bucket name for per-run artifact archival. |
-| `MINIO_ACCESS_KEY`       | phase 4    | yes      | HMAC access key for the bucket (GCS HMAC pair). |
-| `MINIO_SECRET_KEY`       | phase 4    | yes      | HMAC secret. |
-| `BATCH_TAG`              | phase 4    | yes      | Identifier prefixed to every object path; bumped per experimental batch. |
+| `MINIO_ENDPOINT`         | phase 4d   | yes for upload | S3-compatible endpoint. Default `https://storage.googleapis.com` — we hit GCS via its S3 interop API; no MinIO server runs anywhere, `mc` is just the client. Read by `orchestration/upload_batch.sh` (host-side, post-batch); the agent container does not see these vars. |
+| `MINIO_BUCKET`           | phase 4d   | yes for upload | Destination bucket name for per-run artifact archival. |
+| `MINIO_ACCESS_KEY`       | phase 4d   | yes for upload | HMAC access key for the bucket (GCS HMAC pair). |
+| `MINIO_SECRET_KEY`       | phase 4d   | yes for upload | HMAC secret. |
+| `MINIO_PREFIX`           | phase 4d   | no       | Optional object-key prefix appended after the bucket (e.g. `fortree/2026-05/`). Batch dir name is always appended after this. |
 | `WALL_CLOCK_BACKSTOP_SEC`| phase 3    | no       | Hard ceiling on agent wall time for the full 8-step multi-invocation chain. Default 1800. |
 | `IDLE_THRESHOLD_SEC`     | phase 3    | no       | Kill the agent if no new trajectory event lands for this many seconds. Default 120. Catches silent LLM-stream stalls distinct from the wall-clock backstop. |
 | `TOKEN_BACKSTOP`         | phase 3    | no       | Completion-token cap per opencode invocation (per step). Default 100000. |

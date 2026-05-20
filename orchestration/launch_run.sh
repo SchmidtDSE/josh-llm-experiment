@@ -25,14 +25,17 @@
 set -euo pipefail
 
 : "${MODEL:?MODEL not set; pick a short name from config/models.yaml (claude|gemma|kimi|minimax|mistral|ollama-qwen-coder-7b|ollama-qwen-coder-1_5b)}"
-: "${RUNG:?RUNG not set; 1 or 5 (rungs 2-4 deferred to pilot phase)}"
+RUNG="${RUNG:-5}"
 : "${TARGET:?TARGET not set; josh or mesa}"
 : "${RUN_ID:?RUN_ID not set; use \$(uuidgen)}"
 
 WALL_CLOCK_BACKSTOP_SEC="${WALL_CLOCK_BACKSTOP_SEC:-1800}"
 
 case "$TARGET" in josh|mesa) ;; *) echo "TARGET must be josh or mesa, got: $TARGET" >&2; exit 2;; esac
-case "$RUNG"   in 1|5)       ;; *) echo "RUNG must be 1 or 5 (rungs 2-4 deferred), got: $RUNG" >&2; exit 2;; esac
+# RUNG defaults to 5 (the rung-ladder was retired; rungs 1 and 5 remain
+# wired but headline runs use 5 only). The other rung files are kept on
+# disk in case a future axis-of-variation experiment wants them.
+case "$RUNG"   in 1|5)       ;; *) echo "RUNG must be 1 or 5, got: $RUNG" >&2; exit 2;; esac
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 

@@ -616,7 +616,16 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model", help="Short name from config/models.yaml")
-    parser.add_argument("--rung", type=int, choices=sorted(VALID_RUNGS))
+    # RUNG defaults to 5; the rung-ladder was retired in favour of a
+    # single-prompt panel (model × target × replicates). The other rung
+    # files stay in the repo in case a future variant wants them.
+    parser.add_argument(
+        "--rung",
+        type=int,
+        choices=sorted(VALID_RUNGS),
+        default=5,
+        help="Prompt rung (default: 5)",
+    )
     parser.add_argument("--target", choices=sorted(VALID_TARGETS))
     parser.add_argument("--runs", type=int, help="Replicates of the single cell")
     parser.add_argument(

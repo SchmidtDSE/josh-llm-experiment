@@ -153,10 +153,10 @@ PR #22 enhanced the per-cell report. PR #23 distinguished
 presumed-done from genuine stall in the heartbeat. PR #24 grouped
 all per-run dirs under `runs/<batch-tag>/`.
 
-**Phase 4d — Durable upload — PENDING.** See *Pending engineering
-work* below.
+**Phase 4d — Durable upload — DONE (host-side mc).** See *Pending
+engineering work* below for the implementation summary.
 
-### Phase 5 — Scoring revision (5a) and recovery loop (5b)
+### Phase 5 — Scoring revision (5a); recovery loop (5b, retired); multi-invocation flow (5c)
 
 **Phase 5a — Scoring revision (PR #25, #26, #27) ✓** — Three PRs
 that together delivered the post-pilot scoring infrastructure:
@@ -195,8 +195,11 @@ that together delivered the post-pilot scoring infrastructure:
   `batch_report.md` with at-a-glance matrix, per-cell drill-down,
   failure-mode tally.
 
-**Phase 5b — Recovery loop — PENDING.** See *Pending engineering
-work* below.
+**Phase 5b — Recovery loop — RETIRED.** The multi-invocation flow's
+todos 5–8 (stub → implement → validate → cleanup) bake the iterative
+self-correction into every cell's run, so a separate recovery-prompt
+mechanism is no longer needed. EXPERIMENTAL_DESIGN's H2 hypothesis
+folds into H1.
 
 ### Phase 5c — Multi-invocation planning flow ✓
 
@@ -271,6 +274,39 @@ read /sandbox/PLAN.md; list your actions; complete only this todo;
 mark [x]; exit." Cross-step state lives entirely in `PLAN.md` and
 the workspace files.
 
+**Follow-on fixes (same PR):**
+
+- **Permissive cell-identity schema.** `harness/validators/output_schema.py`
+  no longer requires `lat`/`lon`/`cell_id` specifically. Cell identity
+  accepts either `cell_id` (string) OR `position.x` + `position.y`
+  (numeric, Josh's default). `load_clean_results` synthesises `cell_id`
+  from the position pair when only the alt is present, so
+  `internal_consistency.py` is unchanged. Removes the "model must
+  rename Josh's native export to match our spec" gymnastics that
+  bricked two recent Josh-target cells. New CI-gated fixture
+  [reference/golden-josh-defaults/](reference/golden-josh-defaults/)
+  exercises the alt path.
+- **`.jshd` LOC bugfix.** `harness/_files.py` no longer counts `.jshd`
+  binary preprocessed data as source. The byte stream contained
+  newlines, so a 112 KB binary was being read as ~2000 lines of code —
+  inflated `src_loc` by 400× on cells that ran `josh preprocess`
+  against the full grid. Conformance still detects `.jshd` presence
+  via the new `find_workspace_files` helper.
+- **Batch-report multi-invocation diagnostics.** `manifest.jsonl` rows
+  gain `steps` (per-step exit codes from `step_meta.json`) and
+  `plan_todos` (count of `[x]` boxes in `workspace/PLAN.md`).
+  `batch_report.md` renders a new "Multi-invocation step status"
+  section: 8-glyph per-cell status string (`✓✗·`), todos-checked
+  count, and links to each cell's `PLAN.md` + `agent_artifacts/steps/`.
+- **Prompt-procedure tightening (gemma nudge).** SIDECAR's Procedure
+  paragraph caps the planning preamble at 1–2 sentences and adds
+  "Then carry them out by calling the available tools — listing the
+  plan is a preamble, not the task itself." Targets the failure mode
+  observed in the panel batch where gemma listed actions and stopped
+  without invoking any tool.
+- **Targets renamed.** `prompts/target_directive_{josh,mesa}.md` →
+  `prompts/targets/{josh,mesa}.md` to match the new subfolder layout.
+
 ## Current state
 
 Scorer JSON schema: `phase5a-v1` (`harness/run_metrics.py:SCHEMA_VERSION`).
@@ -303,82 +339,66 @@ Per-batch artefacts under `runs/<batch-tag>/`:
 - `batch_report.md` — at-a-glance markdown rollup
 - `cell-logs/<run_id>.log` — per-cell stdout+stderr capture
 
+## Headline-run readiness
+
+What's blocking vs nice-to-have for the headline batch, in order of
+materiality:
+
+| Item | Required? | Status |
+|---|---|---|
+| Multi-invocation flow end-to-end | yes | ✓ verified on claude × {josh,mesa} (32/32 step exits clean) and minimax × {josh,mesa} (4/4 cells passing PLAN.md update + 3/4 producing valid CSVs) |
+| Permissive cell-identity schema | yes | ✓ |
+| `.jshd` LOC fix | yes | ✓ |
+| Batch-report diagnostics | yes | ✓ |
+| Durable upload to GCS | yes | ✓ host-side `orchestration/upload_batch.sh` (mc, no container path) |
+| `WALL_CLOCK_BACKSTOP_SEC` bump | yes | ⚠ default 1800s is tight — observed cells run 27–39 min on claude. Bump to 3600s in `.env` before headline. |
+| Model panel finalised | yes | ⚠ gemma struggled with multi-invocation tool use (0/4 cells did any work — see panel batch). Decide before headline: drop gemma, switch to gemma4, or accept the asymmetric panel and report it. |
+| Acceptance-range methodology (EXPERIMENTAL_DESIGN Open Q #3) | yes | ⚠ ranges currently pass scientifically-broken runs. Decide drop / tighten / fold into `cell_passed`. |
+| Predicted-vs-observed r² metric (Open Q #1) | nice-to-have | ⏳ replacement for the noisy temporal Spearmans |
+
 ## Pending engineering work
 
-### Phase 4d — Durable upload to GCS via S3 interop
+### Phase 4d — Durable upload to GCS via S3 interop ✓
 
-Per-batch run dirs are currently host-local. The plan: ship them to a
-GCS bucket via its S3 interoperability API using the `mc` client.
+Implemented host-side rather than in the agent container — the agent
+image stays free of `mc` and of any object-storage credentials. The
+upload runs after a batch completes, against the per-batch run dir.
 
-**Files to author**
-- [orchestration/upload_run.sh](orchestration/upload_run.sh) — runs
-  `mc alias set` from `MINIO_*` env vars then `mc cp --recursive`
-  per run dir. Opportunistic: on failure, record `upload_status=failed`
-  in `run_meta.json` and continue.
-- [Dockerfile](Dockerfile) — install the `mc` static binary in the
-  `base` stage, sha256-pinned.
-- [config/VERSIONS.md](config/VERSIONS.md) — pin `mc` version.
-- [.env.example](.env.example) — add `MINIO_ENDPOINT=https://storage.googleapis.com`,
-  `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `BATCH_TAG`.
-  Naming is for project consistency (the bucket is GCS via S3 interop,
-  not a MinIO server).
+- [orchestration/upload_batch.sh](orchestration/upload_batch.sh) —
+  reads `MINIO_*` env vars from `.env`, runs `mc alias set` then
+  `mc mirror --overwrite` against `runs/<batch-tag>/`. Idempotent
+  (re-mirroring only re-uploads changed objects). Invoked manually
+  by the operator after each batch:
 
-**Validation gate**
-- A single run completes, `mc ls $alias/${MINIO_BUCKET}/${BATCH_TAG}/<RUN_ID>/`
-  lists every file under the local `runs/<RUN_ID>/`.
-- A run with broken HMAC credentials records `upload_status=failed`
-  and the run itself still completes (upload is opportunistic).
+  ```sh
+  ./orchestration/upload_batch.sh runs/batch-<tag>
+  ```
 
-### Phase 5b — Recovery loop
+- [.env.example](.env.example) — documents `MINIO_ENDPOINT`,
+  `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`,
+  `MINIO_PREFIX`.
 
-H2 in the experimental design ("Recovery quality") is currently
-unmeasurable. The recovery flow is designed but not implemented.
+- Host-side `mc` install is a one-liner; not pinned at the image
+  level since the image doesn't carry it.
 
-**Files to author**
-- [prompts/recovery_template.md](prompts/recovery_template.md) —
-  Markdown skeleton with `{{ORIGINAL_RUNG_PROMPT}}`,
-  `{{ORIGINAL_TARGET_DIRECTIVE}}`, `{{BINARY_OUTCOMES_BLOCK}}`,
-  `{{SIDECAR}}` placeholders. The binary-outcomes block surfaces only
-  structural fields (`did_run`, `exit_code`, `timed_out`,
-  `csv_exists`, `csv_schema_ok`, `csv_schema_errors`, `stderr_tail`
-  truncated). Explicitly excluded per EXPERIMENTAL_DESIGN's recovery
-  contract: `height_*`, `occupancy_*`, `acceptance_ranges_used`,
-  `src_loc`, `entropy_bits`.
-- [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py) —
-  strict whitelist over `scorer.json`. Asserts the expected
-  `schema_version` and copies only the named fields through, so new
-  fields added to scorer.json never automatically leak into recovery
-  prompts.
-- [harness/docs_log.py](harness/docs_log.py) — joins opencode's
-  trajectory `WebFetch` URLs with `dns.log` to produce the `docs_*`
-  metric fields, categorised via `config/docs_categories.yaml`.
-- Update [orchestration/launch_run.sh](orchestration/launch_run.sh)
-  to implement the full 5-step flow end-to-end:
-  1. One-shot scorer runs (already done in phase 3).
-  2. If `did_run AND height_in_range AND occupancy_in_range`,
-     record `recovery_attempted=false`, skip recovery.
-  3. Else: render recovery prompt; invoke opencode a second time
-     against the same workspace; record trajectory to
-     `trajectory_recovery.jsonl`.
-  4. Re-run the scorer against the post-recovery workspace, writing
-     `scorer_recovery.json`.
-  5. Manifest row records both `oneshot_*` and `recovery_*` field
-     families.
+**Object layout under the bucket:**
+- `<prefix>/<batch-tag>/<run-id>/…` — per-cell artefacts
+- `<prefix>/<batch-tag>/batch_report.md` — per-batch report
+- `<prefix>/<batch-tag>/manifest.jsonl` — aggregated manifest
 
-**Validation gate**
-- A recovery-triggering rung-1 run produces `recovery_attempted=true`
-  and `recovery_*` fields populate.
-- Grep gate: rendered `recovery_prompt.md` contains no occurrence of
-  `height_year10_mean`, `occupancy_year10_mean`, `height_in_range`,
-  `occupancy_in_range`, `acceptance_ranges_used`, `src_loc`,
-  `entropy_bits` — confirms the strict whitelist holds.
-- `scorer_recovery.json` carries the same `schema_version` as the
-  one-shot `scorer.json`.
+### Recovery loop — retired
 
-### Prompt rungs 2–4
+H2 ("Recovery quality") and the phase-5b recovery-prompt mechanism
+have been retired. The multi-invocation flow's todos 5–8 (stub →
+implement → validate → cleanup) bake the same iterative
+self-correction into every cell's run, so a separate second-invocation
+recovery pass is no longer needed. EXPERIMENTAL_DESIGN reflects the
+hypothesis simplification.
 
-The phase-3 prompts are `rung1_minimal.md` and `rung5_master.md`
-only. Rungs 2–4 are deferred until the headline-batch authoring pass;
-their content is straightforward (interpolating detail between the
-two endpoints) but the wording is paper-bearing and should be drafted
-once 5b is in place so the recovery contract is settled first.
+### Prompt rungs
+
+The rung-ladder is retired operationally — `RUNG` defaults to 5 in
+both `launch_run.sh` and `launch_batch.py`, and the headline panel is
+`model × target × replicates` only. `prompts/rungs/rung1_minimal.md`
+stays on disk in case a future variant wants to vary prompt detail,
+but is not used in the headline run.
