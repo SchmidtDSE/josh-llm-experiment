@@ -685,11 +685,14 @@ def parse_args() -> argparse.Namespace:
 
 def validate_args(args: argparse.Namespace, valid_models: set[str]) -> None:
     has_cells = args.cells is not None
+    # --rung has a hard default (5) so it's not in the mutex check —
+    # each CSV row carries its own rung, and `--rung` on the CLI is
+    # silently ignored when `--cells` is given.
     has_single_any = any(
-        v is not None for v in (args.model, args.rung, args.target, args.runs)
+        v is not None for v in (args.model, args.target, args.runs)
     )
     if has_cells and has_single_any:
-        sys.exit("--cells is mutually exclusive with --model/--rung/--target/--runs")
+        sys.exit("--cells is mutually exclusive with --model/--target/--runs")
     if not has_cells:
         missing = [
             n
