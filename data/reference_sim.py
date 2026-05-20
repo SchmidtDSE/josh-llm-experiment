@@ -49,6 +49,7 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
+from scipy import stats
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "data"
@@ -195,19 +196,14 @@ def fit_regression(observed_per_cell_rep: np.ndarray, predicted_per_cell: np.nda
 
     Returns dict with beta (slope), alpha (intercept), r2, n_observations.
     """
-    n_cells, n_replicates = observed_per_cell_rep.shape
+    _, n_replicates = observed_per_cell_rep.shape
     y = observed_per_cell_rep.ravel()
     x = np.repeat(predicted_per_cell, n_replicates)
-    A = np.column_stack([np.ones_like(x), x])
-    (alpha, beta), *_ = np.linalg.lstsq(A, y, rcond=None)
-    pred = A @ [alpha, beta]
-    ss_res = float(((y - pred) ** 2).sum())
-    ss_tot = float(((y - y.mean()) ** 2).sum())
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+    fit = stats.linregress(x, y)
     return {
-        "beta": float(beta),
-        "alpha": float(alpha),
-        "r2": float(r2),
+        "beta": float(fit.slope),
+        "alpha": float(fit.intercept),
+        "r2": float(fit.rvalue ** 2),
         "n_observations": int(y.size),
     }
 

@@ -336,7 +336,29 @@ Suggested PR order so each step is reviewable in isolation:
    starting fresh).
 2. **Prompt update** for `run.sh` shape (preprocess + 100×100).
    Update BASE_PROMPT / SIDECAR / relevant step files. Add fuzzy
-   Q3 to `prompts/fuzzy_judge.md`. No code change needed yet.
+   Q3 to `prompts/fuzzy_judge.md`. Sub-tasks:
+   - **Disambiguate the year-0 question.** PR1's offline sanity check
+     against the phase-5c batches found a systematic +10% slope on
+     Josh runs vs Mesa runs (β≈1.10 vs β≈1.00), almost certainly
+     because Josh implementations grow trees at step 0 too while Mesa
+     implementations treat step 0 as init-only. The 11-step run gets
+     11 vs 10 growth events depending on interpretation, and the spec
+     at [BASE_PROMPT.md §Entities](prompts/BASE_PROMPT.md) is
+     ambiguous. Pin the prompt to **"year 0 is initialization, no
+     growth"** so an N-year simulation gets N-1 growth events. This
+     matches the reference simulator [data/reference_sim.py](data/reference_sim.py),
+     which sums `predicted_growth` over years 1..N-1. Whichever
+     interpretation we pick has to match the reference or the
+     regression gate will systematically detect ±10% slope on the
+     "wrong" framework.
+   - 100-year sim: years 2024..2123 inclusive in the CSV (100 rows
+     per cell per replicate), with growth between consecutive years.
+     Spelled out explicitly in the prompt so agents can't
+     accidentally produce a 99-row or 101-row CSV.
+   - `--replicates 100` (or framework equivalent) in `run.sh`.
+   - Preprocess (`.jshd` build for Josh, netCDF→DataFrame for Mesa)
+     inside the same `run.sh` so wall-clock includes data loading.
+   - Fuzzy Q3 question wording asserts the above contract.
 3. **Image consolidation.** Merge `agent` and `scorer` build
    targets in [Dockerfile](Dockerfile). Add `mc` to the image.
    Add `scorer-and-upload.sh`. Smoke-build locally; no behaviour

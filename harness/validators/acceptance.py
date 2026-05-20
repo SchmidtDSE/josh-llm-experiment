@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 from spec_model import DH_MAX, precip_impact, temp_impact
 from .output_schema import load_clean_results
@@ -80,19 +81,16 @@ def _fit_observed_vs_predicted(
             "error": "insufficient (cell, replicate) pairs after join (need ≥ 2)",
         }
 
-    x = joined["predicted"].to_numpy()
-    y = joined["observed"].to_numpy()
-    A = np.column_stack([np.ones_like(x), x])
-    (alpha, beta), *_ = np.linalg.lstsq(A, y, rcond=None)
-    pred = A @ [alpha, beta]
-    ss_res = float(((y - pred) ** 2).sum())
-    ss_tot = float(((y - y.mean()) ** 2).sum())
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
-
+    fit = stats.linregress(joined["predicted"].to_numpy(), joined["observed"].to_numpy())
+    beta, alpha, r2 = float(fit.slope), float(fit.intercept), float(fit.rvalue ** 2)
+    if not (math.isfinite(beta) and math.isfinite(alpha) and math.isfinite(r2)):
+        return {
+            "beta": None, "alpha": None, "r2": None,
+            "n_observations": int(len(joined)),
+            "error": "regression undefined (predicted has zero variance — e.g., agent reported constant climate)",
+        }
     return {
-        "beta": float(beta),
-        "alpha": float(alpha),
-        "r2": float(r2) if math.isfinite(r2) else None,
+        "beta": beta, "alpha": alpha, "r2": r2,
         "n_observations": int(len(joined)),
     }
 
