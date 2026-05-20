@@ -4,9 +4,9 @@ How the harness decides what a completed agent run is "worth", what
 each scorer field means, and the open scoring choices we plan to
 revisit. The companion docs are
 [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md) (hypothesis + run
-flow), [K8S_REFACTOR.md](K8S_REFACTOR.md) (the in-flight refactor that
-produced this scorer shape), and [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
-(historical engineering record).
+flow) and [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
+(engineering build state — includes the in-flight Phase 6 k8s
+refactor narrative this scorer shape comes out of).
 
 > **Status (2026-05-20, schema `phase6-v1`).** The scorer gates on
 > schema, fits a per-cell `observed ~ predicted` regression against
@@ -163,7 +163,7 @@ A cell's `./run.sh` is the unit of work the scorer executes — and
 under phase-6, it is also the unit of work whose wall-clock counts
 as the headline cost metric. The prompt (see
 [BASE_PROMPT.md](prompts/BASE_PROMPT.md) and the per-target
-directives, updated in PR2 of [K8S_REFACTOR.md](K8S_REFACTOR.md))
+directives, updated in PR2 of [IMPLEMENTATION_PLAN.md §Phase 6](IMPLEMENTATION_PLAN.md#phase-6--k8s-refactor-in-flight))
 instructs the agent to produce a `run.sh` that:
 
 1. Performs any preprocessing the chosen target needs (Josh's
@@ -225,8 +225,8 @@ batch completes. Under the k8s refactor this is a separate Job (one
 per cell, or one for the whole batch as an Indexed Job) that pulls
 the workspace from the bucket, runs opencode in read-only mode
 against it, and writes `scorer.fuzzy.json` back to the bucket. See
-[K8S_REFACTOR.md §2](K8S_REFACTOR.md) for the full Job shape;
-implementation lands in PR5.
+[IMPLEMENTATION_PLAN.md §Phase 6 §K8s execution](IMPLEMENTATION_PLAN.md#k8s-execution)
+for the full Job shape; implementation lands in PR5.
 
 ## Re-analysing completed runs
 
