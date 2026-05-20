@@ -507,10 +507,20 @@ def _count_plan_todos(run_dir: Path) -> Optional[dict]:
     return {"checked": checked, "total": total}
 
 
-def emit_manifest_line(run_id: str, batch_dir: Path) -> Optional[dict]:
+def emit_manifest_line(
+    run_id: str,
+    batch_dir: Path,
+    scorer_filename: str = "scorer.json",
+) -> Optional[dict]:
     """Build one manifest row for run_id. Returns None if run_meta.json is
     missing (launch_run.sh failed before workspace setup — joblog records
-    that already)."""
+    that already).
+
+    `scorer_filename` lets the rescore path point at `scorer.rescored.json`
+    (or any other suffixed variant) without changing this aggregator's
+    output shape — `manifest.rescored.jsonl` is identical in structure to
+    `manifest.jsonl`, just with the rescored scorer block.
+    """
     run_dir = batch_dir / run_id
     meta_path = run_dir / "run_meta.json"
     if not meta_path.exists():
@@ -520,7 +530,7 @@ def emit_manifest_line(run_id: str, batch_dir: Path) -> Optional[dict]:
     except json.JSONDecodeError:
         return None
     cell_path = run_dir / "run_meta.cell.json"
-    scorer_path = run_dir / "scorer.json"
+    scorer_path = run_dir / scorer_filename
     time_path = run_dir / "time_breakdown.json"
     cell = (
         json.loads(cell_path.read_text())
@@ -555,10 +565,11 @@ def aggregate_manifest(
     manifest_path: Path,
     worklist: list[tuple[str, int, str, str]],
     batch_dir: Path,
+    scorer_filename: str = "scorer.json",
 ) -> None:
     with manifest_path.open("w") as mf:
         for _, _, _, run_id in worklist:
-            line = emit_manifest_line(run_id, batch_dir)
+            line = emit_manifest_line(run_id, batch_dir, scorer_filename=scorer_filename)
             if line is not None:
                 mf.write(json.dumps(line) + "\n")
 
