@@ -7,3 +7,11 @@ results/manifest.jsonl.tmp
 *.pyc
 __pycache__/
 .DS_Store
+
+# Analysis outputs — reproducible from analysis/aggregate.py +
+# analysis/headline.ipynb against the per-cell artefacts in runs/.
+# Source of truth is the notebook; rendered figures and the
+# aggregated CSV are derived artefacts.
+analysis/aggregated.csv
+analysis/figures/
+analysis/.ipynb_checkpoints/

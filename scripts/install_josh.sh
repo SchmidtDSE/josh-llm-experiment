@@ -18,7 +18,13 @@ cat "$JOSH_HOME/joshsim-fat.jar.sha256"
 
 cat > /usr/local/bin/josh <<'WRAPPER'
 #!/usr/bin/env bash
+# Thin wrapper around the Josh CLI fat jar. JAVA_OPTS is expanded
+# unquoted so agents can override JVM defaults per-invocation, e.g.
+#   JAVA_OPTS="-Xmx32g -Xss4m" josh preprocess ...
+# The container also ships ENV JAVA_TOOL_OPTIONS="-Xmx16g" (see
+# Dockerfile) so bare `josh ...` already gets a sane heap; JAVA_OPTS
+# is the per-invocation escape hatch.
 set -euo pipefail
-exec java -jar /opt/josh/joshsim-fat.jar "$@"
+exec java ${JAVA_OPTS:-} -jar /opt/josh/joshsim-fat.jar "$@"
 WRAPPER
 chmod +x /usr/local/bin/josh

@@ -33,6 +33,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY scripts/install_java.sh /tmp/install_java.sh
 RUN /tmp/install_java.sh && rm /tmp/install_java.sh
 
+# Default heap ceiling for ALL `java` invocations inside the container —
+# Josh CLI (via the wrapper), agent-authored `java -jar joshsim-fat.jar`
+# variants, and the scorer's `josh validate`. JAVA_TOOL_OPTIONS is the
+# canonical JVM env var honored by every invocation regardless of how
+# it was launched, so agents that bypass the wrapper still get a sane
+# heap budget instead of the JVM's host-RAM-derived ergonomic default
+# (~25 % of host RAM, ~63 GiB on this fleet's 251 GiB host — wildly
+# too generous when 10 cells run concurrently).
+#
+# 16 GiB per JVM × 10 concurrent josh cells = 160 GiB heap, comfortable
+# in our 251 GiB host. Agents can still override per-invocation by
+# re-exporting JAVA_TOOL_OPTIONS in their `run.sh`, or by passing
+# JAVA_OPTS to the `josh` wrapper (see scripts/install_josh.sh).
+ENV JAVA_TOOL_OPTIONS="-Xmx16g"
+
 # Josh CLI: rolling main fat jar, sha256 pinned at build time.
 COPY scripts/install_josh.sh /tmp/install_josh.sh
 RUN /tmp/install_josh.sh && rm /tmp/install_josh.sh
