@@ -4,8 +4,20 @@ version = "0"
 description = "Host-side orchestrator for the ForeverTree LLM experiments. Fires fortree:agent / fortree:scorer / fortree:dnsmasq containers via launch_batch.py."
 requires-python = ">=3.11"
 dependencies = [
+    "jupyter>=1.1.1",
     "pyyaml>=6",
     "rich>=13",
+]
+
+[project.optional-dependencies]
+# Post-experiment analysis: aggregate batch manifests + fuzzy sidecars
+# into one CSV, then render the headline figure as a Jupyter notebook.
+# Install with `uv sync --extra analysis`.
+analysis = [
+    "pandas>=2",
+    "matplotlib>=3.8",
+    "jupyterlab>=4",
+    "ipykernel>=6",
 ]
 
 [tool.uv]
