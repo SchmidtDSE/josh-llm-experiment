@@ -270,10 +270,11 @@ def render_passing_callouts(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_report(batch_dir: Path) -> str:
-    manifest_path = batch_dir / "manifest.jsonl"
+def build_report(batch_dir: Path, manifest_path: Path | None = None) -> str:
+    if manifest_path is None:
+        manifest_path = batch_dir / "manifest.jsonl"
     if not manifest_path.is_file():
-        raise FileNotFoundError(f"manifest.jsonl not found at {manifest_path}")
+        raise FileNotFoundError(f"manifest not found at {manifest_path}")
 
     rows = []
     with manifest_path.open() as f:
@@ -347,13 +348,27 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Output markdown path (default: <batch_dir>/batch_report.md)",
     )
+    p.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Manifest JSONL to read (default: <batch_dir>/manifest.jsonl). "
+            "Used by rescore_batch.sh to render against manifest.rescored.jsonl. "
+            "Relative paths resolve against <batch_dir>."
+        ),
+    )
     args = p.parse_args(argv)
 
     if not args.batch_dir.is_dir():
         print(f"error: {args.batch_dir} is not a directory", file=sys.stderr)
         return 2
 
-    md = build_report(args.batch_dir)
+    manifest_arg: Path | None = args.manifest
+    if manifest_arg is not None and not manifest_arg.is_absolute():
+        manifest_arg = args.batch_dir / manifest_arg
+
+    md = build_report(args.batch_dir, manifest_path=manifest_arg)
     out_path = args.output or args.batch_dir / "batch_report.md"
     out_path.write_text(md, encoding="utf-8")
     print(f"wrote {out_path}")
