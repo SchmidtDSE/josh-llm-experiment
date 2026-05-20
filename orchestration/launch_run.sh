@@ -1,35 +1,41 @@
 #!/usr/bin/env bash
-# Launch a single phase-3 agent run: render the prompt, render opencode's
-# config, bind-mount a workspace, invoke opencode non-interactively.
+# Launch a single agent run: render the shared prompt body, seed the
+# workspace's PLAN.md, render opencode's config, bring up the DNS sidecar,
+# and hand off to run_agent.sh which invokes opencode eight times (one
+# per todo) inside a single agent container.
 #
 # Required env vars: MODEL, RUNG, TARGET, RUN_ID, plus `.env` carrying
 # either OPENROUTER_API_KEY (for openrouter/* MODELs) or OLLAMA_HOST (for
 # ollama-* MODELs). Writes everything to runs/<RUN_ID>/. Does NOT score —
-# phase 3 stops at "agent produced a workspace"; scoring is a follow-up
-# command printed at the end.
+# scoring is a follow-up command printed at the end.
 #
-# Phase-4b additions: a dnsmasq sidecar runs on a per-run docker bridge
-# network and logs every DNS query the agent makes. The sidecar's lifecycle
-# (start, IP discovery, teardown, log capture) is factored into
+# Phase-4b: a dnsmasq sidecar runs on a per-run docker bridge network and
+# logs every DNS query the agent makes. The sidecar's lifecycle (start,
+# IP discovery, teardown, log capture) is factored into
 # orchestration/dns_sidecar.sh so the orchestration here stays linear.
 #
-# This script is the high-level orchestrator. Four pieces are factored out
+# This script is the high-level orchestrator. Five pieces are factored out
 # so they can be invoked / iterated on directly:
 #   - orchestration/resolve_model.py     (MODEL → provider/slug)
-#   - prompts/target_directive_{josh,mesa}.md  (per-target boilerplate)
+#   - prompts/rungs/rung<N>_*.md         (per-rung spec body)
+#   - prompts/targets/{josh,mesa}.md     (per-target boilerplate)
+#   - prompts/steps/step_NN_*.md         (per-todo step injections, repo-static)
 #   - orchestration/dns_sidecar.sh       (per-run DNS sidecar lifecycle)
 #   - orchestration/run_agent.sh         (the docker-run invocation)
 set -euo pipefail
 
 : "${MODEL:?MODEL not set; pick a short name from config/models.yaml (claude|gemma|kimi|minimax|mistral|ollama-qwen-coder-7b|ollama-qwen-coder-1_5b)}"
-: "${RUNG:?RUNG not set; 1 or 5 (rungs 2-4 deferred to pilot phase)}"
+RUNG="${RUNG:-5}"
 : "${TARGET:?TARGET not set; josh or mesa}"
 : "${RUN_ID:?RUN_ID not set; use \$(uuidgen)}"
 
 WALL_CLOCK_BACKSTOP_SEC="${WALL_CLOCK_BACKSTOP_SEC:-1800}"
 
 case "$TARGET" in josh|mesa) ;; *) echo "TARGET must be josh or mesa, got: $TARGET" >&2; exit 2;; esac
-case "$RUNG"   in 1|5)       ;; *) echo "RUNG must be 1 or 5 (rungs 2-4 deferred), got: $RUNG" >&2; exit 2;; esac
+# RUNG defaults to 5 (the rung-ladder was retired; rungs 1 and 5 remain
+# wired but headline runs use 5 only). The other rung files are kept on
+# disk in case a future axis-of-variation experiment wants them.
+case "$RUNG"   in 1|5)       ;; *) echo "RUNG must be 1 or 5, got: $RUNG" >&2; exit 2;; esac
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -77,11 +83,15 @@ mkdir -p "$WORKSPACE_DIR" "$CONFIG_DIR" "$AGENT_ARTIFACTS_DIR" "$OPENCODE_DATA_D
 RESOLVED_MODEL_ID="$("$REPO_ROOT/orchestration/resolve_model.py" "$MODEL")"
 
 case "$RUNG" in
-  1) RUNG_FILE="$REPO_ROOT/prompts/rung1_minimal.md" ;;
-  5) RUNG_FILE="$REPO_ROOT/prompts/rung5_master.md" ;;
+  1) RUNG_FILE="$REPO_ROOT/prompts/rungs/rung1_minimal.md" ;;
+  5) RUNG_FILE="$REPO_ROOT/prompts/BASE_PROMPT.md" ;;
 esac
-TARGET_DIRECTIVE_FILE="$REPO_ROOT/prompts/target_directive_${TARGET}.md"
+TARGET_DIRECTIVE_FILE="$REPO_ROOT/prompts/targets/${TARGET}.md"
 
+# Render the per-run shared body once (rung + target directive + SIDECAR).
+# Each of the 8 step invocations concatenates this body with its assigned
+# step injection file inside the container. The 8 step files live in the
+# repo at prompts/steps/ and are bind-mounted read-only into the container.
 {
   cat "$RUNG_FILE"
   echo ""
@@ -93,7 +103,16 @@ TARGET_DIRECTIVE_FILE="$REPO_ROOT/prompts/target_directive_${TARGET}.md"
   echo "---"
   echo ""
   cat "$REPO_ROOT/prompts/SIDECAR.md"
-} > "$RUN_DIR/prompt.md"
+} > "$RUN_DIR/prompt_body.md"
+# Back-compat symlink: any tooling that still reads $RUN_DIR/prompt.md sees
+# the rendered body (without the per-step injection, which is appended only
+# at invocation time inside the agent container).
+ln -sf prompt_body.md "$RUN_DIR/prompt.md"
+
+# Seed PLAN.md in the workspace from the working-document template. The
+# 8 opencode invocations all read and update this file; it is the shared
+# state across steps since each invocation uses a fresh opencode session.
+cp "$REPO_ROOT/prompts/PLAN_TEMPLATE.md" "$WORKSPACE_DIR/PLAN.md"
 
 sed "s|\${RESOLVED_MODEL_ID}|$RESOLVED_MODEL_ID|g" \
   "$REPO_ROOT/config/opencode.template.json" > "$CONFIG_DIR/opencode.json"

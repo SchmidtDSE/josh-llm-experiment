@@ -6,7 +6,10 @@
 # Expects the layout produced by launch_run.sh:
 #   <RUN_DIR>/workspace/             — bind-mounted at /sandbox (writable)
 #   <RUN_DIR>/.opencode/opencode.json — bind-mounted at /root/.config/opencode
-#   <RUN_DIR>/prompt.md              — bind-mounted at /opt/prompt.md (ro)
+#   <RUN_DIR>/prompt_body.md         — bind-mounted at /opt/prompt_body.md (ro)
+#   <REPO_ROOT>/prompts/steps/       — bind-mounted at /opt/steps (ro)
+# The agent container concatenates /opt/prompt_body.md with each
+# /opt/steps/step_NN_*.md to build the per-step prompt for opencode.
 #
 # Reads $REPO_ROOT (auto-derived if unset) for `.env` and `data/`,
 # $WALL_CLOCK_BACKSTOP_SEC (default 1800) for the agent backstop,
@@ -69,11 +72,13 @@ fi
   timeout --kill-after=30 "$WALL_CLOCK_BACKSTOP_SEC" docker run --rm \
     --name "$CONTAINER_NAME" \
     --env-file "$REPO_ROOT/.env" \
+    -e "FAIL_FAST_ON_STEP_ERROR=${FAIL_FAST_ON_STEP_ERROR:-false}" \
     "${NETWORK_FLAGS[@]}" \
     -v "$RUN_DIR/workspace":/sandbox \
     -v "$REPO_ROOT/data":/sandbox/data:ro \
     -v "$RUN_DIR/.opencode":/root/.config/opencode \
-    -v "$RUN_DIR/prompt.md":/opt/prompt.md:ro \
+    -v "$RUN_DIR/prompt_body.md":/opt/prompt_body.md:ro \
+    -v "$REPO_ROOT/prompts/steps":/opt/steps:ro \
     -v "$RUN_DIR/agent_artifacts":/opt/agent_meta \
     -v "$RUN_DIR/opencode_data":/root/.local/share/opencode \
     fortree:agent /opt/agent-entrypoint.sh \

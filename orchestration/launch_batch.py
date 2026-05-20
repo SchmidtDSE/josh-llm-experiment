@@ -450,6 +450,63 @@ def write_joblog(joblog_path: Path, cells_in_seq_order: list[CellState]) -> None
             )
 
 
+def _collect_step_status(run_dir: Path) -> Optional[dict]:
+    """Walk agent_artifacts/steps/step_*/step_meta.json into a compact
+    summary the batch report can render at a glance. Returns None if the
+    run pre-dates the multi-invocation flow (no steps/ dir)."""
+    steps_root = run_dir / "agent_artifacts" / "steps"
+    if not steps_root.is_dir():
+        return None
+    per_step = []
+    for step_dir in sorted(steps_root.glob("step_*")):
+        meta_path = step_dir / "step_meta.json"
+        if not (meta_path.exists() and meta_path.stat().st_size):
+            continue
+        try:
+            sm = json.loads(meta_path.read_text())
+        except json.JSONDecodeError:
+            continue
+        per_step.append({
+            "n": sm.get("step_n"),
+            "name": sm.get("step_name"),
+            "exit_code": sm.get("exit_code"),
+            "started_at": sm.get("started_at"),
+            "ended_at": sm.get("ended_at"),
+        })
+    if not per_step:
+        return None
+    completed = sum(1 for s in per_step if s.get("exit_code") == 0)
+    return {
+        "step_count": len(per_step),
+        "completed_count": completed,
+        "per_step": per_step,
+    }
+
+
+def _count_plan_todos(run_dir: Path) -> Optional[dict]:
+    """Count `[ ]` / `[x]` checkboxes in workspace/PLAN.md. Returns None if
+    PLAN.md doesn't exist (pre-multi-invocation runs)."""
+    plan = run_dir / "workspace" / "PLAN.md"
+    if not plan.is_file():
+        return None
+    try:
+        text = plan.read_text(errors="replace")
+    except OSError:
+        return None
+    checked = 0
+    unchecked = 0
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("- [x]") or stripped.startswith("- [X]"):
+            checked += 1
+        elif stripped.startswith("- [ ]"):
+            unchecked += 1
+    total = checked + unchecked
+    if total == 0:
+        return None
+    return {"checked": checked, "total": total}
+
+
 def emit_manifest_line(run_id: str, batch_dir: Path) -> Optional[dict]:
     """Build one manifest row for run_id. Returns None if run_meta.json is
     missing (launch_run.sh failed before workspace setup — joblog records
@@ -489,6 +546,8 @@ def emit_manifest_line(run_id: str, batch_dir: Path) -> Optional[dict]:
         "scorer": scorer,
         "time_breakdown": time_breakdown,
         "run_meta": meta,
+        "steps": _collect_step_status(run_dir),
+        "plan_todos": _count_plan_todos(run_dir),
     }
 
 
@@ -557,7 +616,16 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model", help="Short name from config/models.yaml")
-    parser.add_argument("--rung", type=int, choices=sorted(VALID_RUNGS))
+    # RUNG defaults to 5; the rung-ladder was retired in favour of a
+    # single-prompt panel (model × target × replicates). The other rung
+    # files stay in the repo in case a future variant wants them.
+    parser.add_argument(
+        "--rung",
+        type=int,
+        choices=sorted(VALID_RUNGS),
+        default=5,
+        help="Prompt rung (default: 5)",
+    )
     parser.add_argument("--target", choices=sorted(VALID_TARGETS))
     parser.add_argument("--runs", type=int, help="Replicates of the single cell")
     parser.add_argument(
@@ -577,6 +645,18 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=REPO_ROOT / "orchestration" / "launch_cell.sh",
         help="Per-cell driver path. Override to swap in a stub for tests.",
+    )
+    parser.add_argument(
+        "--upload",
+        action="store_true",
+        help=(
+            "Auto-invoke orchestration/upload_batch.sh against the completed "
+            "batch dir. Convenience for the common case where archiving is "
+            "the next step. Failure is non-fatal — the batch artefacts stay "
+            "on disk and `upload_batch.sh` is idempotent, so a host crash "
+            "or transient upload failure can be recovered by re-running the "
+            "standalone script."
+        ),
     )
     return parser.parse_args()
 
@@ -736,6 +816,31 @@ def main() -> int:
     except Exception as exc:
         console.print(f"  [yellow]batch_report.md generation failed:[/] {exc}")
         batch_report_path = None
+
+    # Opportunistic auto-upload. Non-fatal on failure: the standalone
+    # upload_batch.sh script is idempotent, so the operator can recover
+    # from a host crash / transient upload error by re-running it
+    # against the same batch_dir.
+    upload_log_path: Optional[Path] = None
+    if args.upload:
+        upload_script = REPO_ROOT / "orchestration" / "upload_batch.sh"
+        upload_log_path = batch_dir / "upload.log"
+        console.print(f"  Uploading: {upload_script} {batch_dir}")
+        try:
+            with upload_log_path.open("wb") as logf:
+                proc = subprocess.run(
+                    [str(upload_script), str(batch_dir)],
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                )
+            if proc.returncode != 0:
+                console.print(
+                    f"  [yellow]upload returned exit {proc.returncode} — see "
+                    f"{upload_log_path}; rerun "
+                    f"`./orchestration/upload_batch.sh {batch_dir}` to retry[/]"
+                )
+        except Exception as exc:  # noqa: BLE001 — keep batch driver alive
+            console.print(f"  [yellow]upload invocation failed:[/] {exc}")
 
     console.print()
     print_final_table(console, cells_in_seq)

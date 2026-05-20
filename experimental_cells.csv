@@ -1,2 +1,7 @@
+# Small panel test for the multi-invocation flow.
+# 2 models × 2 targets × 2 replicates = 8 cells total.
 model,rung,target,replicates
-claude,5,mesa,4
+minimax,5,josh,2
+minimax,5,mesa,2
+gemma,5,josh,2
+gemma,5,mesa,2

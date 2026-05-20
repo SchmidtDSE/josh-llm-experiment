@@ -1,13 +1,18 @@
 # Experimental design — ForeverTree LLM Experiments
 
-The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the engineering build state and pending work (phase 4d durable upload, phase 5b recovery loop, rungs 2–4), see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the engineering build state and the readiness checklist for the headline batch, see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md); for the scoring axes, metric definitions, LLM-judge spec, re-analysis recipe, and open scoring questions, see [`SCORING.md`](SCORING.md).
 
-> **Status (post phase-5a).** Phases 1–4c are merged and the
-> scoring-revision half of phase 5 (conformance, internal-consistency
-> metrics, chmod self-heal, schema loosening) is also merged. What
-> remains: the recovery loop (phase 5b), durable upload (phase 4d),
-> rungs 2–4. The synthetic-climate dataset described in §External
-> climate inputs replaces the original Cal-Adapt files for the pilot
+> **Status (post phase-5c).** Phases 1–4d are merged, the
+> scoring-revision phase 5a is in, and the multi-invocation planning
+> flow (phase 5c) is verified end-to-end on claude and minimax across
+> both targets. Two simplifications since the earlier design rounds:
+> (1) the rung-detail ladder is collapsed to a single rung-5 master
+> prompt — the task at full detail is already hard enough to be a
+> useful differentiator and adding a second axis dilutes statistical
+> power; (2) the separate recovery-loop hypothesis (H2) is folded
+> into the multi-invocation flow, whose todos already include
+> validate-and-cleanup iterations. The synthetic-climate dataset
+> described in §External climate inputs is the input for both pilot
 > and headline batches.
 
 This is the AI-evaluation experiment reported in our USRSE'26 submission on the [Josh][josh] vegetation modeling platform.
@@ -16,29 +21,32 @@ This is the AI-evaluation experiment reported in our USRSE'26 submission on the 
 
 ## Hypothesis
 
-A constrained DSL target reduces variance in LLM-generated
-implementations relative to a general-purpose target, and recovers
-faster from initial failures when given feedback. Two specific
-predictions:
+A constrained DSL target produces better LLM-generated implementations
+than a general-purpose target. Concretely: under identical prompt and
+harness conditions, a higher fraction of Josh implementations will run
+and pass validation than Mesa implementations.
 
-1. **One-shot quality.** A higher fraction of first-attempt Josh
-   implementations will run and pass validation than first-attempt
-   Mesa implementations, especially at lower prompt-detail rungs.
-2. **Recovery quality.** When a first attempt fails, Josh
-   implementations will more often reach a passing state after one
-   round of feedback than Mesa implementations.
+"Better" here is structural: the DSL's narrower target space means
+fewer free decisions for the model to get wrong, fewer scaffolding
+files to write, and a more direct mapping from spec to executable code.
+The fewer-degrees-of-freedom effect should be visible in both
+first-attempt success rate and in the internal-consistency metrics
+that catch silent spec violations (Δh > Δh_max, age != year, etc.).
 
-Each prediction is measured separately. The headline figure reports
-both. **As of phase-5a, only H1 is directly measurable** — the
-recovery loop (phase 5b) is designed in
-[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) but not implemented;
-whether it lands before the headline batch is an open scoping
-question (see §Open methodology questions).
+Earlier rounds of this design distinguished a separate "recovery
+quality" hypothesis measured via a second-shot prompt with structural
+feedback. That hypothesis is now folded into H1: the multi-invocation
+flow (phase 5c) bakes plan-write → stub → implement → validate →
+cleanup into a single cell, so what the scorer sees at the end is
+already "the agent's best attempt given a chance to self-correct."
+Distinguishing one-shot from recovery would require a second prompt
+infrastructure that doesn't pay for itself in interpretability now
+that the in-cell loop exists.
 
 ## Task
 
-Every run, regardless of model or prompt rung, implements the same
-fixed task: the **ForeverTree** model from the Josh tutorial series.
+Every run, regardless of model, implements the same fixed task: the
+**ForeverTree** model from the Josh tutorial series.
 A grid of patches; ten trees per patch; growth driven by external
 temperature and precipitation data with a quadratic temperature
 response, a logistic precipitation response, and a small Gaussian
@@ -96,52 +104,74 @@ pinned, and [`Dockerfile`](Dockerfile) for the image layering.
 
 ## Design
 
-### Prompt-detail ladder
+### Prompt
 
-Five rungs of increasing specificity. The prompts describe the model
-in *domain terms only* — they contain no Josh-specific or
-Mesa-specific implementation guidance. The LLM is told *which* tool
-to use (Josh or Mesa) so we can measure tool-conformance separately,
-but is given no guidance on *how* to use it. All five rungs live in
-[`prompts/`](prompts/).
+A single master prompt describing the model in *domain terms only* —
+no Josh-specific or Mesa-specific implementation guidance. The LLM is
+told *which* tool to use (Josh or Mesa) so target-conformance can be
+measured as a separate signal, but is given no guidance on *how* to
+use it. The prompt body is [`prompts/BASE_PROMPT.md`](prompts/BASE_PROMPT.md);
+the per-target directive is at
+[`prompts/targets/{josh,mesa}.md`](prompts/targets/); the operational
+footer (AI environment, inputs, success criteria, working-document
+contract) is at [`prompts/SIDECAR.md`](prompts/SIDECAR.md).
 
-| Rung | Name        | Roughly |
-| ---- | ----------- | ------- |
-| 1    | Minimal     | "Simulate a forest of trees growing over time." |
-| 2    | Basic       | Adds counts, growth rate, mortality, duration. |
-| 3    | Specified   | Adds grid dimensions, initial conditions, output format. |
-| 4    | Detailed    | Adds stochastic distributions, age tracking, export structure. |
-| 5    | Master      | Adds edge cases, units, the full ForeverTree spec. |
+Earlier rounds of this design included a 1–5 rung prompt-detail
+ladder. We collapsed it to the single master prompt: at full detail
+the task is already hard enough to be a useful Josh-vs-Mesa
+differentiator, and a second variation axis would dilute the
+statistical power available within the budget. `prompts/rungs/`
+retains rung 1 (the "simulate a forest" minimal variant) on disk in
+case a follow-up wants to revive the detail axis, but headline runs
+use rung 5 (the master) only — and `RUNG` defaults to 5 in the
+orchestration.
 
-Every prompt shares a fixed boilerplate footer describing the runtime
-harness: filename conventions, expected output CSV structure, how the
-runner will invoke the generated code. This is what anchors the
-"did it run" measurement.
+The agent phase splits this single prompt into **8 sequential opencode
+invocations against the same workspace**, one per todo from a fixed
+list in `prompts/PLAN_TEMPLATE.md` (seeded into `/sandbox/PLAN.md`).
+This is the multi-invocation planning flow described in
+[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) §Phase 5c. The
+working document `PLAN.md` is both an output artefact and a working
+reference re-read at the start of every sub-invocation.
+
+**Why force this structure rather than trust the agent framework to
+decompose the task?** Pre-phase-5c trials with both commercial
+(claude) and open (gemma, minimax) models surfaced a recurring
+failure mode: agents got caught up in orchestration concerns —
+making `run.sh` executable, parsing the netCDFs, getting filenames
+right — and skipped the actual ecological-modelling step. They'd
+declare done when `run.sh` exited 0 and produced a CSV, even if the
+CSV's growth values were nonsensical. opencode's native sub-agent
+dispatch (the `task` tool) was the obvious affordance for
+decomposition but proved unreliable — gemma issued malformed `task`
+calls in tight loops; claude routed bash through it as a workaround
+for the earlier per-pattern bash allowlist. We disabled the `task`
+tool entirely and force-decompose orchestrator-side via the 8-step
+external loop, taking some agency away from opencode in exchange for
+a more controllable evaluation. The hypothesis is about how well the
+models build broadly-correct *ecological* models, not how well they
+overcome environment quirks; forcing the decomposition isolates the
+variable we care about.
 
 ### Models
 
 Configured via `MODEL` environment variable. All models are accessed
 through OpenRouter using a single API key.
 
-| Short name | OpenRouter ID                            | Status in current batches |
-| ---------- | ---------------------------------------- | ------------------------- |
-| claude     | `anthropic/claude-sonnet-4.5`            | active panel              |
-| gemma      | `google/gemma-3-27b-it`                  | retained for headline run |
-| gemma4     | `google/gemma-4-26b-a4b-it`              | active panel (pilots use this) |
-| kimi       | `moonshotai/kimi-k2`                     | active panel              |
-| minimax    | `minimax/minimax-m2`                     | active panel              |
-| mistral    | `mistralai/mistral-large-2411`           | active panel              |
+| Short name | OpenRouter ID                            |
+| ---------- | ---------------------------------------- |
+| claude     | `anthropic/claude-opus-4.7`              |
+| gemma      | `google/gemma-4-26b-a4b-it`              |
+| kimi       | `moonshotai/kimi-k2.6`                   |
+| minimax    | `minimax/minimax-m2.7`                   |
+| mistral    | `mistralai/mistral-medium-3.5`           |
 
 The mapping lives in [`config/models.yaml`](config/models.yaml).
-Model IDs are pinned to specific versions for reproducibility and
-noted in the run manifest. The orchestrator logs the resolved
-`model_id` returned by OpenRouter alongside the requested one and
-flags drift.
-
-`gemma4` is a newer release than `gemma`; pilot batches have used
-`gemma4` so its behaviour is more characterised. The headline panel
-will pick one (likely `gemma4`) after pilot validation across
-single-cell mini-batches per model.
+Pins are versioned slugs (not rolling `*-latest` aliases) so
+re-running a batch later resolves to the same weights the headline
+saw. The orchestrator logs the resolved `model_id` returned by
+OpenRouter alongside the requested one and flags drift. Bump the
+batch tag if any entry changes.
 
 ### Targets
 
@@ -158,18 +188,18 @@ and columns) is identical for both.
 
 ### Sample size
 
-Default `RUNS=3` per (model × rung × target) cell. The full headline
-experiment is 5 models × 5 rungs × 2 targets × 3 runs = **150
-generations** (× 2 phases — see [Run flow](#run-flow) — so 300 agent
-invocations total). N can scale up freely within OpenRouter cost
-budget; the practical ceiling is set by the cost of any downstream
-manual review rather than the runs themselves. See
-§Open methodology questions below for sample-size and
-target_conformance accounting considerations.
+Default `RUNS=3` per (model × target) cell. The full headline
+experiment is 5 models × 2 targets × 3 runs = **30 generations**
+(each generation now itself is 8 opencode invocations under the
+multi-invocation flow, so 240 opencode invocations total). N can
+scale up freely within OpenRouter cost budget; the practical ceiling
+is set by the cost of any downstream manual review rather than the
+runs themselves. See §Open methodology questions below for sample-size
+and target_conformance accounting considerations.
 
-Each run is one container invocation for the one-shot phase and one
-follow-up container invocation for the recovery phase (see flow
-below).
+Each run is a single agent container hosting the 8-step
+multi-invocation flow, plus a separate scoring container pass (see
+flow below).
 
 ### External climate inputs
 
@@ -203,15 +233,14 @@ that needs updating in `SIDECAR.md`.
 
 ## Run flow
 
-A full **run** (one (model × rung × target × run_id) cell) consists
-of five orchestrated steps spanning two opencode invocations against
-a single per-run Docker bridge network, plus two validation passes
-by a separate scoring container.
+A full **run** (one (model × target × run_id) cell) consists of three
+orchestrated steps inside a single per-run Docker bridge network plus
+one validation pass by a separate scoring container.
 
 The agent network and dnsmasq sidecar are brought up at step 1 and
-kept alive across steps 1–5 so that step 4's recovery prompt sees
-step 1's workspace and the full DNS log accumulates across both
-agent phases. The network and sidecar are torn down after step 5.
+kept alive across the 8 opencode invocations the agent makes inside
+it; the network and sidecar are torn down once the agent container
+exits.
 
 The scoring container runs the **same** `fortree` image under plain
 Docker, `--network=none`, with a read-only mount of the agent
@@ -219,35 +248,37 @@ workspace. Using one image for both roles guarantees the agent's
 `./run.sh` and the scoring re-run see byte-identical Python, Java,
 Josh, and library versions.
 
-### Step 1: Initial prompt
+### Step 1: Agent invocation (multi-invocation planning flow)
 
 The orchestrator validates env vars (`OPENROUTER_API_KEY`, `MODEL`,
-`RUNG`, `TARGET`, `RUN_ID`), creates a per-run Docker bridge network,
-starts the dnsmasq sidecar on it with query logging enabled, and
-runs `opencode run` non-interactively against the rendered config
-inside the `fortree` image, bound to that network.
+`TARGET`, `RUN_ID`; `RUNG` defaults to 5), creates a per-run Docker
+bridge network, starts the dnsmasq sidecar on it with query logging
+enabled, renders `prompt_body.md` (rung body + target directive +
+SIDECAR), seeds `workspace/PLAN.md` from `prompts/PLAN_TEMPLATE.md`,
+and runs the `fortree:agent` container bound to that network. Inside
+the container, `agent-entrypoint.sh` invokes `opencode run` eight
+times in a row — one per pre-committed step injection in
+`prompts/steps/step_NN_*.md` — with the per-step prompt assembled as
+`prompt_body + step_NN`. Each invocation uses a fresh opencode
+session; cross-step state lives entirely on disk in `/sandbox/PLAN.md`
+and the workspace.
 
 The prompt **names the target framework** ("implement this using
 Josh" or "implement this using Mesa") so that tool-conformance can
 be measured as a separate signal in step 2.
 
 The agent reads, writes, edits, greps, and may invoke `./run.sh` to
-self-validate. Installed Python and Java package source is readable
-on disk. Network access is constrained by opencode's `webfetch`
-allowlist and observed by the dnsmasq sidecar.
+self-validate at any point within or across the 8 sub-invocations.
+Installed Python and Java package source is readable on disk.
+Network access is constrained by opencode's `webfetch` allowlist and
+observed by the dnsmasq sidecar.
 
-**The agent's stopping condition is its own.** When opencode signals
-completion, the orchestrator captures the trajectory log and shuts
-down the agent container. There is no iteration counter — the agent
-may invoke `./run.sh` as many times as it likes during this phase.
-What we measure is the *final state* the agent submitted, not the
-number of internal attempts. (See "What the agent sees vs. what we
-measure" below.)
-
-A wall-clock backstop (default 30 min) and a total-token budget
-backstop (default 100k completion tokens) terminate the container
-if the agent loops indefinitely. Both are safety nets, not primary
-metrics.
+A cell-total wall-clock backstop (`WALL_CLOCK_BACKSTOP_SEC`, default
+1800s; bump to 3600s for headline runs given 27–39 min observed cell
+times) and a per-invocation idle watcher (`IDLE_THRESHOLD_SEC`)
+terminate the container if it loops or stalls. The behavior on
+per-step failure is gated by `FAIL_FAST_ON_STEP_ERROR` (default
+false: log and continue; true: abort on first non-zero step).
 
 ### Step 2: Tool-conformance check
 
@@ -255,16 +286,15 @@ Before invoking the agent's code, the orchestrator runs a
 **tool-conformance check** on the generated workspace. This catches
 the failure mode in which an agent told to use Mesa silently
 implements the task in plain Python, or where a Josh prompt
-produces a Mesa-like Python module instead of `.josh` and `.jshd`
-files.
+produces a Mesa-like Python module instead of `.josh` files.
 
 Two layers:
 
 - **Mechanical check.** Grep-based. For Mesa targets, look for
   `import mesa`, `from mesa`, and instantiation of Mesa base
-  classes. For Josh targets, look for files matching `*.josh` and
-  `*.jshc`, valid Josh syntax tokens (via `josh parse`), and
-  `.jshd` files where expected.
+  classes. For Josh targets, look for files matching `*.josh`,
+  validate them via `josh validate`, and check separately for
+  `.jshd` preprocessing artefacts.
 - **Fuzzy check (optional, post-hoc).** A capable model (Claude or
   similar) is shown the generated workspace and asked: "Does this
   implementation use $TARGET as its primary modeling framework?
@@ -277,7 +307,7 @@ failure to discard.** Runs proceed to step 3 regardless. The
 fuzzy-check field is `target_conformance_fuzzy` and may be
 populated post-hoc.
 
-### Step 3: Validation (one-shot scoring)
+### Step 3: Validation (scoring)
 
 The orchestrator starts a plain `docker run --network=none` of the
 `fortree` image against the workspace volume, mounted read-only
@@ -286,164 +316,61 @@ except for a writable `./results/` directory. The scoring harness
 
 - Invoke `./run.sh` with the standard input data. Capture exit
   code, stdout, stderr, wall time.
-- Validate that `./output/results.csv` exists and has the expected
-  schema.
-- Compute Tier 1 (did_run) and Tier 3 (reference-match) metrics.
-- Compute static metrics on the generated code: `relevant_loc`,
+- Validate that `./output/results.csv` exists and has the required
+  schema (data columns plus a cell-identifier; see §Scoring axes).
+- Compute the substantive metrics: did_run, schema, internal
+  consistency, spec-parameter conformance.
+- Compute static metrics on the generated code: `src_loc`,
   `entropy_bits`.
 
 All metric outcomes are written to a JSON record. The scorer
-container exits.
+container exits. The per-cell `report.md` and the per-batch
+`batch_report.md` aggregate these alongside the per-step
+multi-invocation diagnostics (todos checked in PLAN.md, per-step
+exit codes).
 
-### Step 4: Feedback prompt and recovery attempt
-
-The orchestrator invokes opencode a second time against the **same**
-workspace and the **same** per-run bridge network used in step 1,
-this time with a **recovery prompt**. The recovery prompt:
-
-- References the same workspace (the agent sees its prior
-  implementation, exactly as it left it).
-- Includes the validation results from step 3 — what ran, what
-  failed, what was missing.
-- Does **not** include the acceptance ranges or any new
-  information about correctness criteria. Only the binary /
-  structural outcomes from validation are surfaced.
-- Uses the same prompt-style guidance as the original rung,
-  preserving the rung's detail level.
-
-The opencode tool allowlist and the dnsmasq sidecar configuration
-are the same as step 1 — the policy and observation layer are locked
-at step 1 and left alone for the duration of the run.
-
-If step 3 produced a passing result, step 4 is skipped entirely.
-The recovery phase is only triggered when there is something to
-recover from.
-
-### Step 5: Validation (post-recovery scoring)
-
-Same as step 3, run against the post-recovery workspace. Same
-metrics, same harness, same constraints.
-
-The full run record contains both step-3 results (one-shot) and
-step-5 results (post-recovery). The headline figure compares Josh
-vs. Mesa on both axes.
+The run record carries the scoring outcome from step 3 plus the
+per-step multi-invocation diagnostics from step 1
+(`steps[*].exit_code`, `plan_todos.checked/.total`). The headline
+figure compares Josh vs. Mesa on the scoring outcome.
 
 ### What the agent sees vs. what we measure
 
 The agent's view of "did it work" is its own — whether `./run.sh`
 exits cleanly during the agent phase. The orchestrator's
-view is whether validation passes in steps 3 and 5. These are not
+view is whether validation passes in step 3. These are not
 necessarily the same.
 
-This separation is deliberate. We want to measure first-attempt
-quality against external validation, not against the agent's own
-confidence. An agent that calls `./run.sh`, sees exit 0, and
-declares done has produced a one-shot result — even if the CSV
-turns out to be malformed when validated in step 3.
+This separation is deliberate. We want to measure the cell's quality
+against external validation, not against the agent's own confidence.
+An agent that calls `./run.sh` at the end of its multi-invocation
+loop, sees exit 0, and marks the cleanup todo done has produced its
+final attempt — even if the CSV turns out to be malformed when
+validated in step 3. Self-correction across the 8 sub-invocations is
+the agent's responsibility; the scorer judges only the final state.
 
-## Scoring axes
+## Scoring
 
-Four orthogonal scoring axes, all applied at both step-3 and step-5
-validation:
+Four orthogonal scoring axes — target conformance, schema gate,
+internal consistency, spec-parameter conformance — all evaluated at
+step 3 against the workspace the agent container left behind.
+Multi-invocation diagnostics (`steps[*].exit_code`,
+`plan_todos.checked/.total`) are reported per-cell alongside the
+scoring metrics so the in-cell self-correction is inspectable.
 
-**1. Target conformance.** Did the agent use the named framework, or
-sidestep it? Mechanical greps for `import mesa` / Mesa-class
-subclassing on Mesa runs; `josh validate` exit zero on `.josh` files
-for Josh runs. Caught the "agent produces a valid CSV via a Python
-fallback instead of using Josh" loophole in the phase-5a pilot batch.
-
-**2. Schema gate.** Did the agent's `./run.sh` produce
-`./output/results.csv` and does the CSV carry the required columns?
-The gate is subset-match (extras OK, order irrelevant), NaN-tolerant
-(rows with NaN in required numeric cols are filtered and counted, not
-failed), and demands the acceptance target year is present. The
-scorer self-heals `chmod +x run.sh` so the agent's failure to chmod
-is captured separately (`script_was_executable`) without gating the
-measurement.
-
-**3. Internal consistency.** Given the agent's own outputs, does the
-simulation behave self-consistently with respect to the spec's
-constraints? Hard structural checks (negative growth fraction,
-growth-rate ceiling fraction, age-step != 1 fraction, nTrees-change
-fraction). All four should be 0 under any faithful implementation;
-non-zero values are direct spec violations the other gates can't see.
-A predicted-vs-observed Δh `r²` is planned (see §Open methodology
-questions below) — the within-cell-across-years Spearmans currently
-in the manifest are noise on the synthetic dataset (low temporal
-variance by design) and will be replaced with a spatial `r²` against
-the spec's prediction.
-
-**4. Spec-parameter conformance.** Did mean tree height and mean
-occupancy at year 10 fall in the pre-registered acceptance ranges
-(`height_year10` and `occupancy_year10` in
-[`harness/acceptance_ranges.json`](harness/acceptance_ranges.json))?
-Meaningful only at rungs where the relevant parameters were specified
-in the prompt. **The methodology of these ranges is under review** —
-they currently pass scientifically-broken runs (e.g. h@10 = 8e-10 m
-on the prior Cal-Adapt-based pilot). The plan is to either drop them
-or fold them into a derived `cell_passed` field combining
-conformance, schema, consistency, and parameter signals.
-
-## Metrics
-
-All scoring is mechanical at experiment time. Manual review of the
-archived artifacts can supplement post-hoc. Per-batch rollups
-generated automatically by `orchestration/generate_batch_report.py`
-into `runs/<batch-tag>/batch_report.md`.
-
-The current scorer JSON schema is `phase5a-v1` (see
-`harness/run_metrics.py:SCHEMA_VERSION`).
-
-| Metric                          | Phase        | Type    | Source |
-| ------------------------------- | ------------ | ------- | ------ |
-| `target_conformance`            | step 2       | bool    | Mechanical: Mesa imports + class subclassing, or `josh validate` exit zero. |
-| `conformance.{imports_mesa, subclasses_model, has_josh_files, has_jshd_files, josh_validate_exit_code}` | step 2 | mixed | Per-target evidence fields backing the `target_conformance` rollup. |
-| `target_conformance_fuzzy`      | step 2 (opt) | enum    | `null` placeholder; LLM-judge variant deferred. |
-| `csv_exists`                    | step 3       | bool    | `./output/results.csv` was written. |
-| `csv_schema_ok`                 | step 3       | bool    | Subset-match required columns + target year present + required cols numeric-coercible. |
-| `csv_schema_errors`             | step 3       | list    | Specific failure messages when `csv_schema_ok=false`. |
-| `csv_row_count`                 | step 3       | int     | Total rows in the CSV (pre-filter). |
-| `csv_rows_dropped_nan`          | step 3       | int     | Rows dropped during NaN-filtering on required numeric cols. |
-| `script_was_executable`         | step 3       | bool    | `True` if the agent self-chmod'd; `False` if the scorer's runner had to. |
-| `did_run`                       | step 3       | bool    | `exit_code == 0 AND csv_exists AND csv_schema_ok`. |
-| `exit_code`                     | step 3       | int     | `./run.sh` exit status. |
-| `consistency.growth_rate_{min,max,mean}_m` | step 3 | float | Descriptive stats on Δh across all `(cell, year→year+1)` transitions. |
-| `consistency.growth_rate_negative_frac`    | step 3 | float | Fraction of transitions with Δh < 0. Spec value: 0. |
-| `consistency.growth_rate_above_ceiling_frac` | step 3 | float | Fraction with Δh > 1.15 m/yr (Δh_max × (1+3σ)). Spec value: 0. |
-| `consistency.age_step_{mean, off_one_frac}` | step 3 | float | Mean age increment and fraction != 1.0. |
-| `consistency.ntrees_change_frac`           | step 3 | float | Fraction of transitions where `nTrees` changed. Spec value: 0. |
-| `consistency.growth_temp_spearman`         | step 3 | float | Currently per-cell-across-years; **scheduled for replacement** (see open questions). |
-| `consistency.growth_precip_spearman`       | step 3 | float | Same; same caveat. |
-| `height_year10_mean`            | step 3       | float   | Mean of `meanHeight` at target year. |
-| `occupancy_year10_mean`         | step 3       | float   | Mean of `nTrees` at target year. |
-| `height_in_range`               | step 3       | bool    | `height_year10_mean` within `acceptance_ranges.json` bounds. |
-| `occupancy_in_range`            | step 3       | bool    | Same for occupancy. |
-| `prompt_tokens`, `completion_tokens` | step 1  | int     | OpenRouter response. |
-| `src_loc`, `comment_loc`, `imports_loc` | step 3 | int | Lines of generated code per category (replaces planned `relevant_loc`). |
-| `entropy_bits`                  | step 3       | float   | Token-level Shannon entropy of the generated code via `tiktoken` `cl100k_base`. |
-| `wall_time_seconds`             | step 1 / 3   | float   | End-to-end time per phase. Reported, not used for scoring (provider latency confounds). |
-
-**Step-4/5 recovery metrics** (`recovery_*` field family,
-`oneshot_*` prefixing, etc.) are listed in `IMPLEMENTATION_PLAN.md`
-phase 5b but not yet produced; H2 measurement is pending those.
-
-**Egress / docs-traffic metrics** (`webfetch_request_count`,
-`docs_*`, `dns_distinct_hosts`, `dns_unexpected_hosts`) are also
-pending — they require a separate joiner (`harness/docs_log.py`,
-phase 5b) over the existing per-run `trajectory.jsonl` and `dns.log`.
-The raw artefacts are captured per-run today; only the aggregated
-metrics await implementation.
-
-The path-level metrics (`docs_*`) come from opencode's trajectory
-log — every `webfetch` invocation records its URL. The host-level
-metrics (`dns_*`) come from the dnsmasq sidecar's query log and
-catch any non-`webfetch` egress attempt (e.g., a Python script the
-agent wrote calling `urllib.request.urlopen`).
+The full axis-by-axis specification, the metric table, the LLM-judge
+post-hoc passes (a "did it use the right tool?" judge + a "where did
+the agent get confused?" judge, both for our convenience rather than
+headline scoring), and the recipe for re-scoring completed runs after
+methodology revisions live in [SCORING.md](SCORING.md).
 
 The pre-registered acceptance ranges live in
 [`harness/acceptance_ranges.json`](harness/acceptance_ranges.json) and were
 committed before any experimental runs. **Do not modify this file
-after experiments begin.** Git history is the audit trail.
+after experiments begin.** Git history is the audit trail; revisions
+land via the re-scoring path documented in
+[SCORING.md](SCORING.md#re-analysing-completed-runs) so headline
+runs and re-analyses sit side-by-side.
 
 ## Egress observability and isolation
 
@@ -660,47 +587,25 @@ paper:
 
 ## Open methodology questions
 
-Decisions still open at the time of writing. None are blockers but
-each shapes what the experiment can claim.
+Scoring-specific open items — acceptance-range methodology,
+target_conformance denominator, predicted-vs-observed r² metric,
+LLM-judge design — live in
+[SCORING.md §Open methodology questions](SCORING.md#open-methodology-questions)
+because we plan to defer them until after the headline runs and
+re-score against frozen workspaces.
 
-1. **Replace the temporal Spearman metrics with predicted-vs-observed
-   correctness.** The current `consistency.growth_temp_spearman` and
-   `consistency.growth_precip_spearman` correlate Δh against climate
-   proxies within each cell across years, then average across cells.
-   Stage-2 confirmed they are noise on the synthetic dataset by
-   design: within-cell year-over-year variance is tiny (±0.4 K T,
-   ±40 mm/yr P) while the cross-cell spatial gradient is huge
-   (30 K T span, 0–800 mm/yr P span). The replacement: compute the
-   spec's predicted Δh per (cell, year) from the netCDF and compare
-   against the agent's observed Δh — Pearson `r²` and OLS slope.
-   Perfect spec-faithful: r² > 0.95, slope ≈ 1.0. Random/constant
-   growth: r² ≈ 0. Right structure / wrong constants: 0.5–0.9, slope
-   ≠ 1. Also add a year-10 spatial-map `r²` between observed and
-   predicted height fields.
+The remaining design-level open question:
 
-2. **Should `target_conformance=False` runs count toward the
-   denominator of any headline metric?** A run that produces a valid
-   CSV without using the named framework is technically "did the
-   task" but doesn't measure what we're trying to measure. Likely:
-   report pass rates *conditional* on conformance plus a separate
-   conformance-rate-per-model figure.
-
-3. **Acceptance ranges as a gate.** `height_year10` and
-   `occupancy_year10` ranges in `harness/acceptance_ranges.json`
-   currently pass scientifically-broken runs (e.g. mean tree height
-   of 8 × 10⁻¹⁰ m falls vacuously inside `[0, 11]`). Three options
-   to settle before the headline batch: (a) drop them and rely on
-   the internal-consistency block, (b) tighten to growth-equation-
-   consistent bounds, (c) replace with a derived `cell_passed` field
-   ANDing `did_run`, `target_conformance`, growth-rate stats, and
-   climate response. The phase-5a pilot favours (c).
-
-4. **Is the recovery loop in scope for this paper?** Phase 5b
-   delivers H2's measurement infrastructure but doubles the per-cell
-   cost. Decide after the model-panel reintroduction pilots: if
-   one-shot pass rates are already high enough to be informative
-   across the panel, recovery is gravy; if one-shot is sparse,
-   recovery is the only way to reach interpretable H2 numbers.
+1. **Model panel finalisation.** The phase-5c panel batch surfaced
+   that gemma3-27b-it fails to invoke tools under the multi-invocation
+   procedure prompt (0/4 cells did any work; the model listed
+   actions then stopped). The headline pin in
+   [`config/models.yaml`](config/models.yaml) is now
+   `google/gemma-4-26b-a4b-it` (the gemma-4 26B MoE; previously wired
+   as our `gemma4` short name). gemma-4 has not yet been pilot-tested
+   under the multi-invocation flow specifically; a single-cell
+   `FAIL_FAST=true` probe before the headline batch is the cheap
+   sanity-check to run.
 
 ## Citation
 

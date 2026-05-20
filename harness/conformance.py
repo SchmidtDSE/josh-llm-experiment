@@ -16,7 +16,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from _files import enumerate_source_files
+from _files import enumerate_source_files, find_workspace_files
 
 
 _MESA_IMPORT_RE = re.compile(r"^\s*(?:import\s+mesa|from\s+mesa(?:\.[\w.]+)?\s+import)\b", re.M)
@@ -51,8 +51,11 @@ def _check_mesa(workspace: Path) -> dict:
 
 
 def _check_josh(workspace: Path, parse_timeout_s: int = 30) -> dict:
-    josh_files = [p for p in enumerate_source_files(workspace, "josh") if p.suffix == ".josh"]
-    jshd_files = [p for p in enumerate_source_files(workspace, "josh") if p.suffix == ".jshd"]
+    # `enumerate_source_files` returns text source (`.josh`) only.
+    # `.jshd` is binary preprocessed data — discovered separately so it
+    # doesn't pollute LOC / entropy as 2000-"line" binary blobs.
+    josh_files = enumerate_source_files(workspace, "josh")
+    jshd_files = find_workspace_files(workspace, (".jshd",))
     has_josh = len(josh_files) > 0
     has_jshd = len(jshd_files) > 0
 

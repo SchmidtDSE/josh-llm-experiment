@@ -2,9 +2,11 @@
 
 Engineering-side state of the ForeverTree LLM experiment harness:
 what's built, how it's structured, and what remains. For the
-experimental methodology (hypothesis, prompt rungs, metrics, threats
-to validity), see [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md).
-For installation and how to run, see [README.md](README.md).
+experimental methodology (hypothesis, run flow, threats to validity),
+see [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md). For the scoring
+axes, metric definitions, LLM-judge spec, re-analysis recipe, and
+open scoring questions, see [SCORING.md](SCORING.md). For installation
+and how to run, see [README.md](README.md).
 
 Per-PR detail lives in `git log` and the merged PR descriptions; this
 document is a navigation map, not a complete change history.
@@ -40,10 +42,12 @@ invocation pattern per cell (orchestrated by orchestration/launch_*.sh):
    carve-outs for lo/conntrack/upstream-DNS/bridge-gateway/allowlist).
 3. Start `fortree:agent` joining the sidecar's netns
    (`--network=container:dnsmasq-<run-id>`); agent's egress is hard-
-   filtered at the kernel.
-4. After agent exits, run `fortree:scorer` against the workspace
-   under `--network=none` with a writable `results/` and read-only
-   data/ + workspace mounts.
+   filtered at the kernel. Inside the container, agent-entrypoint.sh
+   invokes opencode **eight times in a row**, one per todo, against
+   a shared `/sandbox/PLAN.md` working document (see "Phase 5c" below).
+4. After the multi-invocation chain finishes, run `fortree:scorer`
+   against the workspace under `--network=none` with a writable
+   `results/` and read-only data/ + workspace mounts.
 5. Generate per-cell `report.md`. Tear down network + sidecar.
 6. Per-batch driver aggregates all cells into `manifest.jsonl` and
    renders `batch_report.md`.
@@ -151,10 +155,10 @@ PR #22 enhanced the per-cell report. PR #23 distinguished
 presumed-done from genuine stall in the heartbeat. PR #24 grouped
 all per-run dirs under `runs/<batch-tag>/`.
 
-**Phase 4d — Durable upload — PENDING.** See *Pending engineering
-work* below.
+**Phase 4d — Durable upload — DONE (host-side mc).** See *Pending
+engineering work* below for the implementation summary.
 
-### Phase 5 — Scoring revision (5a) and recovery loop (5b)
+### Phase 5 — Scoring revision (5a); recovery loop (5b, retired); multi-invocation flow (5c)
 
 **Phase 5a — Scoring revision (PR #25, #26, #27) ✓** — Three PRs
 that together delivered the post-pilot scoring infrastructure:
@@ -193,24 +197,151 @@ that together delivered the post-pilot scoring infrastructure:
   `batch_report.md` with at-a-glance matrix, per-cell drill-down,
   failure-mode tally.
 
-**Phase 5b — Recovery loop — PENDING.** See *Pending engineering
-work* below.
+**Phase 5b — Recovery loop — RETIRED.** The multi-invocation flow's
+todos 5–8 (stub → implement → validate → cleanup) bake the iterative
+self-correction into every cell's run, so a separate recovery-prompt
+mechanism is no longer needed. EXPERIMENTAL_DESIGN's H2 hypothesis
+folds into H1.
+
+### Phase 5c — Multi-invocation planning flow ✓
+
+The agent phase now invokes opencode **eight times in a row** against
+the same per-cell workspace, one invocation per todo, with a shared
+`/sandbox/PLAN.md` working document carrying state across steps.
+Sessions are fresh per invocation (no `--continue`) — all continuity
+lives on disk in `PLAN.md` and the workspace.
+
+Motivation: small / local models struggle without explicit planning
+scaffolding. Splitting the work into discrete, plan-anchored steps
+gives them a structured "read PLAN.md → list actions → do one thing →
+mark `[x]` → exit" rhythm and makes their planning artefacts
+inspectable.
+
+**Files**:
+- [prompts/PLAN_TEMPLATE.md](prompts/PLAN_TEMPLATE.md) — seed for
+  `/sandbox/PLAN.md`. Carries the 8 fixed todos and an empty `## Plan`
+  section.
+- [prompts/steps/step_NN_*.md](prompts/steps/) — 8 pre-committed
+  per-step injection files. Static across all runs.
+- [prompts/SIDECAR.md](prompts/SIDECAR.md) — rewritten around the
+  procedure narrative + AI environment / inputs / success criteria /
+  working-document sections.
+- [prompts/](prompts/) — reorganised into `rungs/`, `steps/`,
+  `targets/` subfolders. `prompts/rung5_master.md` retired (rung 5
+  now reads `prompts/BASE_PROMPT.md` directly).
+- [agent-entrypoint.sh](agent-entrypoint.sh) — loops over
+  `/opt/steps/step_*.md`, builds each per-step prompt in-memory as
+  `prompt_body + step_file`, runs opencode, exports per-step session,
+  writes `step_meta.json`. Honours `FAIL_FAST_ON_STEP_ERROR`.
+- [orchestration/launch_run.sh](orchestration/launch_run.sh) — renders
+  `prompt_body.md` once and seeds `workspace/PLAN.md` from the
+  template. No per-step rendering at runtime — the 8 step files are
+  bind-mounted straight from the repo.
+- [orchestration/run_agent.sh](orchestration/run_agent.sh) — new
+  bind mounts (`/opt/prompt_body.md`, `/opt/steps/`); passes
+  `FAIL_FAST_ON_STEP_ERROR` into the agent container.
+
+**Knob (`.env`)**:
+- `FAIL_FAST_ON_STEP_ERROR=false` (default, production) — log per-step
+  failures and continue. Partial completion is data.
+- `FAIL_FAST_ON_STEP_ERROR=true` (dev / CI) — first non-zero step
+  aborts the loop. Used to surface broken plumbing fast.
+
+**Per-step artefacts under `runs/<batch>/<id>/agent_artifacts/steps/step_NN/`**:
+- `trajectory.jsonl` — that step's opencode events
+- `agent_stderr.log` — that step's stderr
+- `session_export.json` — that step's opencode export
+- `step_meta.json` — `{step_n, step_name, started_at, ended_at, exit_code}`
+
+The cell-level rollups (`trajectory.jsonl`, `agent_stderr.log`,
+`agent_artifacts/session_export.json`) remain at their legacy paths
+so downstream consumers (`generate_run_report.py`,
+`extract_transcript.py`, `extract_time_breakdown.py`) keep working;
+they now see the in-order concatenation of all 8 steps and the
+final step's export respectively. Cross-step token / timing
+aggregation is a follow-up.
+
+**Example multi-invocation pattern (operator-level reference)**:
+
+```sh
+# What agent-entrypoint.sh effectively runs, inside one container:
+opencode run "<prompt_body>\n\n<step_01_make_plan_section>"
+opencode run "<prompt_body>\n\n<step_02_describe_geospatial>"
+...
+opencode run "<prompt_body>\n\n<step_08_cleanup_code>"
+```
+
+Each `<step_NN_*>` file tells the model "your assigned todo is N: …;
+read /sandbox/PLAN.md; list your actions; complete only this todo;
+mark [x]; exit." Cross-step state lives entirely in `PLAN.md` and
+the workspace files.
+
+**Follow-on fixes (same PR):**
+
+- **Permissive cell-identity schema.** `harness/validators/output_schema.py`
+  no longer requires `lat`/`lon`/`cell_id` specifically. Cell identity
+  accepts either `cell_id` (string) OR `position.x` + `position.y`
+  (numeric, Josh's default). `load_clean_results` synthesises `cell_id`
+  from the position pair when only the alt is present, so
+  `internal_consistency.py` is unchanged. Removes the "model must
+  rename Josh's native export to match our spec" gymnastics that
+  bricked two recent Josh-target cells. New CI-gated fixture
+  [reference/golden-josh-defaults/](reference/golden-josh-defaults/)
+  exercises the alt path.
+- **`.jshd` LOC bugfix.** `harness/_files.py` no longer counts `.jshd`
+  binary preprocessed data as source. The byte stream contained
+  newlines, so a 112 KB binary was being read as ~2000 lines of code —
+  inflated `src_loc` by 400× on cells that ran `josh preprocess`
+  against the full grid. Conformance still detects `.jshd` presence
+  via the new `find_workspace_files` helper.
+- **Batch-report multi-invocation diagnostics.** `manifest.jsonl` rows
+  gain `steps` (per-step exit codes from `step_meta.json`) and
+  `plan_todos` (count of `[x]` boxes in `workspace/PLAN.md`).
+  `batch_report.md` renders a new "Multi-invocation step status"
+  section: 8-glyph per-cell status string (`✓✗·`), todos-checked
+  count, and links to each cell's `PLAN.md` + `agent_artifacts/steps/`.
+- **Prompt-procedure tightening (gemma nudge).** SIDECAR's Procedure
+  paragraph caps the planning preamble at 1–2 sentences and adds
+  "Then carry them out by calling the available tools — listing the
+  plan is a preamble, not the task itself." Targets the failure mode
+  observed in the panel batch where gemma listed actions and stopped
+  without invoking any tool.
+- **Targets renamed.** `prompts/target_directive_{josh,mesa}.md` →
+  `prompts/targets/{josh,mesa}.md` to match the new subfolder layout.
+- **Review-driven polish.** `launch_batch.py --upload` flag for
+  opportunistic auto-archive after batch completion (non-fatal on
+  failure; the standalone `upload_batch.sh` remains the
+  crash-recovery path). README sweep examples reframed around a
+  committed CSV panel rather than nested bash for-loops. SIDECAR's
+  cell-identity prose tightened to a single legal-identifier
+  sentence (no framework-defaults exposition). EXPERIMENTAL_DESIGN
+  gained the "why force decomposition" methodology paragraph
+  capturing the pre-phase-5c observation that models were getting
+  stuck on orchestration concerns and skipping the
+  ecological-modelling step.
 
 ## Current state
 
 Scorer JSON schema: `phase5a-v1` (`harness/run_metrics.py:SCHEMA_VERSION`).
 
 Per-cell artefacts under `runs/<batch-tag>/<run_id>/`:
-- `workspace/` — agent-authored files
-- `prompt.md` — rendered prompt
-- `trajectory.jsonl` — opencode's per-tool log
-- `agent_artifacts/` — opencode session export
-- `agent_stderr.log` — opencode stderr
+- `workspace/` — agent-authored files (including `PLAN.md`, the
+  multi-invocation working document)
+- `prompt_body.md` — rendered shared body (rung + target + SIDECAR);
+  `prompt.md` is a back-compat symlink to it
+- `trajectory.jsonl` — in-order concatenation of all 8 steps' opencode
+  events
+- `agent_stderr.log` — in-order concatenation of all 8 steps' stderr
+- `agent_artifacts/session_export.json` — final attempted step's
+  opencode export
+- `agent_artifacts/steps/step_NN/` — per-step `trajectory.jsonl`,
+  `agent_stderr.log`, `session_export.json`, `step_meta.json`
 - `dns.log` — every DNS query the agent container made
 - `scorer.json` — full scoring record (`phase5a-v1` schema)
 - `report.md` — Jinja2-rendered per-cell report
-- `transcript.md` — human-readable opencode transcript
-- `time_breakdown.json` — phase timings
+- `transcript.md` — human-readable opencode transcript (from the
+  final step's export)
+- `time_breakdown.json` — phase timings (from the final step's export)
 - `run_meta.json`, `run_meta.cell.json`, `run_meta.final.json` — orchestration metadata
 
 Per-batch artefacts under `runs/<batch-tag>/`:
@@ -221,82 +352,85 @@ Per-batch artefacts under `runs/<batch-tag>/`:
 - `batch_report.md` — at-a-glance markdown rollup
 - `cell-logs/<run_id>.log` — per-cell stdout+stderr capture
 
-## Pending engineering work
+## Headline-run readiness
 
-### Phase 4d — Durable upload to GCS via S3 interop
+What's blocking vs nice-to-have for the headline batch, in order of
+materiality:
 
-Per-batch run dirs are currently host-local. The plan: ship them to a
-GCS bucket via its S3 interoperability API using the `mc` client.
+| Item | Required? | Status |
+|---|---|---|
+| Multi-invocation flow end-to-end | yes | ✓ verified on claude × {josh,mesa} and minimax × {josh,mesa} (32/32 step exits clean per cell, PLAN.md updated as expected) |
+| Permissive cell-identity schema | yes | ✓ |
+| `.jshd` LOC fix | yes | ✓ |
+| Batch-report diagnostics | yes | ✓ |
+| Durable upload to GCS | yes | ✓ host-side `orchestration/upload_batch.sh` (mc, no container path); `launch_batch.py --upload` auto-invokes it post-batch |
+| `WALL_CLOCK_BACKSTOP_SEC` bump to 3600s | yes | ✓ set in `.env` |
+| Model panel pinned to versioned slugs | yes | ✓ `config/models.yaml` pins the five-family panel (claude-opus-4.7, gemma-4-26b-a4b-it, kimi-k2.6, minimax-m2.7, mistral-medium-3.5) — verified `resolve_model.py` on each short name. The single open item: a one-cell gemma-4 sanity probe under the multi-invocation flow before the headline batch (gemma-3 failed it 0/4 in the phase-5c panel) |
+| Re-scoreable on completed runs | yes | ✓ verified by rescoring a panel-batch cell against its preserved workspace — same metrics modulo Mesa's stochastic O term. Recipe documented in [SCORING.md §Re-analysing completed runs](SCORING.md#re-analysing-completed-runs); a `rescore_batch.sh` wrapper is on the to-author list once a concrete methodology revision is in hand |
+| Acceptance-range methodology (SCORING.md Open Q #1) | post-headline | 📋 intentionally deferred — re-score path lets us revise the gate against frozen workspaces |
+| Predicted-vs-observed r² metric (SCORING.md Open Q #3) | post-headline | 📋 nice-to-have; same re-score-on-completed-runs path |
+| LLM-judge passes (SCORING.md §LLM-judge passes) | post-headline | 📋 not implemented; convenience-tier, not in the experimental yardstick |
 
-**Files to author**
-- [orchestration/upload_run.sh](orchestration/upload_run.sh) — runs
-  `mc alias set` from `MINIO_*` env vars then `mc cp --recursive`
-  per run dir. Opportunistic: on failure, record `upload_status=failed`
-  in `run_meta.json` and continue.
-- [Dockerfile](Dockerfile) — install the `mc` static binary in the
-  `base` stage, sha256-pinned.
-- [config/VERSIONS.md](config/VERSIONS.md) — pin `mc` version.
-- [.env.example](.env.example) — add `MINIO_ENDPOINT=https://storage.googleapis.com`,
-  `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `BATCH_TAG`.
-  Naming is for project consistency (the bucket is GCS via S3 interop,
-  not a MinIO server).
+## Phase decisions (post-pilot)
 
-**Validation gate**
-- A single run completes, `mc ls $alias/${MINIO_BUCKET}/${BATCH_TAG}/<RUN_ID>/`
-  lists every file under the local `runs/<RUN_ID>/`.
-- A run with broken HMAC credentials records `upload_status=failed`
-  and the run itself still completes (upload is opportunistic).
+Three phase items that were previously listed as "pending" have all
+resolved — kept here so the record of *why* the decision went the
+way it did is preserved for future contributors.
 
-### Phase 5b — Recovery loop
+### Phase 4d — Durable upload to GCS via S3 interop ✓
 
-H2 in the experimental design ("Recovery quality") is currently
-unmeasurable. The recovery flow is designed but not implemented.
+Implemented host-side rather than in the agent container — the agent
+image stays free of `mc` and of any object-storage credentials. The
+upload runs after a batch completes, against the per-batch run dir.
 
-**Files to author**
-- [prompts/recovery_template.md](prompts/recovery_template.md) —
-  Markdown skeleton with `{{ORIGINAL_RUNG_PROMPT}}`,
-  `{{ORIGINAL_TARGET_DIRECTIVE}}`, `{{BINARY_OUTCOMES_BLOCK}}`,
-  `{{SIDECAR}}` placeholders. The binary-outcomes block surfaces only
-  structural fields (`did_run`, `exit_code`, `timed_out`,
-  `csv_exists`, `csv_schema_ok`, `csv_schema_errors`, `stderr_tail`
-  truncated). Explicitly excluded per EXPERIMENTAL_DESIGN's recovery
-  contract: `height_*`, `occupancy_*`, `acceptance_ranges_used`,
-  `src_loc`, `entropy_bits`.
-- [orchestration/render_recovery_prompt.py](orchestration/render_recovery_prompt.py) —
-  strict whitelist over `scorer.json`. Asserts the expected
-  `schema_version` and copies only the named fields through, so new
-  fields added to scorer.json never automatically leak into recovery
-  prompts.
-- [harness/docs_log.py](harness/docs_log.py) — joins opencode's
-  trajectory `WebFetch` URLs with `dns.log` to produce the `docs_*`
-  metric fields, categorised via `config/docs_categories.yaml`.
-- Update [orchestration/launch_run.sh](orchestration/launch_run.sh)
-  to implement the full 5-step flow end-to-end:
-  1. One-shot scorer runs (already done in phase 3).
-  2. If `did_run AND height_in_range AND occupancy_in_range`,
-     record `recovery_attempted=false`, skip recovery.
-  3. Else: render recovery prompt; invoke opencode a second time
-     against the same workspace; record trajectory to
-     `trajectory_recovery.jsonl`.
-  4. Re-run the scorer against the post-recovery workspace, writing
-     `scorer_recovery.json`.
-  5. Manifest row records both `oneshot_*` and `recovery_*` field
-     families.
+- [orchestration/upload_batch.sh](orchestration/upload_batch.sh) —
+  reads `MINIO_*` env vars from `.env`, runs `mc alias set` then
+  `mc mirror --overwrite` against `runs/<batch-tag>/`. Idempotent
+  (re-mirroring only re-uploads changed objects).
 
-**Validation gate**
-- A recovery-triggering rung-1 run produces `recovery_attempted=true`
-  and `recovery_*` fields populate.
-- Grep gate: rendered `recovery_prompt.md` contains no occurrence of
-  `height_year10_mean`, `occupancy_year10_mean`, `height_in_range`,
-  `occupancy_in_range`, `acceptance_ranges_used`, `src_loc`,
-  `entropy_bits` — confirms the strict whitelist holds.
-- `scorer_recovery.json` carries the same `schema_version` as the
-  one-shot `scorer.json`.
+- [orchestration/launch_batch.py](orchestration/launch_batch.py)
+  `--upload` flag — auto-invokes `upload_batch.sh` against the
+  completed batch dir after report generation. Failure writes
+  `upload.log` under the batch dir but does not fail the batch
+  (the artefacts are still on local disk and the standalone script
+  is idempotent, so a host crash or transient upload error is
+  recoverable by rerunning `./orchestration/upload_batch.sh
+  runs/batch-<tag>` directly). Two invocation modes:
 
-### Prompt rungs 2–4
+  ```sh
+  # auto: upload runs at end of batch driver
+  uv run orchestration/launch_batch.py --cells panel.csv \
+    --batch-tag head-2026-05 --upload
 
-The phase-3 prompts are `rung1_minimal.md` and `rung5_master.md`
-only. Rungs 2–4 are deferred until the headline-batch authoring pass;
-their content is straightforward (interpolating detail between the
-two endpoints) but the wording is paper-bearing and should be drafted
-once 5b is in place so the recovery contract is settled first.
+  # manual: any time after the batch finishes / for crash recovery
+  ./orchestration/upload_batch.sh runs/batch-head-2026-05
+  ```
+
+- [.env.example](.env.example) — documents `MINIO_ENDPOINT`,
+  `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`,
+  `MINIO_PREFIX`.
+
+- Host-side `mc` install is a one-liner; not pinned at the image
+  level since the image doesn't carry it.
+
+**Object layout under the bucket:**
+- `<prefix>/<batch-tag>/<run-id>/…` — per-cell artefacts
+- `<prefix>/<batch-tag>/batch_report.md` — per-batch report
+- `<prefix>/<batch-tag>/manifest.jsonl` — aggregated manifest
+
+### Recovery loop — retired
+
+H2 ("Recovery quality") and the phase-5b recovery-prompt mechanism
+have been retired. The multi-invocation flow's todos 5–8 (stub →
+implement → validate → cleanup) bake the same iterative
+self-correction into every cell's run, so a separate second-invocation
+recovery pass is no longer needed. EXPERIMENTAL_DESIGN reflects the
+hypothesis simplification.
+
+### Prompt rungs
+
+The rung-ladder is retired operationally — `RUNG` defaults to 5 in
+both `launch_run.sh` and `launch_batch.py`, and the headline panel is
+`model × target × replicates` only. `prompts/rungs/rung1_minimal.md`
+stays on disk in case a future variant wants to vary prompt detail,
+but is not used in the headline run.

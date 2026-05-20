@@ -55,6 +55,32 @@ def _consistency(row):
     return s.get("consistency") or {}
 
 
+def _steps(row):
+    return row.get("steps") or {}
+
+
+def _plan_todos(row):
+    return row.get("plan_todos") or {}
+
+
+def _fmt_step_glyphs(row) -> str:
+    """One-character-per-step status glyph string. ✓ exit 0, ✗ non-zero,
+    · step never ran (loop aborted before reaching it). Always 8 wide
+    for visual alignment."""
+    steps = _steps(row).get("per_step") or []
+    exits = {str(s.get("n")).lstrip("0") or "0": s.get("exit_code") for s in steps}
+    out = []
+    for i in range(1, 9):
+        exit_code = exits.get(str(i))
+        if exit_code is None:
+            out.append("·")
+        elif exit_code == 0:
+            out.append("✓")
+        else:
+            out.append("✗")
+    return "".join(out)
+
+
 def _first_error(row):
     s = _scorer(row)
     errs = s.get("csv_schema_errors") or []
@@ -95,24 +121,39 @@ def render_matrix(rows: list[dict]) -> str:
 
 def render_per_cell_table(rows: list[dict]) -> str:
     header = (
-        "| run | model | r | tgt | conf | x_bit | schema | run | h@10 | h✓ | occ@10 | occ✓ | "
+        "| run | model | r | tgt | steps | todos | conf | x_bit | schema | run | h@10 | h✓ | occ@10 | occ✓ | "
         "gr_neg% | gr_ovr% | sp_T | sp_P | dropped | first_error | report |"
     )
-    sep = "|" + "|".join(["---"] * 19) + "|"
+    sep = "|" + "|".join(["---"] * 21) + "|"
     lines = [header, sep]
     for r in sorted(rows, key=lambda x: (x["model"], x["rung"], x["target"], x["run_id"])):
         s = _scorer(r)
         c = _consistency(r)
+        steps = _steps(r)
+        todos = _plan_todos(r)
         rid_short = r["run_id"][:8]
         report_rel = f"./{r['run_id']}/report.md"
         rid_link = f"[`{rid_short}`]({report_rel})"
         report_link = f"[📄 open]({report_rel})"
         first_err = _short(_first_error(r), 50).replace("|", "\\|")
+        if steps:
+            step_summary = (
+                f"{steps.get('completed_count', 0)}/{steps.get('step_count', 0)} "
+                f"`{_fmt_step_glyphs(r)}`"
+            )
+        else:
+            step_summary = "—"
+        if todos:
+            todo_summary = f"{todos.get('checked', 0)}/{todos.get('total', 0)}"
+        else:
+            todo_summary = "—"
         lines.append("| " + " | ".join([
             rid_link,
             r["model"],
             str(r["rung"]),
             r["target"],
+            step_summary,
+            todo_summary,
             _fmt_bool(s.get("target_conformance")),
             _fmt_bool(s.get("script_was_executable")),
             _fmt_bool(s.get("csv_schema_ok")),
@@ -130,6 +171,45 @@ def render_per_cell_table(rows: list[dict]) -> str:
             report_link,
         ]) + " |")
     return "\n".join(lines)
+
+
+def render_multi_invocation_section(rows: list[dict]) -> str:
+    """Per-cell rundown of the 8-step planning flow: glyph row showing
+    per-step exit, todos checked in PLAN.md, link to PLAN.md and to the
+    per-step trajectory dir."""
+    rows_with_steps = [r for r in rows if _steps(r)]
+    if not rows_with_steps:
+        return "_(no multi-invocation data — runs predate the planning flow)_"
+
+    header = "| run | model | r | tgt | step exits (1..8) | done | todos `[x]` | links |"
+    sep = "|" + "|".join(["---"] * 8) + "|"
+    lines = [header, sep]
+    for r in sorted(
+        rows_with_steps,
+        key=lambda x: (x["model"], x["rung"], x["target"], x["run_id"]),
+    ):
+        steps = _steps(r)
+        todos = _plan_todos(r) or {}
+        rid_short = r["run_id"][:8]
+        report_rel = f"./{r['run_id']}/report.md"
+        plan_rel = f"./{r['run_id']}/workspace/PLAN.md"
+        steps_dir_rel = f"./{r['run_id']}/agent_artifacts/steps/"
+        lines.append("| " + " | ".join([
+            f"[`{rid_short}`]({report_rel})",
+            r["model"],
+            str(r["rung"]),
+            r["target"],
+            f"`{_fmt_step_glyphs(r)}`",
+            f"{steps.get('completed_count', 0)}/{steps.get('step_count', 0)}",
+            f"{todos.get('checked', 0)}/{todos.get('total', '—')}"
+            if todos else "—",
+            f"[📋 PLAN.md]({plan_rel}) · [🪜 steps/]({steps_dir_rel})",
+        ]) + " |")
+    legend = (
+        "\n_Glyphs: `✓` = exit 0, `✗` = non-zero exit, `·` = step never reached "
+        "(loop aborted earlier under `FAIL_FAST_ON_STEP_ERROR=true`)._"
+    )
+    return "\n".join(lines) + legend
 
 
 def render_failure_tally(rows: list[dict]) -> str:
@@ -208,16 +288,43 @@ def build_report(batch_dir: Path) -> str:
     schema_ok = sum(1 for r in rows if _scorer(r).get("csv_schema_ok"))
     target_conf = sum(1 for r in rows if _scorer(r).get("target_conformance"))
 
-    return "\n\n".join([
+    # Multi-invocation rollups
+    rows_with_steps = [r for r in rows if _steps(r)]
+    step_summary_line = ""
+    if rows_with_steps:
+        total_attempted_steps = sum(_steps(r).get("step_count", 0) for r in rows_with_steps)
+        total_passing_steps = sum(_steps(r).get("completed_count", 0) for r in rows_with_steps)
+        cells_all_8_passing = sum(
+            1 for r in rows_with_steps
+            if _steps(r).get("step_count", 0) == 8
+            and _steps(r).get("completed_count", 0) == 8
+        )
+        total_todos_checked = sum(
+            (_plan_todos(r) or {}).get("checked", 0) for r in rows_with_steps
+        )
+        total_todos_possible = sum(
+            (_plan_todos(r) or {}).get("total", 0) for r in rows_with_steps
+        )
+        step_summary_line = (
+            f"\n**Multi-invocation**: "
+            f"{cells_all_8_passing}/{len(rows_with_steps)} cells with all 8 steps exit 0 · "
+            f"steps {total_passing_steps}/{total_attempted_steps} attempted-exit-0 · "
+            f"PLAN.md todos {total_todos_checked}/{total_todos_possible} checked"
+        )
+
+    sections = [
         f"# Batch: `{batch_dir.name}`",
         (
             f"**Cells**: {total} · "
             f"**did_run**: {did_run}/{total} · "
             f"**schema_ok**: {schema_ok}/{total} · "
             f"**target_conformance**: {target_conf}/{total}"
+            + step_summary_line
         ),
         "## At a glance",
         render_matrix(rows),
+        "## Multi-invocation step status",
+        render_multi_invocation_section(rows),
         "## Passing cells",
         render_passing_callouts(rows),
         "## Target-conforming but not passing (drill-down candidates)",
@@ -227,7 +334,8 @@ def build_report(batch_dir: Path) -> str:
         "## Per-cell detail",
         render_per_cell_table(rows),
         f"\n_Generated from `{manifest_path.name}` ({total} rows)._",
-    ])
+    ]
+    return "\n\n".join(sections)
 
 
 def main(argv: list[str] | None = None) -> int:

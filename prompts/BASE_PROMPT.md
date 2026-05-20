@@ -25,6 +25,8 @@ The model is intentionally not intended to be a realistic ecological forecast bu
 
 ## Environment
 
+This simulation requires operating across both space and time.
+
 ### Spatial domain
 
 - The simulation runs over a rectangular geographic region described by a
