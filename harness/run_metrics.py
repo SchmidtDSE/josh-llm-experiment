@@ -81,6 +81,9 @@ def _ordered_record(
         "occupancy_year100_mean": _finite_or_none(accept_out.get("occupancy_year100_mean")),
         "height_in_range": accept_out.get("height_in_range", False),
         "occupancy_in_range": accept_out.get("occupancy_in_range", False),
+        "regression_fit": accept_out.get("regression_fit", {}),
+        "regression_fit_ok": accept_out.get("regression_fit_ok", False),
+        "regression_fit_reasons": accept_out.get("regression_fit_reasons", []),
         "acceptance_ranges_used": accept_out.get("acceptance_ranges_used", {}),
         "src_loc": loc_out.get("src_loc", 0),
         "comment_loc": loc_out.get("comment_loc", 0),
@@ -156,6 +159,12 @@ def main(argv: list[str] | None = None) -> int:
             "occupancy_year100_mean": None,
             "height_in_range": False,
             "occupancy_in_range": False,
+            "regression_fit": {
+                "beta": None, "alpha": None, "r2": None, "n_observations": 0,
+                "error": "schema gate failed; regression not computed",
+            },
+            "regression_fit_ok": False,
+            "regression_fit_reasons": ["schema gate failed"],
             "acceptance_ranges_used": ranges,
         }
 

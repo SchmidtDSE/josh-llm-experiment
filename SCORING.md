@@ -8,16 +8,18 @@ flow), [K8S_REFACTOR.md](K8S_REFACTOR.md) (the in-flight refactor that
 produced this scorer shape), and [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 (historical engineering record).
 
-> **Status (2026-05-20, schema `phase6-v1`).** The scorer is now
-> deliberately narrow: it gates on schema, measures the ecology
-> outcome at year 100, captures real wall-clock under a 100-replicate
-> × 100-year `./run.sh` contract, and reports style metrics on the
-> generated code. The internal-consistency block (negative-growth
-> fraction, age-step ≠ 1, etc.) that earlier schemas carried is gone
-> — the panel-batch evidence showed those checks were diagnostic during
-> methodology-building but redundant once cells consistently clear
-> them. The acceptance-band thresholds are *intentionally loose* (see
-> Open Q #1) pending a reference-distribution recalibration.
+> **Status (2026-05-20, schema `phase6-v1`).** The scorer gates on
+> schema, fits a per-cell `observed ~ predicted` regression against
+> the spec's deterministic prediction (the headline ecology gate),
+> captures real wall-clock under a 100-replicate × 100-year `./run.sh`
+> contract, and reports style metrics on the generated code. The
+> internal-consistency block (negative-growth fraction, age-step ≠ 1,
+> etc.) that earlier schemas carried is gone — diagnostic during
+> methodology-building, redundant once cells consistently clear
+> regression at β≈1. The acceptance bands are derived from a
+> spec-faithful Python reference simulator
+> ([data/reference_sim.py](data/reference_sim.py)) run against the
+> committed synthetic climate netCDFs, not hand-picked.
 
 ## Scoring axes
 
@@ -30,20 +32,67 @@ subclassing on Mesa runs; `josh validate` exit zero on `.josh` files
 for Josh runs. Catches the "agent produces a valid CSV via a plain-
 Python fallback instead of using Josh" loophole.
 
-**2. Spec-parameter conformance (ecology).** Did mean tree height
-and mean occupancy at year 100 fall in the pre-registered acceptance
-ranges (`height_year100` and `occupancy_year100` in
-[`harness/acceptance_ranges.json`](harness/acceptance_ranges.json))?
-The master prompt specifies the relevant parameters (10 trees/patch,
-Δh_max = 1 m/yr, 100-year simulation length); these ranges encode
-what a faithful run should produce. The methodology of these ranges
-is under review — see Open Q #1.
+**2. Spec-parameter conformance (ecology).** Did the agent's
+year-100 outputs reproduce the spec's deterministic prediction under
+a linear-regression fit?
 
-The ecology measurement is computed across all `(cell, replicate)`
-pairs at year == `target_year`. With the new `./run.sh` contract
-(100 replicates × 100 simulated years, both inside the agent's own
-`run.sh`), this is a large enough sample to make the year-100 mean
-statistically meaningful per cell.
+For each `(cell, replicate)` pair in the agent's CSV, the scorer
+computes a deterministic *predicted* total growth from the spec
+equation using the agent's own reported climate values:
+
+```
+predicted(cell, rep) = Σ_{y = year_1 .. year_target}  Δh_max · %_T(T(y)) · %_P(P(y))
+```
+
+where `%_T` and `%_P` are the parabolic and logistic response curves
+from [BASE_PROMPT.md §Growth Model](prompts/BASE_PROMPT.md). The
+*observed* is the meanHeight at year == `target_year`. An OLS fit
+`observed ~ predicted` yields slope β, intercept α, and R². Under a
+faithful implementation:
+
+- **β → 1.0** (modulo the O ~ N(1, 0.05) noise term, which has
+  mean 1 → no bias)
+- **α → 0.0**
+- **R² → 1.0** (the spec equation is deterministic; only stochastic
+  noise causes residuals)
+
+The acceptance gate is **β ∈ [0.95, 1.05]**, **α ∈ [−0.5, 0.5] m**,
+**R² > 0.95**. These tolerances are loose enough to absorb
+implementation differences (grid choice, climate interpolation, RNG
+seed) but tight enough to catch systematic dynamics errors like
+"agent used Δh_max=0.5" (β=0.5) or "agent missed the temperature
+clamp" (α drifts, R² drops). The reference's own fit values
+(β=1.000013, α=−0.000249, R²=0.999993, n=155 000) are persisted in
+`acceptance_ranges.json` so the gate is calibrated against the
+empirical noise floor of the reference simulator.
+
+A coarse secondary check — mean meanHeight at year 100 within a 3σ
+band derived from the same reference run — is also reported
+(`height_in_range`) to catch totally-broken outputs that happen to
+have β=1 by accident (e.g., constant zeros). Used as a sanity check,
+not the headline gate. The full reference distribution from which
+the band is derived is published in `harness/acceptance_ranges.json`
+under `_reference_observed`.
+
+The chain producing the bands is:
+
+```
+data/generate_synthetic_climate.py   # writes the netCDFs
+    ↓
+data/reference_sim.py                # runs spec dynamics in numpy,
+                                     # writes harness/acceptance_ranges.json
+    ↓
+reference/regenerate_fixtures.py     # samples one replicate for the
+                                     # smoke-test golden fixtures
+    ↓
+docker build --target scorer         # bakes acceptance_ranges.json
+                                     # into fortree:scorer
+```
+
+All four steps are deterministic. The math primitives live in
+[`harness/spec_model.py`](harness/spec_model.py) and are shared
+between the reference simulator and the scorer's validator, so
+band derivation and gate enforcement cannot drift.
 
 **3. Style / code metrics.** Source LOC, comment LOC, imports LOC,
 and token-level Shannon entropy of the generated code. These are
@@ -63,8 +112,9 @@ undefined and recorded as null with `height_in_range=false` /
 |---|---|---|
 | Target conformance | mechanical + fuzzy placeholder | unchanged (fuzzy gets a real implementation in PR2) |
 | Schema gate | as below | unchanged |
-| Internal consistency | Δh sign, Δh ceiling, age step, nTrees change, climate Spearmans — `consistency.*` fields | **dropped entirely** — diagnostic during methodology-building, redundant in steady state |
-| Spec-parameter conformance | `height_year10` / `occupancy_year10` over an 11-year, single-replicate run | `height_year100` / `occupancy_year100` over a 100-year, 100-replicate run |
+| Internal consistency | Δh sign, Δh ceiling, age step, nTrees change, climate Spearmans — `consistency.*` fields | **dropped entirely** — diagnostic during methodology-building, redundant once regression β catches the same failure modes |
+| Spec-parameter conformance | mean-band on `height_year10` / `occupancy_year10` over an 11-year, single-replicate run | **regression band** β/α/R² on `observed ~ predicted` over a 100-year, 100-replicate run; mean-band kept as a secondary sanity check |
+| Acceptance bands | hand-picked from prior pilot data | **derived empirically** from a spec-faithful Python reference simulator against the committed synthetic climate |
 | Wall clock | reported, not used | **headline metric** — large enough under 100×100 to be meaningful for Josh-vs-Mesa execution-cost comparisons |
 | LOC + entropy | unchanged | unchanged |
 
@@ -88,11 +138,17 @@ JSON schema is `phase6-v1` (`harness/run_metrics.py:SCHEMA_VERSION`).
 | `exit_code` | int | `./run.sh` exit status. |
 | `wall_time_seconds` | float | End-to-end wall-clock for the agent's `./run.sh`. Under the phase-6 contract `run.sh` carries preprocess + `--replicates 100` × 100 simulated years, so this is the real Josh-vs-Mesa execution-cost comparison. |
 | `timed_out` | bool | True when `./run.sh` was killed by the scorer's per-invocation timeout. |
-| `height_year100_mean` | float | Mean of `meanHeight` across all `(cell, replicate)` rows at year == `target_year`. |
+| `height_year100_mean` | float | Mean of `meanHeight` across all `(cell, replicate)` rows at year == `target_year`. Secondary sanity check. |
 | `occupancy_year100_mean` | float | Mean of `nTrees` at year == `target_year`. |
-| `height_in_range` | bool | `height_year100_mean` within `acceptance_ranges.json` bounds. |
+| `height_in_range` | bool | `height_year100_mean` within the 3σ mean band (secondary check). |
 | `occupancy_in_range` | bool | Same for occupancy. |
-| `acceptance_ranges_used` | dict | The full `acceptance_ranges.json` as parsed — frozen-evidence record so a re-score using different bands stays self-describing. |
+| `regression_fit.beta` | float | Slope of OLS `observed ~ predicted`. Spec-faithful target: 1.0. |
+| `regression_fit.alpha` | float | Intercept of the same fit. Spec-faithful target: 0.0. |
+| `regression_fit.r2` | float | R² of the same fit. Spec-faithful target: ~1.0. |
+| `regression_fit.n_observations` | int | Number of `(cell, replicate)` pairs the fit was over. |
+| `regression_fit_ok` | bool | **Headline ecology gate.** True iff β, α, R² all inside the bands in `acceptance_ranges.json`. |
+| `regression_fit_reasons` | list[str] | Specific failure messages when `regression_fit_ok=false`. |
+| `acceptance_ranges_used` | dict | The full `acceptance_ranges.json` as parsed — frozen-evidence record including the reference's own observed β/α/R² so a re-score is self-describing. |
 | `src_loc`, `comment_loc`, `imports_loc` | int | Lines of generated code per category. `.jshd` (binary preprocessed data) is excluded. |
 | `entropy_bits` | float | Token-level Shannon entropy of the generated code via `tiktoken` `cl100k_base`. |
 
@@ -205,16 +261,17 @@ delta.
 
 ## Open methodology questions
 
-1. **Year-100 acceptance bands.** The bands in
-   [`harness/acceptance_ranges.json`](harness/acceptance_ranges.json)
-   are *placeholders* — `height_year100 ∈ [0, 100] m` is loose enough
-   that any non-collapsed run passes; `occupancy_year100 ∈ [9.9, 10.1]`
-   already reflects the spec (no death / reproduction). The plan is to
-   derive tighter bands either (a) empirically from a known-good Josh
-   reference cell at 100×100, or (b) analytically from the growth
-   equation + synthetic-climate gradient. (b) is preferred for the
-   "pre-registered" claim. Tracked as Open Q #1 in
-   [K8S_REFACTOR.md](K8S_REFACTOR.md).
+1. **Regression band tolerance calibration.** The β/α/R² tolerances
+   in [`harness/acceptance_ranges.json`](harness/acceptance_ranges.json)
+   (β ∈ [0.95, 1.05], α ∈ [−0.5, 0.5], R² > 0.95) are hand-picked
+   to give implementation tolerance while catching gross dynamics
+   errors. They are not derived from observed agent-implementation
+   variance — we don't yet have a panel of agent runs under the
+   phase-6 design to estimate that. Once the headline batch produces
+   data, the tolerances can be re-calibrated against the empirical
+   spread of "clearly faithful" runs vs "clearly broken" runs. The
+   regression *targets* (β=1, α=0, R²→1) are derived from the
+   reference simulator and are not in question.
 
 2. **target_conformance=False in the denominator.** Does a run that
    produces a valid CSV without using the named framework count

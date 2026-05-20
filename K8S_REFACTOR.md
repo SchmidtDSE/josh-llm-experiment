@@ -361,14 +361,17 @@ Suggested PR order so each step is reviewable in isolation:
 
 ## Open questions
 
-1. **Acceptance-band recalibration.** Year-100 height + occupancy bands
-   need a reference. Run one spec-faithful Josh cell at 100×100 and
-   read off the bands from the empirical distribution, or derive
-   analytically from the growth equation + the synthetic-climate
-   gradient. The latter is preferable for the "pre-registered"
-   claim. Implementation: extend
-   [data/generate_synthetic_climate.py](data/generate_synthetic_climate.py)
-   with an optional `--emit-spec-faithful-reference` flag.
+1. **Acceptance-band recalibration.** *Substantively resolved in PR1.*
+   The headline ecology gate is now an `observed ~ predicted`
+   regression against a spec-faithful Python reference simulator
+   ([`data/reference_sim.py`](data/reference_sim.py)) run on the
+   committed synthetic climate netCDFs. β/α/R² targets are derived
+   from physics, not hand-picked. Open follow-up: tolerance widths
+   around those targets (β ∈ [0.95, 1.05], etc.) are currently
+   hand-picked to give implementation tolerance — once the headline
+   batch produces a panel of agent runs we can re-calibrate against
+   their empirical spread. See SCORING.md §Open methodology
+   questions #1.
 2. **Per-model engagement probe.** With 100×100 the cost of a
    *succeeded* cell goes up materially, so it's worth a single-cell
    probe per model under the new prompt + workload before launching

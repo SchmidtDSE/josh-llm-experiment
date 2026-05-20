@@ -1,20 +1,39 @@
 {
   "schema_version": "phase6-v1",
+  "_generated_by": "data/reference_sim.py",
+  "_climate_inputs": [
+    "data/maxtemp_synthetic.nc",
+    "data/precip_synthetic.nc"
+  ],
+  "_note": "Generated artefact \u2014 do NOT hand-edit. Bands derived from a spec-faithful reference simulation against the committed synthetic climate netCDFs. The headline gate is the observed-vs-predicted regression (\u03b2/\u03b1/R\u00b2); the mean band is a coarse secondary sanity check. Re-run data/reference_sim.py and commit both to update.",
+  "start_year": 2024,
   "target_year": 2123,
-
-  "_note_target_year": "Simulation runs years 2024 through 2123 inclusive (100 simulated years per replicate, with --replicates 100 per the run.sh contract). 'Year 100' is calendar year 2123 — the last year of the run. The scorer filters the CSV to year == target_year and computes the mean across cells AND across replicates.",
-
-  "_note_bands_provisional": "These bands are placeholders pending Open Q #1 in K8S_REFACTOR.md (year-100 acceptance-band recalibration). They are deliberately loose so a faithful run cannot be a false negative; they will be tightened against a reference distribution once the headline batch produces one. Do not interpret a pass on these bands as proof of spec faithfulness — interpret a fail as proof of un-faithfulness.",
-
-  "height_year100": {
-    "_metric": "Mean (across all cells and all replicates) of meanHeight column at year == target_year.",
-    "lo_m": 0,
-    "hi_m": 100
+  "n_replicates_reference": 100,
+  "regression_band": {
+    "_metric": "Fit observed_year_target ~ predicted_growth across all (cell, replicate) pairs, where predicted_growth is the spec's deterministic time-integral \u03a3_t \u0394h_max \u00b7 %_T(T(t,cell)) \u00b7 %_P(P(t,cell)) using the agent's reported climate values.",
+    "beta_lo": 0.95,
+    "beta_hi": 1.05,
+    "alpha_lo_m": -0.5,
+    "alpha_hi_m": 0.5,
+    "r2_min": 0.95,
+    "_reference_observed": {
+      "beta": 1.000013,
+      "alpha": -0.000249,
+      "r2": 0.999993,
+      "n_observations": 155000
+    }
   },
-
+  "height_year100": {
+    "_metric": "Mean meanHeight across all cells \u00d7 replicates at year == target_year. Coarse secondary sanity check.",
+    "lo_m": 0.0,
+    "hi_m": 152.5417,
+    "_observed_mean": 44.5608,
+    "_observed_std": 35.9936,
+    "_sigma_mult": 3.0
+  },
   "occupancy_year100": {
-    "_metric": "Mean tree count per cell at year == target_year, averaged across replicates.",
-    "lo_count": 9.9,
-    "hi_count": 10.1
+    "_metric": "Mean nTrees per cell at year == target_year. Spec value is exactly 10 \u2014 no death, reproduction, migration. Narrow tolerance is for floating-point representation, not biological variability.",
+    "lo_count": 9.999,
+    "hi_count": 10.001
   }
 }

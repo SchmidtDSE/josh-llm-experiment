@@ -2,32 +2,38 @@
 """Generate the synthetic ForeverTree climate dataset.
 
 Writes `data/maxtemp_synthetic.nc` and `data/precip_synthetic.nc` with
-shape (calendar_year, lat, lon) and a deterministic gradient designed to
-exercise the spec's growth equation cleanly:
+shape (calendar_year, lat, lon) and a deterministic gradient calibrated
+so the spec's growth equation operates in its *gradient* regime rather
+than its plateau regime — every cell grows nonzero, no cell saturates.
 
-- **Temperature** varies linearly with latitude (warmer south → cooler
-  north) and adds a small year-over-year warming trend, so the parabolic
-  temperature impact reaches its peak somewhere in the middle of the
-  grid and falls off symmetrically. Range: ~285K to ~320K, centred on
-  the spec's optimal 300K.
+Phase-6 ranges:
 
-- **Precipitation** varies linearly with longitude (wetter west → drier
-  east), as a physically-honest precipitation flux in `kg m⁻² s⁻¹`.
-  After the standard `× 31_536_000` (seconds per year) conversion,
-  values span roughly 100–700 mm/year — so the spec's sigmoid
-  (`P_low=300, P_high=500`) is active across the grid: some cells
-  well below threshold, some well above.
+- **Temperature** varies linearly with latitude (315K south → 285K
+  north at year 0) and warms +0.05 K/yr (≈ +5 K over 100 years,
+  RCP4.5-scale). Year-100 range is [290, 320] K — symmetric around
+  the spec's optimal 300K and entirely inside [T_min=270, T_max=330]
+  so no cell is clamped. The parabolic temperature response sees
+  both sides of the peak.
 
-The two gradients are orthogonal (T along lat, P along lon), so a
-correctly-implemented model should produce a clean diagonal pattern in
-mean tree height at year 10: tallest where T≈300K AND P≫P_high (centre
-to upper-west), shortest where T is at the extremes AND P<P_low
-(southern and northern edges of the dry east).
+- **Precipitation** varies linearly with longitude (550 mm/yr west →
+  250 mm/yr east) as a physically-honest precipitation flux in
+  `kg m⁻² s⁻¹`. After the standard `× 31_536_000` (seconds per year)
+  conversion, values span 250–550 mm/yr. The spec's sigmoid
+  (`P_low=300, P_high=500`, k=12) sees the active gradient region
+  without saturating completely at either end. No long-term P trend.
 
-The script is deterministic (fixed seed) — running it twice produces
-byte-identical netCDFs. Re-generate inside the fortree image:
+The two gradients are orthogonal (T along lat, P along lon), so the
+year-100 mean tree height is *separable* in (lat, lon) under faithful
+implementation. This is what makes the `observed ~ predicted`
+regression in data/reference_sim.py a meaningful headline check —
+the predicted total growth per cell is well-conditioned and the
+deviation from β=1 has a direct physical interpretation.
 
-    docker run --rm -v $(pwd):/repo -w /repo fortree:agent \\
+Both build_* functions read from fixed seeds; running this script
+twice produces byte-identical netCDFs. Re-generate inside the
+fortree image:
+
+    docker run --rm -v $(pwd):/repo -w /repo fortree:scorer \\
         python data/generate_synthetic_climate.py
 
 No NaN cells; no edge masking. The whole grid is valid.
@@ -47,8 +53,9 @@ LON_MIN, LON_MAX = -119.52, -117.98
 N_LAT = 31
 N_LON = 50
 
-# Year range matches the experiment's 2024–2034 window plus headroom.
-YEARS = list(range(2024, 2055))  # 31 years, same length as the Tulare file
+# Year range covers the phase-6 100-year experiment (2024–2123 inclusive)
+# plus 1 yr of headroom. Bumped from the phase-5 range of 2024–2054.
+YEARS = list(range(2024, 2125))  # 101 years
 
 SEED = 42
 
@@ -56,8 +63,15 @@ SEED = 42
 def build_temperature(years: list[int], lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
     """Latitude-driven temperature with a small warming trend.
 
-    Range: ~285K (cold north) to ~320K (warm south), drifting ~+5K from
-    2024 to 2054.
+    Phase-6 design:
+    - Spatial gradient softened from [285, 315] K to [285, 315] K at
+      year 0, kept symmetric around the spec's optimum 300K.
+    - Warming trend reduced from +0.15 K/yr to +0.05 K/yr (= +5 K over
+      100 years, roughly RCP4.5-scale).
+    - Year-100 range becomes [290, 320] K — still inside the spec's
+      tolerated [T_min=270, T_max=330] window with margin, so no cell
+      gets clamped at either end. Keeps the parabolic temperature
+      response in its gradient region, not its plateau region.
     """
     rng = np.random.default_rng(SEED)
     lat_grid, _ = np.meshgrid(lats, lons, indexing="ij")
@@ -66,8 +80,8 @@ def build_temperature(years: list[int], lats: np.ndarray, lons: np.ndarray) -> n
 
     out = np.empty((len(years), N_LAT, N_LON), dtype=np.float64)
     for i, year in enumerate(years):
-        base = 285.0 + 30.0 * lat_frac          # 285K north, 315K south
-        warming = 0.15 * (year - years[0])      # +4.5K over 30 years
+        base = 285.0 + 30.0 * lat_frac          # 285K north, 315K south at year 0
+        warming = 0.05 * (year - years[0])      # +5K over 100 years
         noise = rng.normal(0.0, 0.4, (N_LAT, N_LON))
         out[i] = base + warming + noise
     return out
@@ -84,8 +98,12 @@ def build_precipitation_raw(years: list[int], lats: np.ndarray, lons: np.ndarray
     misleading unit labels, no pipeline-history quirks). Standard
     `× 31_536_000` conversion recovers mm/year.
 
-    Target mm/year range is 100–700, putting the sigmoid threshold band
-    (P_low=300 → P_high=500) right in the middle of the grid.
+    Phase-6 design: target mm/year range is 250–550, putting the
+    sigmoid threshold band (P_low=300 → P_high=500) inside the gradient
+    region rather than spanning to the saturated extremes. Endpoints
+    sit ~50 mm/yr outside the [P_low, P_high] window so the sigmoid
+    sees both shoulders (~5% at the east edge, ~95% at the west edge)
+    without saturating completely. No long-term P trend.
     """
     rng = np.random.default_rng(SEED + 1)
     _, lon_grid = np.meshgrid(lats, lons, indexing="ij")
@@ -95,9 +113,9 @@ def build_precipitation_raw(years: list[int], lats: np.ndarray, lons: np.ndarray
     out = np.empty((len(years), N_LAT, N_LON), dtype=np.float64)
     for i, year in enumerate(years):
         # Build in mm/year, then convert to kg/m²/s by dividing by seconds-per-year.
-        base_mm_yr = 100.0 + 600.0 * lon_frac   # 100mm east → 700mm west
+        base_mm_yr = 250.0 + 300.0 * lon_frac   # 250mm east → 550mm west
         interannual = rng.normal(0.0, 40.0, (N_LAT, N_LON))
-        mm_yr = np.clip(base_mm_yr + interannual, 20.0, 850.0)
+        mm_yr = np.clip(base_mm_yr + interannual, 150.0, 650.0)
         out[i] = mm_yr / SECONDS_PER_YEAR
     return out
 
@@ -183,9 +201,11 @@ def main() -> None:
             "cell_methods": "calendar_year: maximum",
             "variable_id": "tasmax",
             "extended_description": (
-                "Synthetic. Linear south-to-north latitude gradient (285K → 315K) "
-                "plus a small +0.15 K/year warming trend and ±0.4 K Gaussian noise. "
-                "No NaN cells."
+                "Synthetic. Linear north-to-south latitude gradient (285K → 315K) "
+                "at year 0, plus a +0.05 K/year warming trend (=+5K over 100 yr) "
+                "and ±0.4 K Gaussian interannual noise. Year-100 range is "
+                "[290, 320] K, entirely inside the spec's [T_min=270, T_max=330] "
+                "tolerated window. No NaN cells."
             ),
         },
         years=YEARS, lats=lats, lons=lons,
@@ -202,10 +222,12 @@ def main() -> None:
             "cell_methods": "calendar_year: sum",
             "variable_id": "pr",
             "extended_description": (
-                "Synthetic. Linear west-to-east longitude gradient (~700 mm/yr west, "
-                "~100 mm/yr east) with ±40 mm/yr interannual noise. Values are a true "
-                "precipitation flux in `kg m⁻² s⁻¹`; multiplying by 31_536_000 "
-                "(seconds per year) yields mm/year."
+                "Synthetic. Linear west-to-east longitude gradient (~550 mm/yr west, "
+                "~250 mm/yr east) with ±40 mm/yr interannual noise; no long-term "
+                "trend. Values are a true precipitation flux in `kg m⁻² s⁻¹`; "
+                "multiplying by 31_536_000 (seconds per year) yields mm/year. "
+                "Range straddles the spec's sigmoid window [P_low=300, P_high=500] "
+                "without saturating at either end."
             ),
         },
         years=YEARS, lats=lats, lons=lons,
