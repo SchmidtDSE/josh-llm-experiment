@@ -306,6 +306,17 @@ the workspace files.
   without invoking any tool.
 - **Targets renamed.** `prompts/target_directive_{josh,mesa}.md` →
   `prompts/targets/{josh,mesa}.md` to match the new subfolder layout.
+- **Review-driven polish.** `launch_batch.py --upload` flag for
+  opportunistic auto-archive after batch completion (non-fatal on
+  failure; the standalone `upload_batch.sh` remains the
+  crash-recovery path). README sweep examples reframed around a
+  committed CSV panel rather than nested bash for-loops. SIDECAR's
+  cell-identity prose tightened to a single legal-identifier
+  sentence (no framework-defaults exposition). EXPERIMENTAL_DESIGN
+  gained the "why force decomposition" methodology paragraph
+  capturing the pre-phase-5c observation that models were getting
+  stuck on orchestration concerns and skipping the
+  ecological-modelling step.
 
 ## Current state
 
@@ -350,7 +361,7 @@ materiality:
 | Permissive cell-identity schema | yes | ✓ |
 | `.jshd` LOC fix | yes | ✓ |
 | Batch-report diagnostics | yes | ✓ |
-| Durable upload to GCS | yes | ✓ host-side `orchestration/upload_batch.sh` (mc, no container path) |
+| Durable upload to GCS | yes | ✓ host-side `orchestration/upload_batch.sh` (mc, no container path); `launch_batch.py --upload` auto-invokes it post-batch |
 | `WALL_CLOCK_BACKSTOP_SEC` bump | yes | ⚠ default 1800s is tight — observed cells run 27–39 min on claude. Bump to 3600s in `.env` before headline. |
 | Model panel finalised | yes | ⚠ gemma struggled with multi-invocation tool use (0/4 cells did any work — see panel batch). Decide before headline: drop gemma, switch to gemma4, or accept the asymmetric panel and report it. |
 | Acceptance-range methodology (EXPERIMENTAL_DESIGN Open Q #3) | yes | ⚠ ranges currently pass scientifically-broken runs. Decide drop / tighten / fold into `cell_passed`. |
@@ -367,11 +378,24 @@ upload runs after a batch completes, against the per-batch run dir.
 - [orchestration/upload_batch.sh](orchestration/upload_batch.sh) —
   reads `MINIO_*` env vars from `.env`, runs `mc alias set` then
   `mc mirror --overwrite` against `runs/<batch-tag>/`. Idempotent
-  (re-mirroring only re-uploads changed objects). Invoked manually
-  by the operator after each batch:
+  (re-mirroring only re-uploads changed objects).
+
+- [orchestration/launch_batch.py](orchestration/launch_batch.py)
+  `--upload` flag — auto-invokes `upload_batch.sh` against the
+  completed batch dir after report generation. Failure writes
+  `upload.log` under the batch dir but does not fail the batch
+  (the artefacts are still on local disk and the standalone script
+  is idempotent, so a host crash or transient upload error is
+  recoverable by rerunning `./orchestration/upload_batch.sh
+  runs/batch-<tag>` directly). Two invocation modes:
 
   ```sh
-  ./orchestration/upload_batch.sh runs/batch-<tag>
+  # auto: upload runs at end of batch driver
+  uv run orchestration/launch_batch.py --cells panel.csv \
+    --batch-tag head-2026-05 --upload
+
+  # manual: any time after the batch finishes / for crash recovery
+  ./orchestration/upload_batch.sh runs/batch-head-2026-05
   ```
 
 - [.env.example](.env.example) — documents `MINIO_ENDPOINT`,
