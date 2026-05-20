@@ -63,6 +63,33 @@ def _plan_todos(row):
     return row.get("plan_todos") or {}
 
 
+FUZZY_GLYPH = {"yes": "✓", "partial": "~", "no": "✗"}
+
+
+def _load_fuzzy(batch_dir: Path, run_id: str) -> dict | None:
+    """Read <batch_dir>/<run_id>/scorer.fuzzy.json or None.
+
+    Sidecar file — lives next to scorer.json so re-running the judge
+    doesn't touch the mechanical scorer's frozen output.
+    """
+    fz_path = batch_dir / run_id / "scorer.fuzzy.json"
+    if not fz_path.is_file():
+        return None
+    try:
+        return json.loads(fz_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _q1_glyph(fz: dict | None) -> str:
+    if fz is None:
+        return ""
+    if fz.get("parse_error"):
+        return "⚠"
+    q1 = fz.get("q1") or {}
+    return FUZZY_GLYPH.get(q1.get("answer"), "?")
+
+
 def _fmt_step_glyphs(row) -> str:
     """One-character-per-step status glyph string. ✓ exit 0, ✗ non-zero,
     · step never ran (loop aborted before reaching it). Always 8 wide
@@ -270,6 +297,118 @@ def render_passing_callouts(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def render_fuzzy_matrix(rows: list[dict], fuzzy_by_id: dict[str, dict]) -> str:
+    """At-a-glance grid of Q1 answers per (model, rung+target) cell.
+
+    Cell value: "Yp/Pp/Np" giving counts of yes/partial/no across that
+    cell's replicates (parse_error and missing not shown — they pull
+    the total below the replicate count, which is the signal).
+    """
+    models = sorted({r["model"] for r in rows})
+    cells = sorted({(r["rung"], r["target"]) for r in rows})
+    if not cells:
+        return "_(no cells)_"
+    header = "| model | " + " | ".join(f"r{r} {t}" for (r, t) in cells) + " |"
+    sep = "|---|" + "|".join(["---"] * len(cells)) + "|"
+    lines = [header, sep]
+    for m in models:
+        row_cells = []
+        for (rg, tg) in cells:
+            matched = [
+                r for r in rows
+                if r["model"] == m and r["rung"] == rg and r["target"] == tg
+            ]
+            counts = Counter()
+            for r in matched:
+                fz = fuzzy_by_id.get(r["run_id"])
+                if fz is None:
+                    counts["missing"] += 1
+                elif fz.get("parse_error"):
+                    counts["parse_error"] += 1
+                else:
+                    ans = (fz.get("q1") or {}).get("answer")
+                    if ans in {"yes", "partial", "no"}:
+                        counts[ans] += 1
+            yes = counts.get("yes", 0)
+            partial = counts.get("partial", 0)
+            no = counts.get("no", 0)
+            cell = f"{yes}✓ {partial}~ {no}✗"
+            row_cells.append(cell)
+        lines.append(f"| {m} | " + " | ".join(row_cells) + " |")
+    return "\n".join(lines)
+
+
+def render_fuzzy_per_cell(rows: list[dict], fuzzy_by_id: dict[str, dict]) -> str:
+    lines = [
+        "| run | model | r | tgt | Q1 | Q1 justification | Q2 observations |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for r in sorted(rows, key=lambda x: (x["model"], x["rung"], x["target"], x["run_id"])):
+        fz = fuzzy_by_id.get(r["run_id"])
+        rid_short = r["run_id"][:8]
+        report_rel = f"./{r['run_id']}/report.md"
+        rid_link = f"[`{rid_short}`]({report_rel})"
+        if fz is None:
+            lines.append(
+                f"| {rid_link} | {r['model']} | {r['rung']} | {r['target']} | "
+                f"_(missing)_ | — | — |"
+            )
+            continue
+        if fz.get("parse_error"):
+            lines.append(
+                f"| {rid_link} | {r['model']} | {r['rung']} | {r['target']} | "
+                f"⚠ parse | {_short(fz.get('parse_error', ''), 80)} | — |"
+            )
+            continue
+        q1 = fz.get("q1") or {}
+        q2 = fz.get("q2") or {}
+        ans = q1.get("answer", "?")
+        glyph = FUZZY_GLYPH.get(ans, "?")
+        just = (q1.get("justification") or "").replace("|", "\\|").replace("\n", " ")
+        obs = (q2.get("observations") or "").replace("|", "\\|").replace("\n", " ")
+        lines.append(
+            f"| {rid_link} | {r['model']} | {r['rung']} | {r['target']} | "
+            f"{glyph} {ans} | {_short(just, 120)} | {_short(obs, 200)} |"
+        )
+    return "\n".join(lines)
+
+
+def render_fuzzy_crosstab(rows: list[dict], fuzzy_by_id: dict[str, dict]) -> str:
+    keyed: dict[tuple[str, str], Counter] = defaultdict(Counter)
+    judges = set()
+    agents = set()
+    for r in rows:
+        fz = fuzzy_by_id.get(r["run_id"])
+        if fz is None:
+            continue
+        ans = (fz.get("q1") or {}).get("answer")
+        if ans not in {"yes", "partial", "no"}:
+            continue
+        judge_id = fz.get("judge_model_id") or "?"
+        keyed[(r["model"], judge_id)][ans] += 1
+        agents.add(r["model"])
+        judges.add(judge_id)
+    if not keyed:
+        return "_(no parsable fuzzy data — nothing to cross-tabulate)_"
+    judges_sorted = sorted(judges)
+    agents_sorted = sorted(agents)
+    header = "| agent ↓ / judge → | " + " | ".join(judges_sorted) + " |"
+    sep = "|---|" + "|".join(["---"] * len(judges_sorted)) + "|"
+    lines = [header, sep]
+    for a in agents_sorted:
+        cells = []
+        for j in judges_sorted:
+            c = keyed.get((a, j))
+            if not c:
+                cells.append("—")
+            else:
+                cells.append(
+                    f"{c.get('yes', 0)}✓ {c.get('partial', 0)}~ {c.get('no', 0)}✗"
+                )
+        lines.append(f"| {a} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
 def build_report(batch_dir: Path, manifest_path: Path | None = None) -> str:
     if manifest_path is None:
         manifest_path = batch_dir / "manifest.jsonl"
@@ -283,6 +422,13 @@ def build_report(batch_dir: Path, manifest_path: Path | None = None) -> str:
             if not line:
                 continue
             rows.append(json.loads(line))
+
+    fuzzy_by_id: dict[str, dict] = {}
+    for r in rows:
+        fz = _load_fuzzy(batch_dir, r["run_id"])
+        if fz is not None:
+            fuzzy_by_id[r["run_id"]] = fz
+    has_fuzzy = bool(fuzzy_by_id)
 
     total = len(rows)
     did_run = sum(1 for r in rows if _scorer(r).get("did_run"))
@@ -313,6 +459,27 @@ def build_report(batch_dir: Path, manifest_path: Path | None = None) -> str:
             f"PLAN.md todos {total_todos_checked}/{total_todos_possible} checked"
         )
 
+    fuzzy_summary_line = ""
+    if has_fuzzy:
+        q1_counts: Counter = Counter()
+        for r in rows:
+            fz = fuzzy_by_id.get(r["run_id"])
+            if fz is None:
+                continue
+            if fz.get("parse_error"):
+                q1_counts["parse_error"] += 1
+                continue
+            ans = (fz.get("q1") or {}).get("answer")
+            if ans in {"yes", "partial", "no"}:
+                q1_counts[ans] += 1
+        fuzzy_summary_line = (
+            f"\n**Fuzzy judge Q1**: "
+            f"{q1_counts.get('yes', 0)}✓ {q1_counts.get('partial', 0)}~ "
+            f"{q1_counts.get('no', 0)}✗ "
+            f"(parse_error={q1_counts.get('parse_error', 0)}, "
+            f"missing={total - len(fuzzy_by_id)})"
+        )
+
     sections = [
         f"# Batch: `{batch_dir.name}`",
         (
@@ -321,6 +488,7 @@ def build_report(batch_dir: Path, manifest_path: Path | None = None) -> str:
             f"**schema_ok**: {schema_ok}/{total} · "
             f"**target_conformance**: {target_conf}/{total}"
             + step_summary_line
+            + fuzzy_summary_line
         ),
         "## At a glance",
         render_matrix(rows),
@@ -334,8 +502,17 @@ def build_report(batch_dir: Path, manifest_path: Path | None = None) -> str:
         render_failure_tally(rows),
         "## Per-cell detail",
         render_per_cell_table(rows),
-        f"\n_Generated from `{manifest_path.name}` ({total} rows)._",
     ]
+    if has_fuzzy:
+        sections += [
+            "## Fuzzy judge — at a glance",
+            render_fuzzy_matrix(rows, fuzzy_by_id),
+            "## Fuzzy judge — per cell",
+            render_fuzzy_per_cell(rows, fuzzy_by_id),
+            "## Fuzzy judge — agent × judge cross-tab",
+            render_fuzzy_crosstab(rows, fuzzy_by_id),
+        ]
+    sections.append(f"\n_Generated from `{manifest_path.name}` ({total} rows)._")
     return "\n\n".join(sections)
 
 

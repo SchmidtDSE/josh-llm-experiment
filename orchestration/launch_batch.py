@@ -669,6 +669,17 @@ def parse_args() -> argparse.Namespace:
             "standalone script."
         ),
     )
+    parser.add_argument(
+        "--skip-fuzzy-evaluation",
+        action="store_true",
+        help=(
+            "Skip the host-side LLM-judge pass that runs after scoring. "
+            "By default the judge writes scorer.fuzzy.json per cell and "
+            "fuzzy_summary.md per batch (~$0.05–0.20/cell). Disable for "
+            "cost-sensitive sweeps or when re-running the judge manually "
+            "via orchestration/run_fuzzy_judge.sh."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -818,6 +829,32 @@ def main() -> int:
     write_summary(
         summary_path, batch_tag, len(cells_in_seq), succeeded, failed, args.jobs
     )
+
+    # Fuzzy LLM-judge: default-on; --skip-fuzzy-evaluation opts out. Runs
+    # BEFORE generate_batch_report so the report can fold in the per-cell
+    # scorer.fuzzy.json files, and BEFORE --upload so the cloud mirror
+    # carries the fuzzy artefacts. Non-fatal on failure — the standalone
+    # `./orchestration/run_fuzzy_judge.sh <batch_dir>` script is the
+    # crash-recovery path.
+    if args.skip_fuzzy_evaluation:
+        console.print("[dim]  Fuzzy judge: skipped (--skip-fuzzy-evaluation)[/]")
+    else:
+        fuzzy_script = REPO_ROOT / "orchestration" / "run_fuzzy_judge.sh"
+        console.print(f"[bold]▶ Fuzzy judge:[/] {fuzzy_script} {batch_dir}")
+        try:
+            proc = subprocess.run(
+                [str(fuzzy_script), str(batch_dir)],
+                stdout=sys.stdout,
+                stderr=subprocess.STDOUT,
+            )
+            if proc.returncode != 0:
+                console.print(
+                    f"  [yellow]fuzzy judge returned exit {proc.returncode} — "
+                    f"see {batch_dir / 'fuzzy.log'}; rerun "
+                    f"`./orchestration/run_fuzzy_judge.sh {batch_dir}` to retry[/]"
+                )
+        except Exception as exc:  # noqa: BLE001 — keep batch driver alive
+            console.print(f"  [yellow]fuzzy judge invocation failed:[/] {exc}")
 
     batch_report_path = batch_dir / "batch_report.md"
     try:

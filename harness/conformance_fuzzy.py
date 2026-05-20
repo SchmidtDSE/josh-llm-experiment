@@ -12,6 +12,9 @@ through this module — it just keeps `scorer.json`'s shape stable.
 The `target_conformance_fuzzy` field staying `null` here is
 intentional: the LLM-judge answers live in `scorer.fuzzy.json`,
 not in `scorer.json`.
+
+Live host-side path: `orchestration/run_fuzzy_judge.sh` (auto-invoked
+by `launch_batch.py` unless `--skip-fuzzy-evaluation` is set).
 """
 
 from __future__ import annotations
