@@ -140,6 +140,24 @@ syntax") that the mechanical metrics don't catch.
 | When run | Post-hoc — never gates the cell from completing; the operator invokes a sweep across a completed batch dir |
 | Cost | ~$0.05–0.20 per cell (rough estimate; transcripts run ~10–40k input tokens) |
 
+### Execution path: host-side, no opencode
+
+The LLM-judge is a **single-shot completion**, not an agent loop —
+the model is asked the two questions and answers them, with no tool
+use. That means we do not need opencode (which is built for
+multi-turn tool-using agents); a direct POST to OpenRouter's
+`/chat/completions` endpoint is the right shape. Concretely:
+
+- Runs **host-side**, same way `upload_batch.sh` does. Reads
+  `OPENROUTER_API_KEY` from `.env`. No container.
+- `fortree:scorer` does carry opencode 1.14.50 inherited from the
+  `base` stage, but it's irrelevant here: the scorer runs with
+  `--network=none` (no OpenRouter reachability), and opencode's
+  orchestrator overhead doesn't buy us anything for a one-shot ask.
+- ~30 lines of Python: read `workspace/*.{py,josh}` + `transcript.md`
+  + `scorer.json`, build the two prompts, POST, parse JSON answer,
+  write `scorer.fuzzy.json`.
+
 ### Implementation status
 
 Not yet implemented. The skeleton lives in
@@ -147,13 +165,13 @@ Not yet implemented. The skeleton lives in
 Plan when picked up:
 
 - `harness/conformance_fuzzy.py` — `judge_cell(run_dir, judge_model_id)`
-  reads workspace + transcript, builds a single prompt, posts to
-  OpenRouter, writes `scorer.fuzzy.json`. Idempotent: if
-  `scorer.fuzzy.json` already exists and `schema_version` matches,
-  skip.
-- `orchestration/run_fuzzy_judge.sh` (new) — walks a batch dir, runs
-  the judge per cell, accumulates a `fuzzy_summary.md` rolling up Q1
-  yes/no/partial counts and Q2 cross-cell themes.
+  reads workspace + transcript + `scorer.json`, builds a single
+  prompt, POSTs to OpenRouter via plain `requests`, writes
+  `scorer.fuzzy.json`. Idempotent: if `scorer.fuzzy.json` already
+  exists and `schema_version` matches, skip.
+- `orchestration/run_fuzzy_judge.sh` (new) — walks a batch dir,
+  calls `judge_cell` per cell, accumulates a `fuzzy_summary.md`
+  rolling up Q1 yes/no/partial counts and Q2 cross-cell themes.
 - `batch_report.md` gains a `fuzzy_q1` column (yes/no/partial glyph
   per cell) when fuzzy results are present; absent otherwise.
 
@@ -161,9 +179,9 @@ The judge sees the SAME `claude-opus-4.7` we score under, so there's
 a same-model-judges-itself caveat for any cell where claude is the
 agent. Mitigation: report Q1/Q2 cross-tabulated by `(model, judge)`
 so the bias is visible in the data; consider a second judge
-(`anthropic/claude-haiku` or `openai/gpt-5`) only if the first-pass
-results look suspicious. This stays a convenience artefact, not a
-headline metric.
+(e.g. a different family entirely) only if the first-pass results
+look suspicious. This stays a convenience artefact, not a headline
+metric.
 
 ## Re-analysing completed runs
 
