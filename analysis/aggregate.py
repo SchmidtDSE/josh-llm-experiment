@@ -96,6 +96,17 @@ ROW_FIELDS = [
     "steps_completed",
     "steps_total",
     "steps_all_eight_ok",
+    # fuzzy LLM judge — written by run-judge.sh in the scorer container
+    # (or orchestration/run_fuzzy_judge.sh in the host-side re-judge
+    # path). Schema: fuzzy-v2. See prompts/FUZZY_JUDGE.md for Q1/Q2/Q3.
+    "fuzzy_q1_answer",
+    "fuzzy_q1_justification",
+    "fuzzy_q2_observations",
+    "fuzzy_q3_answer",
+    "fuzzy_q3_justification",
+    "fuzzy_parse_error",
+    "fuzzy_judge_model",
+    "fuzzy_schema_version",
     # wall time + agent-phase cost / activity. See module docstring for
     # the sim_wall vs agent_wall distinction.
     "sim_wall_seconds",
@@ -163,6 +174,21 @@ def _load_json(path: Path) -> Optional[dict]:
         return json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _load_fuzzy(cell_dir: Path) -> dict:
+    """K8s scorer container writes scorer.fuzzy.json under
+    workspace/results/. The host-side re-judge path matches that layout
+    on k8s-pulled batches and falls back to <cell>/scorer.fuzzy.json on
+    legacy local-orchestration batches. Try both; return {} when absent."""
+    for candidate in (
+        cell_dir / "workspace" / "results" / "scorer.fuzzy.json",
+        cell_dir / "scorer.fuzzy.json",
+    ):
+        d = _load_json(candidate)
+        if d is not None:
+            return d
+    return {}
 
 
 def _parse_iso_z(s: str) -> Optional[datetime]:
@@ -276,6 +302,7 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
 
     steps_summary = _summarize_steps(cell_dir)
     step_totals = _sum_step_exports(cell_dir)
+    fuzzy = _load_fuzzy(cell_dir)
 
     return {
         "batch_tag": batch_tag,
@@ -309,6 +336,14 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
         "steps_completed": steps_summary["steps_completed"],
         "steps_total": steps_summary["steps_total"],
         "steps_all_eight_ok": steps_summary["steps_all_eight_ok"],
+        "fuzzy_q1_answer": _safe_get(fuzzy, "q1", "answer"),
+        "fuzzy_q1_justification": _safe_get(fuzzy, "q1", "justification"),
+        "fuzzy_q2_observations": _safe_get(fuzzy, "q2", "observations"),
+        "fuzzy_q3_answer": _safe_get(fuzzy, "q3", "answer"),
+        "fuzzy_q3_justification": _safe_get(fuzzy, "q3", "justification"),
+        "fuzzy_parse_error": fuzzy.get("parse_error"),
+        "fuzzy_judge_model": fuzzy.get("judge_model_id"),
+        "fuzzy_schema_version": fuzzy.get("schema_version"),
         "sim_wall_seconds": scorer.get("wall_time_seconds"),
         "agent_wall_seconds": steps_summary["agent_wall_seconds"],
         "agent_cost_usd": step_totals.get("cost_usd"),

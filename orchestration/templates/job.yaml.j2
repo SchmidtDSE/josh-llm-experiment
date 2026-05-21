@@ -233,6 +233,19 @@ spec:
               value: "{{ cell_id }}"
             - name: UPLOAD_SOURCE_DIR
               value: "/cell-data"
+            # Fuzzy judge (run-judge.sh) needs OpenRouter access to drive
+            # the reviewer agent. Same Secret the agent initContainer
+            # mounts; judge model is configured separately via
+            # JUDGE_MODEL (default `codex` in run-judge.sh). The trust
+            # boundary stays at the image level — the agent image still
+            # has no mc, no bucket creds, and no FUZZY_JUDGE.md.
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ openrouter_secret }}
+                  key: api-key
+            - name: JUDGE_MODEL
+              value: "{{ judge_model }}"
           volumeMounts:
             - name: cell-data
               mountPath: /cell-data

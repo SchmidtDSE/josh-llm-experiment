@@ -114,3 +114,21 @@ RUN /tmp/install_mc.sh && rm /tmp/install_mc.sh
 
 COPY scorer-and-upload.sh /opt/scorer-and-upload.sh
 RUN chmod +x /opt/scorer-and-upload.sh
+
+# Fuzzy-judge assets — Q1/Q2/Q3 LLM-judge driven from inside the scorer
+# container (see run-judge.sh). Scorer-only by design: the agent image
+# above doesn't carry FUZZY_JUDGE.md or the judge opencode config, so
+# the agent can't read the rubric it'll be evaluated against. The judge
+# itself only uses read/glob/grep (config/opencode.judge.json) and only
+# writes scorer.fuzzy.json — no path back into agent territory.
+# Layout mirrors the repo layout at /opt/ so resolve_model.py finds
+# config/models.yaml via its usual `__file__.parent.parent` walk
+# without forking the path logic.
+COPY prompts/FUZZY_JUDGE.md /opt/prompts/FUZZY_JUDGE.md
+COPY config/opencode.judge.json /opt/config/opencode.judge.json
+COPY config/models.yaml /opt/config/models.yaml
+COPY orchestration/_fuzzy_parse.py /opt/orchestration/_fuzzy_parse.py
+COPY orchestration/extract_transcript.py /opt/orchestration/extract_transcript.py
+COPY orchestration/resolve_model.py /opt/orchestration/resolve_model.py
+COPY run-judge.sh /opt/run-judge.sh
+RUN chmod +x /opt/run-judge.sh

@@ -125,7 +125,35 @@ for cell in "$BATCH_DIR"/*/; do
   fi
   TOTAL=$((TOTAL + 1))
 
-  fuzzy_out="$cell/scorer.fuzzy.json"
+  # Layout detection — k8s-pulled cells carry scorer.json at
+  # workspace/results/, local-orchestration cells have it at the cell
+  # root. Match the fuzzy output's location to the scorer.json's so the
+  # aggregator finds both in the same dir.
+  if [ -f "$cell/workspace/results/scorer.json" ]; then
+    scorer_json="$cell/workspace/results/scorer.json"
+    fuzzy_out="$cell/workspace/results/scorer.fuzzy.json"
+  else
+    scorer_json="$cell/scorer.json"
+    fuzzy_out="$cell/scorer.fuzzy.json"
+  fi
+
+  # The FUZZY_JUDGE.md prompt names `scorer.json` and `transcript.md`
+  # at the run-dir root. K8s cells have neither at that path: symlink
+  # the scorer.json from workspace/results/, and run
+  # extract_transcript.py to materialise the transcript from the
+  # per-step session exports under agent_meta/steps/ (or the legacy
+  # agent_artifacts/session_export.json on older batches).
+  if [ -f "$scorer_json" ] && [ ! -e "$cell/scorer.json" ]; then
+    ln -sf "$scorer_json" "$cell/scorer.json"
+  fi
+  if [ ! -f "$cell/transcript.md" ]; then
+    if ! python3 "$REPO_ROOT/orchestration/extract_transcript.py" "$cell" >/dev/null 2>&1; then
+      # Drop a placeholder so the judge's read tool still finds the path.
+      printf '# Transcript — unavailable\n\n(extract_transcript.py failed)\n' \
+        > "$cell/transcript.md"
+    fi
+  fi
+
   if [ -f "$fuzzy_out" ] && [ "$FORCE" != "true" ]; then
     existing_ver=$(python3 -c "import json,sys
 try:

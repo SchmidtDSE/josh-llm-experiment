@@ -51,6 +51,11 @@ DEFAULT_NAMESPACE = "joshsim"
 DEFAULT_SERVICE_ACCOUNT = "joshsim-batch"
 DEFAULT_MINIO_SECRET = "minio-creds"
 DEFAULT_OPENROUTER_SECRET = "openrouter-creds"
+# Judge model for the in-Pod fuzzy judge (run-judge.sh). Short name from
+# config/models.yaml; resolved to its OpenRouter slug inside the scorer
+# container. Pinned to `codex` (openai/gpt-5-codex) so no agent in the
+# panel self-judges. Override with --judge-model.
+DEFAULT_JUDGE_MODEL = "codex"
 
 # Pod-level liveness ceiling. The pr5-smoke (sonnet+josh) completed in
 # 68 min wall-clock; the first mini-headline lost all 100 cells at
@@ -192,6 +197,7 @@ def _render_one(env, args, model: str, target: str, rep_idx: int, rep_count: int
         minio_secret=args.minio_secret,
         minio_prefix=args.minio_prefix or args.batch_tag,
         openrouter_secret=args.openrouter_secret,
+        judge_model=args.judge_model,
         active_deadline_seconds=args.active_deadline_seconds,
         ttl_seconds_after_finished=args.ttl_seconds_after_finished,
         wall_clock_backstop_sec=args.wall_clock_backstop_sec,
@@ -228,6 +234,9 @@ def main() -> int:
     parser.add_argument("--service-account", default=DEFAULT_SERVICE_ACCOUNT)
     parser.add_argument("--minio-secret", default=DEFAULT_MINIO_SECRET)
     parser.add_argument("--openrouter-secret", default=DEFAULT_OPENROUTER_SECRET)
+    parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL,
+                        help="Short name (config/models.yaml) for the in-Pod fuzzy "
+                             f"judge model. Default: {DEFAULT_JUDGE_MODEL}.")
     parser.add_argument("--minio-prefix", default="",
                         help="Object-key prefix (default: same as --batch-tag).")
 
