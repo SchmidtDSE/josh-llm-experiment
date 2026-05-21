@@ -153,6 +153,11 @@ The model should export **per cell, per step, per replicate**:
 | `temperature`   | The patch's annual mean temperature this step (K).      |
 | `precipitation` | The patch's annual precipitation this step (mm/year).   |
 
-This should happen as a CSV where each cell is identified either by latitude / longitude or a cell index, and where the replicate index is exposed as its own column (Josh's default schema includes a `replicate` column; Mesa implementations should emit one explicitly). The full CSV therefore has `n_cells × 100 years × 100 replicates` rows.
+Each cell is identified either by latitude / longitude or a cell index. Two output layouts are accepted; pick whichever is natural for your framework:
+
+- **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column (0..99) distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate.
+- **One CSV per replicate** (Josh's canonical pattern) at `output/results_{N}.csv` — i.e. `results_0.csv`, `results_1.csv`, …, `results_99.csv`. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed. For Josh, this is the natural output of `exportFiles.patch = "file:///sandbox/output/results_{replicate}.csv"` combined with `--replicates 100`.
+
+Total row count across whichever layout you pick: `n_cells × 100 years × 100 replicates`.
 
 <br>

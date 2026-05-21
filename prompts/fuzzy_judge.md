@@ -72,13 +72,14 @@ self-contain:
    for Mesa). Not a manual pre-step the user runs first.
 2. **100 replicates** — invoked via `josh run --replicates 100 …` for
    Josh, or an explicit 100-iteration loop over Model instances for
-   Mesa. The CSV must contain 100 distinct replicate indices.
-3. **100 simulated years** — years 2024 through 2123 inclusive (100
-   calendar years, 99 growth events because year 2024 is init-only).
+   Mesa. The output spans 100 distinct replicates whether emitted as
+   one consolidated CSV with a `replicate` column or as one CSV per
+   replicate (`output/results_<N>.csv`) — both layouts are valid.
+3. **100 simulated years** — years 2024 through 2123 inclusive.
 
 Three-state answer:
 - `yes`: all three boxes are checked. `./run.sh` does preprocessing,
-  invokes 100 replicates, and the CSV spans 2024..2123.
+  invokes 100 replicates, and the CSV(s) span 2024..2123.
 - `partial`: at least one box is missing (e.g. preprocessing is a
   manual step the agent didn't fold into `./run.sh`, OR replicates
   are 1 instead of 100, OR the year span is shorter than 100). Note

@@ -3,8 +3,12 @@ Implement this using the Mesa 3.x Python framework (already installed). The impl
 `./run.sh` must do the whole workload end-to-end:
 
 1. Any data preprocessing your simulation needs (loading the climate netCDFs from `data/`, converting precipitation flux to mm/year via `× 31_536_000`, building any indexed-by-`(year, cell)` lookup structures the Model will use).
-2. Run the simulation for **100 independent replicates**, each running the full 100 years (2024–2123). Mesa doesn't have a built-in `--replicates` flag — you write the loop yourself: instantiate the Model 100 times with different RNG seeds, run each one for 100 steps, and stitch the per-replicate outputs together into a single CSV with a `replicate` column (integer index, 0..99).
-3. Emit `./output/results.csv` with `n_cells × 100 × 100` rows.
+2. Run the simulation for **100 independent replicates**, each running the full 100 years (2024–2123). Mesa doesn't have a built-in `--replicates` flag — write the loop yourself: instantiate the Model 100 times with different RNG seeds, run each one for 100 steps.
+3. Emit the per-cell × per-year × per-replicate output to `output/`. Two layouts are accepted:
+   - **Consolidated**: write a single `output/results.csv` with a `replicate` column (integer 0..99). Natural after a `pd.concat([df.assign(replicate=i) for i, df in enumerate(per_rep_frames)])`.
+   - **Per-replicate**: write `output/results_0.csv` … `output/results_99.csv`, one DataFrame per Model instance. Natural inside the loop: `model.dc.get_agent_vars_dataframe().to_csv(f"output/results_{rep}.csv")` per iteration. No `replicate` column needed inside each file.
+
+   The scorer accepts both; pick whichever feels more idiomatic for your implementation.
 
 Do not split preprocessing into a separate manual step the user has to run first — the scorer invokes `./run.sh` exactly once.
 
