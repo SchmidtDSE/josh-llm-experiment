@@ -99,7 +99,9 @@ spec:
           image: {{ agent_image }}
           # Symlink the paths agent-entrypoint.sh hardcodes onto the
           # shared emptyDir so the scorer can read everything after the
-          # agent exits.
+          # agent exits. /sandbox is mounted directly via subPath (next
+          # block) because agent-entrypoint.sh invokes opencode with
+          # `--dir /sandbox` and opencode writes the workspace there.
           command: ["/bin/bash", "-ec"]
           args:
             - |
@@ -107,7 +109,6 @@ spec:
               ln -sfn /cell-data/prompt_body.md /opt/prompt_body.md
               mkdir -p /root/.config
               ln -sfn /cell-data/opencode /root/.config/opencode
-              cd /cell-data/workspace
               exec /opt/agent-entrypoint.sh
           env:
             - name: OPENROUTER_API_KEY
@@ -124,6 +125,13 @@ spec:
           volumeMounts:
             - name: cell-data
               mountPath: /cell-data
+            # /sandbox = the workspace subtree. agent-entrypoint.sh's
+            # `opencode run --dir /sandbox` writes here; the mount makes
+            # those writes land in the emptyDir at /cell-data/workspace
+            # so the scorer (next container) sees them after agent exits.
+            - name: cell-data
+              mountPath: /sandbox
+              subPath: workspace
           resources:
             requests:
               cpu: "{{ agent_cpu_request }}"
