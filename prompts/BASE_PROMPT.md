@@ -36,17 +36,20 @@ This simulation requires operating across both space and time.
 
 | Parameter        | Default value                                    |
 |------------------|--------------------------------------------------|
-| Patch edge length| 7.5 km                                           |
+| Patch edge length| 16 km                                            |
 | Bounding box low | 35.80° latitude, −119.52° longitude              |
 | Bounding box high| 36.73° latitude, −117.98° longitude              |
 
 The patch edge length is intentionally *coarser* than the climate
-netCDFs' native ~3 km grid resolution — exercising the implementation's
-handling of mismatched grid/data resolutions (interpolation,
-aggregation, or nearest-neighbour are all acceptable strategies; the
-acceptance gate doesn't care which, as long as the agent's reported
-`temperature` and `precipitation` columns reflect what the simulation
-actually used).
+netCDFs' native ~3 km grid resolution — roughly 5× coarser, so each
+patch covers ~25 native climate cells and the implementation has to
+do non-trivial spatial aggregation (or interpolation, or
+nearest-neighbour — all acceptable strategies; the acceptance gate
+doesn't care which, as long as the agent's reported `temperature`
+and `precipitation` columns reflect what the simulation actually
+used). The 16 km grid yields roughly 60–70 patches over the region,
+which keeps memory + sim wall-clock tractable while still exercising
+the data-binding layer.
 
 ### Temporal domain
 
