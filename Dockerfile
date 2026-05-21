@@ -82,6 +82,16 @@ RUN chmod +x /opt/agent-entrypoint.sh
 # PR6); the k8s Pod model cannot bind-mount host files, and these
 # prompts are repo-committed, deterministic, and small (~40 lines total).
 COPY prompts/steps/ /opt/steps/
+# Bake the canonical synthetic climate netCDFs into the image (~2.5 MiB).
+# In local orchestration these were bind-mounted from the repo's data/
+# dir; the k8s flow has no host filesystem to mount from, so we bake +
+# copy. The agent's Pod prelude does `cp /opt/data/*.nc /sandbox/data/`
+# before launching opencode so the workspace sees them at the canonical
+# path the prompt names. Without this seed, the agent would write its
+# own generate_data.py to synthesise replacements — observed once in a
+# pr5 smoke, which then chose 1 km grid resolution (≈14 000 cells) vs
+# the canonical 31×50 = 1 550 cells, and stalled in josh preprocess.
+COPY data/*.nc /opt/data/
 
 # ---------- scorer stage ----------
 FROM base AS scorer

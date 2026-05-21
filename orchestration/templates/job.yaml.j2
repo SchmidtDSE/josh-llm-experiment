@@ -109,6 +109,13 @@ spec:
               ln -sfn /cell-data/prompt_body.md /opt/prompt_body.md
               mkdir -p /root/.config
               ln -sfn /cell-data/opencode /root/.config/opencode
+              # Seed the workspace's data/ from the netCDFs baked into
+              # the agent image. SIDECAR.md tells the agent that
+              # data/<...>.nc is provided; without this copy the agent
+              # writes its own generate_data.py and stalls preprocess
+              # on a higher-resolution synthetic grid.
+              mkdir -p /sandbox/data
+              cp /opt/data/*.nc /sandbox/data/
               exec /opt/agent-entrypoint.sh
           env:
             - name: OPENROUTER_API_KEY
