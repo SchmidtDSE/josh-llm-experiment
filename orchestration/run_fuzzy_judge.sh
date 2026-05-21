@@ -13,7 +13,7 @@
 #                        Default: codex (→ openai/gpt-5-codex).
 #
 # Per cell: invokes opencode in non-agent ("reviewer") mode with
-# read/glob/grep only. The prompt at prompts/fuzzy_judge.md tells the
+# read/glob/grep only. The prompt at prompts/FUZZY_JUDGE.md tells the
 # judge to answer three questions (Q1 framework usage, Q2 confusion
 # patterns, Q3 run.sh shape) and emit a fenced JSON block. The script
 # greps the last ```json block from opencode's output, validates the
@@ -89,7 +89,7 @@ sed "s|\${RESOLVED_JUDGE_MODEL_ID}|$RESOLVED_JUDGE_MODEL_ID|g" \
   "$REPO_ROOT/config/opencode.judge.json" \
   > "$JUDGE_XDG_HOME/opencode/opencode.json"
 
-PROMPT_FILE="$REPO_ROOT/prompts/fuzzy_judge.md"
+PROMPT_FILE="$REPO_ROOT/prompts/FUZZY_JUDGE.md"
 if [ ! -f "$PROMPT_FILE" ]; then
   echo "missing prompt template: $PROMPT_FILE" >&2
   exit 5
