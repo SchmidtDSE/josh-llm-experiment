@@ -59,8 +59,21 @@ spec:
         cell-id: {{ cell_id }}
         model: {{ model }}
         target: {{ target }}
+      annotations:
+        # Tell the GKE Autopilot cluster autoscaler / consolidator not
+        # to evict this Pod for bin-packing. Without this, long-running
+        # josh cells get SIGTERM'd ~10–15 min in as Autopilot consolidates
+        # nodes after mesa cells complete (mesa: 5–10 min, josh: 30–60 min)
+        # — the agent-entrypoint's SIGTERM handler does a clean export +
+        # exits 143, so the Job's backoffLimit=0 fires immediately.
+        # Observed across the mini-headline 20260521 attempt: ~80 % josh
+        # cells lost mid-step to silent evictions.
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
     spec:
       restartPolicy: Never
+      # Wider window for the agent's SIGTERM handler to write per-step
+      # exports before SIGKILL — default 30 s clips opencode's export.
+      terminationGracePeriodSeconds: 120
       serviceAccountName: {{ service_account }}
       volumes:
         - name: cell-data
