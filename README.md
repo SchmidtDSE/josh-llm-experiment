@@ -288,6 +288,135 @@ Object layout under the bucket:
 - `<prefix>/<batch-tag>/batch_report.md` — per-batch report
 - `<prefix>/<batch-tag>/manifest.jsonl` — aggregated manifest
 
+### Running a batch on GKE (phase 6+)
+
+The Phase 6 refactor replaces the local-Docker launcher with **one
+k8s Job per cell** on GKE Autopilot. Each Job has shape:
+
+| Container        | Phase       | Role |
+| ---------------- | ----------- | ---- |
+| `setup`          | initContainer | Seeds `/cell-data` (shared `emptyDir`) from a per-cell `ConfigMap`. |
+| `agent`          | initContainer | `fortree:agent`; runs the 8-step opencode flow against `/cell-data/workspace`. |
+| `scorer`         | container   | `fortree:scorer`; runs the scoring harness, then `mc mirror`s the whole `/cell-data` tree to GCS. |
+
+Egress is monitored (opencode `trajectory.jsonl`), not enforced — see
+[EXPERIMENTAL_DESIGN.md §Egress observability](EXPERIMENTAL_DESIGN.md).
+
+#### Cluster prerequisites *(infra layer, already provisioned for `dse-nps`)*
+
+A fork would need to replicate:
+
+- GKE Autopilot cluster `josh-k8s-gke` in `us-west1`.
+- Namespace `joshsim` + KSA `joshsim-batch` with RBAC to create/delete
+  Secrets, create/get/list/watch Jobs, get/list Pods.
+- NetworkPolicy restricting pod egress to ports 53 (DNS) + 443 (HTTPS).
+- GCS bucket `dse-nps-josh-batch-storage` (US multi-region, uniform
+  bucket-level access).
+- A workload SA (`josh-k8s-gcs-sa@dse-nps`) with `storage.objectAdmin`
+  on that bucket; HMAC keys minted off it and stored in Secret Manager
+  as `josh-k8s-minio-access-key` + `josh-k8s-minio-secret-key`.
+
+Terraform for the above lives in the infra repo under
+`environments/josh-k8s/`.
+
+#### Operator setup *(one-time per workstation or dev VM)*
+
+```sh
+# 1. kubectl + the GKE-specific auth plugin via Google's apt repo.
+curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+  | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+sudo apt-get update
+sudo apt-get install -y kubectl google-cloud-cli-gke-gcloud-auth-plugin
+
+# 2. Authenticate gcloud (personal account; a GCE-attached SA with the
+#    right roles also works, but the default `josh-dev-compute-sa` lacks
+#    `container.clusters.get` so personal-account login is simpler).
+gcloud auth login
+gcloud config set project dse-nps
+
+# 3. Fetch cluster credentials → writes a kubeconfig context.
+gcloud container clusters get-credentials josh-k8s-gke \
+  --region us-west1 --project dse-nps
+
+# 4. Verify.
+kubectl get ns joshsim
+```
+
+#### Repo-level one-time setup *(after the build-images workflow first lands)*
+
+```sh
+# 1. The build-images CI auto-runs on push to feat/k8s-** branches and
+#    to dev / feat/k8s-refactor. To rebuild manually:
+gh workflow run build-images.yml --ref dev -R SchmidtDSE/josh-llm-experiment
+
+# 2. Flip GHCR package visibility to Public so the cluster pulls without
+#    auth — one-time, per package, via the GitHub UI:
+#      https://github.com/orgs/SchmidtDSE/packages/container/josh-llm-experiment%2Ffortree-agent/settings
+#      https://github.com/orgs/SchmidtDSE/packages/container/josh-llm-experiment%2Ffortree-scorer/settings
+#    Verify locally:
+docker pull ghcr.io/schmidtdse/josh-llm-experiment/fortree-agent:latest
+
+# 3. Create the two long-lived Secrets in the joshsim namespace, sourced
+#    from .env. Idempotent (the dry-run/apply pattern updates in place).
+set -a; . .env; set +a
+kubectl create secret generic minio-creds -n joshsim \
+  --from-literal=endpoint="${MINIO_ENDPOINT}" \
+  --from-literal=bucket="${MINIO_BUCKET}" \
+  --from-literal=access-key="${MINIO_ACCESS_KEY}" \
+  --from-literal=secret-key="${MINIO_SECRET_KEY}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic openrouter-creds -n joshsim \
+  --from-literal=api-key="${OPENROUTER_API_KEY}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+The HMAC pair in `minio-creds` mirrors the values in Secret Manager
+(`josh-k8s-minio-{access,secret}-key`); the project-level `.env` is the
+operational source of truth so the same credentials work for both the
+host-side `upload_batch.sh` and the in-Pod scorer.
+
+#### Per-batch flow
+
+```sh
+# 1. Push the branch you want to ship from. Auto-triggers a build for
+#    feat/k8s-** branches (paths-filtered to Dockerfile / harness /
+#    entrypoints / etc.). Capture the short SHA — that's the image tag.
+git push
+SHA=$(git rev-parse --short HEAD)
+gh run watch -R SchmidtDSE/josh-llm-experiment   # block until green
+
+# 2. Render + apply a smoke or panel.
+./orchestration/k8s_apply.sh \
+  --batch-tag "$(date -u +%Y%m%d)-smoke" \
+  --image-agent  "ghcr.io/schmidtdse/josh-llm-experiment/fortree-agent:${SHA}" \
+  --image-scorer "ghcr.io/schmidtdse/josh-llm-experiment/fortree-scorer:${SHA}" \
+  --single-cell model=sonnet,target=josh
+
+# Or a full matrix (CSV with columns `model,target`):
+./orchestration/k8s_apply.sh \
+  --batch-tag "headline-$(date -u +%Y%m%d)" \
+  --image-agent  "ghcr.io/schmidtdse/josh-llm-experiment/fortree-agent:${SHA}" \
+  --image-scorer "ghcr.io/schmidtdse/josh-llm-experiment/fortree-scorer:${SHA}" \
+  --matrix orchestration/matrix.csv
+
+# 3. Watch (one Pod per cell):
+kubectl -n joshsim get jobs   -l batch-tag=<batch-tag> -w
+kubectl -n joshsim logs       -l batch-tag=<batch-tag> -c agent  --tail=-1 -f --max-log-requests=20
+# After the agent exits, the scorer starts:
+kubectl -n joshsim logs       -l batch-tag=<batch-tag> -c scorer --tail=-1 -f --max-log-requests=20
+
+# 4. Pull artefacts back from the bucket for analysis.
+MINIO_PREFIX=<batch-tag> ./orchestration/pull_artefacts.sh <batch-tag>
+ls runs/<batch-tag>/                         # one subdir per cell
+```
+
+`orchestration/k8s_apply.sh` writes the rendered manifests to
+`orchestration/rendered/<batch-tag>/<cell-id>.yaml` (gitignored) before
+applying — useful for inspection or for re-applying by hand. Pass
+`--no-apply` to render only.
+
 ### Re-scoring a completed batch
 
 The scoring container is target-agnostic and stateless against an
