@@ -303,6 +303,23 @@ spec:
           volumeMounts:
             - name: cell-data
               mountPath: /cell-data
+            # MIRROR THE AGENT'S /sandbox MOUNT. The agent has
+            # `mountPath: /sandbox, subPath: workspace` so that opencode's
+            # `--dir /sandbox` writes land in /cell-data/workspace. The
+            # agent's authored .josh hardcodes `file:///sandbox/output/...`
+            # per BASE_PROMPT, so any `josh run` invocation needs /sandbox
+            # to resolve to the same workspace. Without this mount, the
+            # scorer's canonical N_REPLICATES=100 run writes 100 CSVs to
+            # the scorer container's ephemeral /sandbox (which is just
+            # the Dockerfile WORKDIR, NOT the shared emptyDir) and they
+            # vanish on container exit. mc mirror only sees the 2 CSVs
+            # the AGENT wrote during its self-test under N_REPLICATES=2.
+            # This was the root cause of every josh cell from 2026-05-21
+            # appearing to have only 2 replicates' output despite Josh
+            # reporting "Total replicates run: 100" in stdout.
+            - name: cell-data
+              mountPath: /sandbox
+              subPath: workspace
           resources:
             requests:
               cpu: "{{ scorer_cpu_request }}"
