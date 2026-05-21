@@ -11,20 +11,30 @@ how to run, see [README.md](README.md).
 Per-PR detail lives in `git log` and the merged PR descriptions; this
 document is a navigation map, not a complete change history.
 
-> **Status (2026-05-20, on `feat/k8s-refactor`).** Phase 6 (k8s
-> refactor) is in flight — see §Phase 6 below. PR1 (scoring drop +
-> regression bands) is merged. PRs 2–7 target the integration branch;
-> final merge to `dev` happens once the full series is validated
-> end-to-end. The historical phases below describe the codebase as it
-> stood at the start of Phase 6; the Phase 6 "Repo cleanup" step
-> deletes a substantial amount of that surface area.
+> **Status (2026-05-21, on `feat/k8s-refactor`).** Phase 6 (k8s
+> refactor) is in flight — see §Phase 6 below. **PRs 1–4 merged** on
+> the integration branch (scoring drop + regression bands, prompt
+> update for 100×100, image consolidation, egress relaxation +
+> sidecar drop). PRs 5–7 pending; final merge to `dev` happens once
+> the full series is validated end-to-end. The historical phases
+> below describe the codebase as it stood at the start of Phase 6;
+> the Phase 6 "Repo cleanup" step deletes a substantial amount of
+> that surface area.
 
-## Architecture (current; transitional)
+## Architecture (transitional)
 
-The architecture below describes the **pre-Phase-6 shape** still
-present on `feat/k8s-refactor` until the k8s submission path (PR5)
-and repo-cleanup sweep (PR6) land. The Phase 6 §K8s execution
-sub-section describes the target shape.
+The diagram below describes the **as-of-start-of-Phase-6 shape**.
+PRs 3 and 4 have already partially mutated this:
+- the scorer image now also carries `mc` + `scorer-and-upload.sh`
+  (PR3, for in-Pod uploads under PR5);
+- the `fortree:dnsmasq` image is now a passive query logger — no
+  `iptables`/`ipset`, no `CAP_NET_ADMIN`, no `sidecar-init.sh` — and
+  the target Pod shape (Phase 6 §K8s execution) drops the sidecar
+  entirely (PR4). Running the **local orchestration** path under
+  `launch_run.sh` would now fail at the `sidecar-init.sh` step; that
+  whole tree disappears in PR6's cleanup sweep.
+
+The Phase 6 §K8s execution sub-section describes the target shape.
 
 ```
 host:
@@ -85,7 +95,7 @@ descriptions. The summary below is the navigation map.
 | **5a** | Post-pilot scoring revision: scorer JSON `phase5a-v1`; conformance + internal_consistency modules; synthetic CF-1.8 climate netCDFs | #25, #26, #27 |
 | **5b** | Recovery-loop hypothesis — **retired**; folded into 5c's todos 5–8 | (retired) |
 | **5c** | Multi-invocation planning flow — agent runs opencode 8× per cell against shared `/sandbox/PLAN.md`; `prompts/steps/`; per-step session exports; permissive cell-identity schema; `.jshd` LOC bugfix; batch-report multi-invocation diagnostics | (merged) |
-| **6 (in flight)** | k8s refactor + scoring simplification — see §Phase 6 below | #34 (PR1 merged), 2–7 pending |
+| **6 (in flight)** | k8s refactor + scoring simplification — see §Phase 6 below | #34/#36/#40/#41 (PRs 1–4 merged), 5–7 pending |
 
 ## Phase 6 — k8s refactor (in flight)
 
@@ -277,9 +287,10 @@ path broken on `dev` if landed there directly.
    `observed ~ predicted` regression gate, derive bands from
    spec-faithful reference simulator, bump `SCHEMA_VERSION` to
    `phase6-v1`. SCORING.md rewritten.
-2. **Prompt update** for `run.sh` shape (preprocess + 100×100).
-   Update BASE_PROMPT / SIDECAR / relevant step files. Add fuzzy
-   Q3 to `prompts/FUZZY_JUDGE.md`. Sub-tasks:
+2. **Prompt update** ✓ (merged, PR #36 + follow-ups #37, #38).
+   `run.sh` shape (preprocess + 100×100). Updated BASE_PROMPT /
+   SIDECAR / relevant step files. Added fuzzy Q3 to
+   `prompts/FUZZY_JUDGE.md`. Sub-tasks:
    - **Disambiguate the year-0 question.** PR1's offline sanity check
      against the phase-5c batches found a systematic +10% slope on
      Josh runs vs Mesa runs (β≈1.10 vs β≈1.00). The cause: Josh
@@ -301,16 +312,21 @@ path broken on `dev` if landed there directly.
    - Preprocess (`.jshd` build for Josh, netCDF→DataFrame for Mesa)
      inside the same `run.sh` so wall-clock includes data loading.
    - Fuzzy Q3 question wording asserts the above contract.
-3. **Image consolidation.** Add `mc` to the scorer image. Add
-   `scorer-and-upload.sh`. Smoke-build locally; no behaviour change
-   yet (still runnable under the old orchestration).
-4. **Egress relaxation + sidecar drop.** Strip iptables/ipset from
-   [Dockerfile.dnsmasq](Dockerfile.dnsmasq) (no enforcement) and
-   then drop the DNS-log sidecar from the Pod shape entirely —
-   `trajectory.jsonl` is the sole egress observation layer. The
-   image/config stay in the repo as no-ops until PR6's cleanup
-   sweep. Update [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md)
-   §Egress observability and §Threats to validity.
+3. **Image consolidation** ✓ (merged, PR #40). `mc` added to
+   `fortree:scorer`. New `scorer-and-upload.sh` wraps
+   `run_metrics.py` + `mc mirror /sandbox` to the bucket. Trust
+   boundary preserved (agent image has no `mc`). No behaviour
+   change for the existing local orchestration (smoke-fixtures still
+   hit `/opt/entrypoint-scorer.sh`).
+4. **Egress relaxation + sidecar drop** ✓ (merged, PR #41).
+   Stripped iptables/ipset from
+   [Dockerfile.dnsmasq](Dockerfile.dnsmasq); the image is now a
+   passive logger. Dropped the DNS-log sidecar from the target Pod
+   shape entirely — `trajectory.jsonl` is the sole egress
+   observation layer. The image/config stay in the repo as no-ops
+   until PR6's cleanup sweep. `firewall-probe` smoke job retired.
+   EXPERIMENTAL_DESIGN.md §Egress observability + §Threats to
+   validity updated.
 5. **K8s submission path.** Add `orchestration/templates/job.yaml.j2`
    + `orchestration/render_jobs.py` + `orchestration/k8s_apply.sh`.
    Submit a one-cell smoke test to a GKE Autopilot cluster; verify
