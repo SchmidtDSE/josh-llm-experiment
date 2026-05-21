@@ -52,8 +52,19 @@ DEFAULT_SERVICE_ACCOUNT = "joshsim-batch"
 DEFAULT_MINIO_SECRET = "minio-creds"
 DEFAULT_OPENROUTER_SECRET = "openrouter-creds"
 
-DEFAULT_ACTIVE_DEADLINE_SECONDS = 3600
+# Pod-level liveness ceiling. The pr5-smoke (sonnet+josh) completed in
+# 68 min wall-clock; the first mini-headline lost all 100 cells at
+# exactly the 3600s mark before mc mirror could fire. 7200s (2h) gives
+# ~2× headroom over sonnet's observed time and lets slower-to-engage
+# models (gemma, mistral) finish. Tune via --active-deadline-seconds.
+DEFAULT_ACTIVE_DEADLINE_SECONDS = 7200
 DEFAULT_TTL_SECONDS_AFTER_FINISHED = 86400  # 24h — long enough for log fetch
+# These two env vars are inherited from the local-orchestration era;
+# nothing inside the agent container reads them under k8s (the SIGTERM
+# handler exists in agent-entrypoint.sh but no external watcher fires
+# the signal). Left in place as inert injection so the headline
+# manifest still records the *intent* — see open question #3 in
+# IMPLEMENTATION_PLAN.md before relying on them as a backstop.
 DEFAULT_WALL_CLOCK_BACKSTOP_SEC = 1800
 DEFAULT_IDLE_THRESHOLD_SEC = 120
 
