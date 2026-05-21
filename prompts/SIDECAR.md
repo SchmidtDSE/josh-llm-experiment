@@ -47,14 +47,11 @@ cd /sandbox && ./run.sh
 
 Your code must exit 0 and write `./output/results.csv`.
 
-**`./run.sh` is the unit of work being measured** — its wall-clock time is the headline cost metric for the experiment. It must do the **entire** workload: any preprocessing the chosen framework needs (e.g. Josh's `.jshd` build, or netCDF→DataFrame conversion for Mesa), the 100-replicate × 100-year simulation, and emission of the output CSV(s). No "pre-step" the user is expected to run by hand. The contract is "one script, end-to-end."
+**`./run.sh` is the unit of work being measured** — its wall-clock time is the headline cost metric for the experiment. It must do the **entire** workload: any preprocessing the chosen framework needs (e.g. Josh's `.jshd` build, or netCDF→DataFrame conversion for Mesa), the simulation, and emission of the output CSV(s). No "pre-step" the user is expected to run by hand. The contract is "one script, end-to-end."
 
-Three requirements that are part of the delivery, not optional:
+We've seeded `/sandbox/run.sh` for you — it's already executable and runs 2 replicates by default. **Fill in the body** with your preprocess + simulation invocation, using `"$N_REPLICATES"` for the replicate count. Two replicates is the self-test scale.
 
-- `./run.sh` must be executable. After writing it, run `chmod +x run.sh`. The scorer invokes the file as `./run.sh`; a script without the executable bit will not run.
-- `./run.sh` must invoke the simulation for **100 replicates × 100 years (2024–2123 inclusive)** when the scorer runs it. Use your framework's native replicate flag (`josh run --replicates 100 …` for Josh) or a loop over `n=100` independent Model instances (for Mesa). Wire the replicate count through an `N_REPLICATES` environment variable that **defaults to 100**, so the script reads `${N_REPLICATES:-100}` (bash) / `os.environ.get("N_REPLICATES", "100")` (Python) and passes that to the replicate flag / loop bound. The scorer invokes `./run.sh` without setting `N_REPLICATES`, so it gets 100.
-- **The 100-replicate run is the scorer's job. You must never run it yourself.** Every invocation of `./run.sh` *you* make during development must set `N_REPLICATES=2` — `N_REPLICATES=2 ./run.sh`. Likewise, never invoke the underlying simulation directly at scale (no bare `josh run --replicates 100 …` or 100-iteration loops in `python`). Two replicates iterates the replicate loop enough to catch off-by-one bugs while keeping each self-test in the seconds-to-tens-of-seconds range. Running at full scale yourself doubles per-cell wall-clock budget for zero validation gain — the scorer's run is the canonical artefact.
-- Before you declare yourself done, execute `N_REPLICATES=2 ./run.sh` at least once. Confirm it exits 0 and writes the output CSV(s) at the expected path. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
+Before you declare yourself done, execute `./run.sh` once and confirm it exits 0 and writes the output CSV(s) at the expected path. If it fails, fix the cause and re-run.
 
 The CSV is UTF-8, comma-separated, with a header row. Required data columns:
 
@@ -71,10 +68,10 @@ Plus a per-cell identifier — either a string column `cell_id` or the pair `pos
 
 **Two output layouts are accepted; pick whichever is natural for your framework:**
 
-- **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column (0..99) distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate (so a 1-replicate dev run still scores).
-- **One CSV per replicate** (Josh's canonical layout) at `output/results_{N}.csv` — i.e. `results_0.csv`, `results_1.csv`, …, `results_99.csv`. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed. For Josh, set `exportFiles.patch = "file:///sandbox/output/results_{replicate}.csv"` and combine with `--replicates 100`.
+- **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate (so a 1-replicate dev run still scores).
+- **One CSV per replicate** (Josh's canonical layout) at `output/results_{N}.csv` — `results_0.csv`, `results_1.csv`, and so on. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed. For Josh, set `exportFiles.patch = "file:///sandbox/output/results_{replicate}.csv"` and combine with `--replicates "$N_REPLICATES"`.
 
-Total row count across whichever layout you pick: `n_cells × 100 years × 100 replicates`. Whether the year-2024 row reflects pre-growth state (`meanHeight = 0`) or post-growth state (`meanHeight ≈ Δh`) is up to your framework — pick whichever is natural.
+Total row count across whichever layout you pick: `n_cells × 100 years × N_REPLICATES`. Whether the year-2024 row reflects pre-growth state (`meanHeight = 0`) or post-growth state (`meanHeight ≈ Δh`) is up to your framework — pick whichever is natural.
 
 ### Working document
 

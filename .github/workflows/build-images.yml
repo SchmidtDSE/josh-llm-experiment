@@ -39,6 +39,7 @@ on:
     paths:
       - "Dockerfile"
       - "agent-entrypoint.sh"
+      - "agent-run.sh.seed"
       - "entrypoint-scorer.sh"
       - "scorer-and-upload.sh"
       - "harness/**"

@@ -92,6 +92,12 @@ COPY prompts/steps/ /opt/steps/
 # pr5 smoke, which then chose 1 km grid resolution (≈14 000 cells) vs
 # the canonical 31×50 = 1 550 cells, and stalled in josh preprocess.
 COPY data/*.nc /opt/data/
+# Bake the run.sh seed (chmod +x, N_REPLICATES wiring + default 2).
+# Agent prelude `install -m 0755`s this into /sandbox/run.sh so the
+# agent inherits a working stub it fills in. Scorer overrides
+# N_REPLICATES=100 at invocation time for the canonical workload.
+COPY agent-run.sh.seed /opt/run.sh.seed
+RUN chmod 0755 /opt/run.sh.seed
 
 # ---------- scorer stage ----------
 FROM base AS scorer

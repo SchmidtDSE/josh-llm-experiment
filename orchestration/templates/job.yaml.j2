@@ -116,6 +116,10 @@ spec:
               # on a higher-resolution synthetic grid.
               mkdir -p /sandbox/data
               cp /opt/data/*.nc /sandbox/data/
+              # Seed run.sh from the baked template (already x-bit).
+              # Agent fills in the body; N_REPLICATES wiring + default 2
+              # are pre-wired. Scorer overrides N_REPLICATES=100.
+              install -m 0755 /opt/run.sh.seed /sandbox/run.sh
               exec /opt/agent-entrypoint.sh
           env:
             - name: OPENROUTER_API_KEY

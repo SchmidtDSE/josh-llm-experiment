@@ -57,7 +57,7 @@ actually used).
 
 ### Replication
 
-Run **100 independent stochastic replicates** of the full 100-year simulation. Replicates share identical climate inputs and identical initial conditions; they differ only in the per-tree per-step stochastic growth-offset draws (§Stochasticity below). The CSV is keyed by `(cell, year, replicate)` — one row per combination — so the same `(cell, year)` appears 100 times in the output, once per replicate.
+Run **independent stochastic replicates** of the full 100-year simulation. Replicates share identical climate inputs and identical initial conditions; they differ only in the per-tree per-step stochastic growth-offset draws (§Stochasticity below). The CSV is keyed by `(cell, year, replicate)` — one row per combination — so the same `(cell, year)` appears once per replicate in the output. The number of replicates is parameterised via the `N_REPLICATES` env var that `run.sh` reads (see the Implementation directive).
 
 <br>
 
@@ -162,9 +162,9 @@ The model should export **per cell, per step, per replicate**:
 
 Each cell is identified either by latitude / longitude or a cell index. Two output layouts are accepted; pick whichever is natural for your framework:
 
-- **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column (0..99) distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate.
-- **One CSV per replicate** at `output/results_{N}.csv` — i.e. `results_0.csv`, `results_1.csv`, …, `results_99.csv`. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed.
+- **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate.
+- **One CSV per replicate** at `output/results_{N}.csv` — `results_0.csv`, `results_1.csv`, and so on. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed.
 
-Total row count across whichever layout you pick: `n_cells × 100 years × 100 replicates`.
+Total row count across whichever layout you pick: `n_cells × 100 years × N_REPLICATES`.
 
 <br>
