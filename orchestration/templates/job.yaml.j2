@@ -48,7 +48,39 @@ metadata:
     model: {{ model }}
     target: {{ target }}
 spec:
-  backoffLimit: 0
+  # backoffLimit=3 + podFailurePolicy: retry on a fresh Pod after
+  # Autopilot eviction or our own SIGTERM exit-143 path, but fail
+  # immediately on real application errors. The safe-to-evict annotation
+  # on the Pod (below) should keep evictions rare; this is the
+  # belt-and-suspenders side that turns the rare remaining eviction
+  # from "lost cell" into "retried cell, double LLM cost". GKE docs:
+  # https://cloud.google.com/kubernetes-engine/docs/how-to/extended-duration-pods
+  backoffLimit: 3
+  podFailurePolicy:
+    rules:
+      # If the Pod was evicted by cluster autoscaler / scheduler, retry —
+      # don't count toward backoffLimit. `DisruptionTarget` is the
+      # k8s-native condition for eviction-shaped terminations.
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
+            status: "True"
+      # Our agent-entrypoint's SIGTERM handler exits 143 cleanly (after
+      # exporting per-step state). Treat that as a retryable eviction
+      # signal, same as DisruptionTarget — sometimes the pod condition
+      # isn't set in time before the container exits.
+      - action: Ignore
+        onExitCodes:
+          containerName: agent
+          operator: In
+          values: [143]
+      # Genuine non-zero exits from the agent (e.g., opencode crashed,
+      # all 8 steps failed) fail the Job immediately.
+      - action: FailJob
+        onExitCodes:
+          containerName: agent
+          operator: NotIn
+          values: [0, 143]
   activeDeadlineSeconds: {{ active_deadline_seconds }}
   ttlSecondsAfterFinished: {{ ttl_seconds_after_finished }}
   template:
