@@ -44,9 +44,8 @@ This simulation requires operating across both space and time.
 
 - Each simulation step represents one calendar year.
 - The simulation runs years 2024 through 2123 inclusive — 100 calendar years, one growth event per tree per year.
-- Trees start at `age = 0`, `height = 0` and grow once per year. Whether your framework emits the year-2024 row pre-growth (`height = 0`) or post-growth (`height ≈ Δh`) is fine — pick whichever is natural for your framework and stay consistent.
-- The implementing engine is expected to evaluate every patch and every
-  agent within a patch exactly once per step.
+- Trees start at `age = 0`, `height = 0` and grow once per year.
+- The implementing engine is expected to evaluate every patch and every agent within a patch exactly once per step.
 
 ### Replication
 
