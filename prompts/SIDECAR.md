@@ -52,8 +52,8 @@ Your code must exit 0 and write `./output/results.csv`.
 Three requirements that are part of the delivery, not optional:
 
 - `./run.sh` must be executable. After writing it, run `chmod +x run.sh`. The scorer invokes the file as `./run.sh`; a script without the executable bit will not run.
-- `./run.sh` must invoke the simulation for **100 replicates × 100 years (2024–2123 inclusive)**. Use your framework's native replicate flag (`josh run --replicates 100 …` for Josh) or a loop over `n=100` independent Model instances (for Mesa).
-- Before you declare yourself done, execute `./run.sh` at least once yourself. Confirm it exits 0 and writes the output CSV(s) at the expected path. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
+- `./run.sh` must invoke the simulation for **100 replicates × 100 years (2024–2123 inclusive)** when the scorer runs it. Use your framework's native replicate flag (`josh run --replicates 100 …` for Josh) or a loop over `n=100` independent Model instances (for Mesa). Wire the replicate count through an `N_REPLICATES` environment variable that **defaults to 100**, so the script reads `${N_REPLICATES:-100}` (bash) / `os.environ.get("N_REPLICATES", "100")` (Python) and passes that to the replicate flag / loop bound. The scorer invokes `./run.sh` without setting `N_REPLICATES`, so it gets 100; you self-test with a smaller value (see next bullet).
+- Before you declare yourself done, execute `./run.sh` at least once yourself with `N_REPLICATES=2 ./run.sh` — two replicates is enough to verify the replicate loop actually iterates (a single-replicate run can hide off-by-one bugs in the iteration) while keeping the self-test fast. Confirm it exits 0 and writes the output CSV(s) at the expected path. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
 
 The CSV is UTF-8, comma-separated, with a header row. Required data columns:
 
