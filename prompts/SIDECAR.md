@@ -47,13 +47,13 @@ cd /sandbox && ./run.sh
 
 Your code must exit 0 and write `./output/results.csv`.
 
-**`./run.sh` is the unit of work being measured** — its wall-clock time is the headline cost metric for the experiment. It must do the **entire** workload: any preprocessing the chosen framework needs (e.g. Josh's `.jshd` build, or netCDF→DataFrame conversion for Mesa), the 100-replicate × 100-year simulation, and emission of `./output/results.csv`. No "pre-step" the user is expected to run by hand. The contract is "one script, end-to-end."
+**`./run.sh` is the unit of work being measured** — its wall-clock time is the headline cost metric for the experiment. It must do the **entire** workload: any preprocessing the chosen framework needs (e.g. Josh's `.jshd` build, or netCDF→DataFrame conversion for Mesa), the 100-replicate × 100-year simulation, and emission of the output CSV(s). No "pre-step" the user is expected to run by hand. The contract is "one script, end-to-end."
 
 Three requirements that are part of the delivery, not optional:
 
 - `./run.sh` must be executable. After writing it, run `chmod +x run.sh`. The scorer invokes the file as `./run.sh`; a script without the executable bit will not run.
-- `./run.sh` must invoke the simulation for **100 replicates × 100 years (2024–2123 inclusive)**. Use your framework's native replicate flag (`josh run --replicates 100 …` for Josh) or a loop over `n=100` independent Model instances (for Mesa). The CSV must contain `n_cells × 100 × 100` rows.
-- Before you declare yourself done, execute `./run.sh` at least once yourself. Confirm it exits 0 and writes `./output/results.csv`. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
+- `./run.sh` must invoke the simulation for **100 replicates × 100 years (2024–2123 inclusive)**. Use your framework's native replicate flag (`josh run --replicates 100 …` for Josh) or a loop over `n=100` independent Model instances (for Mesa).
+- Before you declare yourself done, execute `./run.sh` at least once yourself. Confirm it exits 0 and writes the output CSV(s) at the expected path. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
 
 The CSV is UTF-8, comma-separated, with a header row. Required data columns:
 
@@ -66,9 +66,14 @@ The CSV is UTF-8, comma-separated, with a header row. Required data columns:
 | `temperature`   | float  | Kelvin        |
 | `precipitation` | float  | mm/year       |
 
-Plus a per-cell identifier — either a string column `cell_id` or the pair `position.x` and `position.y`. Plus a `replicate` column (integer index, 0..99) identifying which of the 100 replicates each row came from. Josh's default export already includes `replicate`; Mesa implementations must emit it explicitly. Other columns are accepted and ignored.
+Plus a per-cell identifier — either a string column `cell_id` or the pair `position.x` and `position.y`. Other columns are accepted and ignored.
 
-**One row per (cell, year, replicate)** for the 100 years 2024–2123 inclusive × 100 replicates. Whether the year-2024 row reflects pre-growth state (`meanHeight = 0`) or post-growth state (`meanHeight ≈ Δh`) is up to your framework — pick whichever is natural.
+**Two output layouts are accepted; pick whichever is natural for your framework:**
+
+- **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column (0..99) distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate (so a 1-replicate dev run still scores).
+- **One CSV per replicate** (Josh's canonical layout) at `output/results_{N}.csv` — i.e. `results_0.csv`, `results_1.csv`, …, `results_99.csv`. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed. For Josh, set `exportFiles.patch = "file:///sandbox/output/results_{replicate}.csv"` and combine with `--replicates 100`.
+
+Total row count across whichever layout you pick: `n_cells × 100 years × 100 replicates`. Whether the year-2024 row reflects pre-growth state (`meanHeight = 0`) or post-growth state (`meanHeight ≈ Δh`) is up to your framework — pick whichever is natural.
 
 ### Working document
 

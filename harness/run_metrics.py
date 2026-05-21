@@ -77,6 +77,8 @@ def _ordered_record(
         "csv_rows_dropped_nan": schema_out.get("csv_rows_dropped_nan"),
         "csv_schema_ok": schema_out.get("csv_schema_ok", False),
         "csv_schema_errors": schema_out.get("csv_schema_errors", []),
+        "csv_source_layout": schema_out.get("csv_source_layout"),
+        "csv_source_files": schema_out.get("csv_source_files"),
         "height_year100_mean": _finite_or_none(accept_out.get("height_year100_mean")),
         "occupancy_year100_mean": _finite_or_none(accept_out.get("occupancy_year100_mean")),
         "height_in_range": accept_out.get("height_in_range", False),

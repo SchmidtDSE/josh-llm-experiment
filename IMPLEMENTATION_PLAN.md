@@ -284,7 +284,7 @@ path broken on `dev` if landed there directly.
    `phase6-v1`. SCORING.md rewritten.
 2. **Prompt update** for `run.sh` shape (preprocess + 100×100).
    Update BASE_PROMPT / SIDECAR / relevant step files. Add fuzzy
-   Q3 to `prompts/fuzzy_judge.md`. Sub-tasks:
+   Q3 to `prompts/FUZZY_JUDGE.md`. Sub-tasks:
    - **Disambiguate the year-0 question.** PR1's offline sanity check
      against the phase-5c batches found a systematic +10% slope on
      Josh runs vs Mesa runs (β≈1.10 vs β≈1.00). The cause: Josh

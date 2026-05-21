@@ -67,6 +67,7 @@ ROW_FIELDS = [
     "timed_out",
     "script_was_executable",
     "csv_rows_dropped_nan",
+    "csv_source_layout",
     # spec-parameter conformance (year 100 under phase6)
     "height_year100_mean",
     "occupancy_year100_mean",
@@ -250,6 +251,7 @@ def flatten(batch_tag: str, batch_dir: Path, row: dict) -> dict:
         "timed_out": scorer.get("timed_out"),
         "script_was_executable": scorer.get("script_was_executable"),
         "csv_rows_dropped_nan": scorer.get("csv_rows_dropped_nan"),
+        "csv_source_layout": scorer.get("csv_source_layout"),
         "height_year100_mean": scorer.get("height_year100_mean"),
         "occupancy_year100_mean": scorer.get("occupancy_year100_mean"),
         "height_in_range": scorer.get("height_in_range"),
