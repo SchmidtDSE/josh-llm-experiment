@@ -173,11 +173,6 @@ containers:
     # then uploads everything to the bucket via mc. Has harness/,
     # acceptance_ranges.json, and mc; the agent never sees any of these.
     command: ["/opt/scorer-and-upload.sh"]
-  - name: dns-monitor
-    image: fortree:dnsmasq
-    # Passive query logger only — no iptables, no NET_ADMIN.
-    # Records every DNS query into dns.log so the scorer can include
-    # it in the upload.
 ```
 
 The initContainer pattern is the right fit because the scorer needs
@@ -188,19 +183,18 @@ scoring criteria or exfiltrate to the bucket. `mc` is added to
 `fortree:scorer` only; bucket credentials are mounted into the
 scorer container via a k8s Secret reference.
 
-**Egress: monitored, not enforced.** Two observation layers:
-
-1. opencode `trajectory.jsonl` — every `webfetch` URL the model
-   invoked. Primary record.
-2. Passive dnsmasq sidecar — same image, `sidecar-init.sh` stripped
-   to just `exec dnsmasq -k` with `log-queries`. No iptables, no
-   ipset, no `CAP_NET_ADMIN`. `dns.log` artefact shape preserved.
-   The Pod sets `dnsPolicy: None` + `dnsConfig.nameservers:
-   [<sidecar-IP>]` to route the agent's resolver through the sidecar.
-
-The hard policy boundary (iptables OUTPUT `REJECT`) goes away. The
-validity argument leans on the trajectory + DNS logs being
-sufficient post-hoc evidence of what the agent reached.
+**Egress: monitored, not enforced.** opencode's `trajectory.jsonl`
+records every `webfetch` URL the model invoked; that file is exported
+into `/sandbox` and ends up in the bucket via the scorer's `mc
+mirror`. The validity argument leans on it being sufficient post-hoc
+evidence of what the agent reached. The DNS-log sidecar from earlier
+pilots is dropped along with the kernel-level REJECT chain — the Pod
+shape stays minimal, and the methodology delta is acknowledged in
+[EXPERIMENTAL_DESIGN.md §Egress observability](EXPERIMENTAL_DESIGN.md).
+If the headline batch surfaces concerns about indirect egress (an
+agent-authored `run.sh` shelling out to `curl`/`urllib`), a Pod-level
+`NetworkPolicy` or cluster-wide Cloud DNS logging can be added later
+without reverting the rest of the refactor.
 
 **Submission:** A small Python script renders one Job manifest per
 cell from a matrix CSV (`model,target,replicates`), then `kubectl
@@ -218,8 +212,10 @@ PR6 deletes the local-orchestration surface area in one sweep.
 | [orchestration/launch_cell.sh](orchestration/launch_cell.sh) | Replaced by Pod spec |
 | [orchestration/launch_run.sh](orchestration/launch_run.sh) | Replaced by Pod spec |
 | [orchestration/run_agent.sh](orchestration/run_agent.sh) | Replaced by Pod initContainer + k8s `activeDeadlineSeconds` |
-| [orchestration/dns_sidecar.sh](orchestration/dns_sidecar.sh) | Replaced by passive Pod sidecar manifest |
-| [orchestration/sidecar-init.sh](orchestration/sidecar-init.sh) | iptables setup no longer needed |
+| [orchestration/dns_sidecar.sh](orchestration/dns_sidecar.sh) | DNS sidecar dropped entirely in PR4; `trajectory.jsonl` is the sole egress observation layer |
+| [orchestration/sidecar-init.sh](orchestration/sidecar-init.sh) | iptables setup no longer needed (PR4 dropped the sidecar) |
+| [Dockerfile.dnsmasq](Dockerfile.dnsmasq) | Sidecar dropped entirely; PR4 stripped iptables/ipset, PR6 deletes the file |
+| [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf) | Same — config for the now-retired DNS sidecar |
 | [orchestration/generate_run_report.py](orchestration/generate_run_report.py) | Reports replaced by the headline notebook |
 | [orchestration/generate_batch_report.py](orchestration/generate_batch_report.py) | Same |
 | [orchestration/rescore_batch.py](orchestration/rescore_batch.py) | Replaced by re-score Job |
@@ -229,7 +225,6 @@ PR6 deletes the local-orchestration surface area in one sweep.
 | [orchestration/extract_transcript.py](orchestration/extract_transcript.py) | Run inside the scorer container, not host-side |
 | [orchestration/extract_time_breakdown.py](orchestration/extract_time_breakdown.py) | Same |
 | [harness/conformance_fuzzy.py](harness/conformance_fuzzy.py) | Placeholder; replaced by the real host/Job-side fuzzy judge |
-| [Dockerfile.dnsmasq](Dockerfile.dnsmasq) — enforcement bits | Strip the `iptables`/`ipset` install + `sidecar-init.sh` copy (passive sidecar) |
 | [prompts/rungs/](prompts/rungs/) | Rung ladder retired in phase 5c; the dir was already a vestige |
 
 **Keep + repurpose:**
@@ -309,11 +304,13 @@ path broken on `dev` if landed there directly.
 3. **Image consolidation.** Add `mc` to the scorer image. Add
    `scorer-and-upload.sh`. Smoke-build locally; no behaviour change
    yet (still runnable under the old orchestration).
-4. **Egress relaxation.** Strip iptables/ipset from
-   [Dockerfile.dnsmasq](Dockerfile.dnsmasq) (passive sidecar). Update
-   [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md) §Egress
-   observability and §Threats to validity. Acknowledge methodology
-   delta in the paper draft.
+4. **Egress relaxation + sidecar drop.** Strip iptables/ipset from
+   [Dockerfile.dnsmasq](Dockerfile.dnsmasq) (no enforcement) and
+   then drop the DNS-log sidecar from the Pod shape entirely —
+   `trajectory.jsonl` is the sole egress observation layer. The
+   image/config stay in the repo as no-ops until PR6's cleanup
+   sweep. Update [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md)
+   §Egress observability and §Threats to validity.
 5. **K8s submission path.** Add `orchestration/templates/job.yaml.j2`
    + `orchestration/render_jobs.py` + `orchestration/k8s_apply.sh`.
    Submit a one-cell smoke test to a GKE Autopilot cluster; verify
