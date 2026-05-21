@@ -59,8 +59,14 @@ DEFAULT_IDLE_THRESHOLD_SEC = 120
 
 DEFAULT_AGENT_CPU_REQUEST = "4"
 DEFAULT_AGENT_CPU_LIMIT = "4"
-DEFAULT_AGENT_MEMORY_REQUEST = "16Gi"
-DEFAULT_AGENT_MEMORY_LIMIT = "16Gi"
+# Pod memory must exceed the JVM heap (JAVA_TOOL_OPTIONS=-Xmx16g baked
+# into the image) plus opencode/Node + OS overhead, otherwise the kernel
+# OOM-kills the Pod when josh fires during the agent's run.sh self-test.
+# 24Gi gives the JVM its 16Gi heap and leaves ~8Gi for everything else;
+# the first pr5 smoke OOM'd at 16Gi=16Gi. Autopilot caps memory:CPU at
+# 6.5:1 GiB:vCPU, so 24Gi at 4 vCPU is at 6:1 — within the envelope.
+DEFAULT_AGENT_MEMORY_REQUEST = "24Gi"
+DEFAULT_AGENT_MEMORY_LIMIT = "24Gi"
 DEFAULT_SCORER_CPU_REQUEST = "2"
 DEFAULT_SCORER_CPU_LIMIT = "2"
 DEFAULT_SCORER_MEMORY_REQUEST = "4Gi"
