@@ -57,6 +57,14 @@ python /opt/harness/run_metrics.py "$@"
 SCORER_RC=$?
 set -e
 
+# Run the LLM fuzzy judge (Q1: framework usage, Q2: confusion patterns,
+# Q3: run.sh wall-clock contract) between the mechanical scorer and the
+# upload, so scorer.fuzzy.json lands in the bucket alongside scorer.json.
+# Judge failure does NOT fail the cell — partial fuzzy data is fine and
+# the script always exits 0; the _fuzzy_parse error-record path captures
+# any failure inside scorer.fuzzy.json itself.
+/opt/run-judge.sh || true
+
 ALIAS="fortree-archive"
 mc alias set "$ALIAS" "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
 

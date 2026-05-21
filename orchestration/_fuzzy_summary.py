@@ -32,14 +32,21 @@ def load_run_meta(cell_dir: Path) -> dict:
 
 
 def load_fuzzy(cell_dir: Path) -> dict | None:
-    fz_path = cell_dir / "scorer.fuzzy.json"
-    if not fz_path.is_file():
-        return None
-    try:
-        return json.loads(fz_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"warn: cannot read {fz_path}: {exc}", file=sys.stderr)
-        return None
+    # K8s-pulled batches keep fuzzy alongside scorer.json under
+    # workspace/results/; local-orchestration batches keep it at the
+    # cell root. Try the k8s path first since that's the active layout.
+    for candidate in (
+        cell_dir / "workspace" / "results" / "scorer.fuzzy.json",
+        cell_dir / "scorer.fuzzy.json",
+    ):
+        if not candidate.is_file():
+            continue
+        try:
+            return json.loads(candidate.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"warn: cannot read {candidate}: {exc}", file=sys.stderr)
+            return None
+    return None
 
 
 def collect(batch_dir: Path) -> list[dict]:
