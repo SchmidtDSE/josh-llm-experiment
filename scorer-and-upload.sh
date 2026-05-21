@@ -52,18 +52,38 @@ set -euo pipefail
 MINIO_PREFIX="${MINIO_PREFIX:-}"
 UPLOAD_SOURCE_DIR="${UPLOAD_SOURCE_DIR:-/sandbox}"
 
-set +e
-python /opt/harness/run_metrics.py "$@"
-SCORER_RC=$?
-set -e
+# Always-upload-on-failure: the agent initContainer is wrapped to
+# always exit 0 (see job.yaml.j2) and writes its real exit code to
+# /cell-data/agent_exit_code. Read that here and decide whether to
+# score/judge. A missing file means the wrapper itself was SIGKILL'd
+# (e.g. cgroup OOM with memory.oom.group=1) — treat as catastrophic
+# failure but still upload whatever artefacts the workspace contains.
+AGENT_EXIT_FILE="/cell-data/agent_exit_code"
+if [ -r "$AGENT_EXIT_FILE" ]; then
+  AGENT_EXIT="$(cat "$AGENT_EXIT_FILE")"
+else
+  AGENT_EXIT="137"  # assume SIGKILL when the wrapper couldn't even record
+  echo "▶ /cell-data/agent_exit_code missing — assuming agent SIGKILL (exit=137)" >&2
+fi
 
-# Run the LLM fuzzy judge (Q1: framework usage, Q2: confusion patterns,
-# Q3: run.sh wall-clock contract) between the mechanical scorer and the
-# upload, so scorer.fuzzy.json lands in the bucket alongside scorer.json.
-# Judge failure does NOT fail the cell — partial fuzzy data is fine and
-# the script always exits 0; the _fuzzy_parse error-record path captures
-# any failure inside scorer.fuzzy.json itself.
-/opt/run-judge.sh || true
+if [ "$AGENT_EXIT" = "0" ]; then
+  set +e
+  python /opt/harness/run_metrics.py "$@"
+  SCORER_RC=$?
+  set -e
+
+  # Run the LLM fuzzy judge (Q1: framework usage, Q2: confusion patterns,
+  # Q3: run.sh wall-clock contract) between the mechanical scorer and the
+  # upload, so scorer.fuzzy.json lands in the bucket alongside scorer.json.
+  # Judge failure does NOT fail the cell — partial fuzzy data is fine and
+  # the script always exits 0; the _fuzzy_parse error-record path captures
+  # any failure inside scorer.fuzzy.json itself.
+  /opt/run-judge.sh || true
+else
+  echo "▶ Agent failed (exit=$AGENT_EXIT). Skipping run_metrics.py + run-judge.sh;" >&2
+  echo "  uploading partial workspace + per-step exports for post-mortem." >&2
+  SCORER_RC="$AGENT_EXIT"
+fi
 
 ALIAS="fortree-archive"
 mc alias set "$ALIAS" "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null

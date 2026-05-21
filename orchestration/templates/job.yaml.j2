@@ -57,28 +57,31 @@ spec:
   # https://cloud.google.com/kubernetes-engine/docs/how-to/extended-duration-pods
   backoffLimit: 3
   podFailurePolicy:
+    # Job-level failure signal is now the SCORER container's exit, not
+    # the agent's. The agent initContainer is wrapped to always exit 0
+    # (see args block below) so the scorer can run uploads regardless
+    # of whether the agent succeeded — that's the always-upload-on-
+    # failure contract. The scorer reads /cell-data/agent_exit_code and
+    # forwards it as its own exit code so this policy can still react.
     rules:
-      # If the Pod was evicted by cluster autoscaler / scheduler, retry —
-      # don't count toward backoffLimit. `DisruptionTarget` is the
-      # k8s-native condition for eviction-shaped terminations.
+      # Pod-level eviction → retry. DisruptionTarget is the k8s-native
+      # condition for eviction-shaped terminations.
       - action: Ignore
         onPodConditions:
           - type: DisruptionTarget
             status: "True"
-      # Our agent-entrypoint's SIGTERM handler exits 143 cleanly (after
-      # exporting per-step state). Treat that as a retryable eviction
-      # signal, same as DisruptionTarget — sometimes the pod condition
-      # isn't set in time before the container exits.
+      # Agent was SIGTERM'd cleanly (exit 143 — eviction the pod
+      # condition didn't catch in time). Scorer forwards 143; retry.
       - action: Ignore
         onExitCodes:
-          containerName: agent
+          containerName: scorer
           operator: In
           values: [143]
-      # Genuine non-zero exits from the agent (e.g., opencode crashed,
-      # all 8 steps failed) fail the Job immediately.
+      # Genuine non-zero exit (agent OOM, opencode crash, scorer
+      # crash, etc.). Fail immediately — retry won't help.
       - action: FailJob
         onExitCodes:
-          containerName: agent
+          containerName: scorer
           operator: NotIn
           values: [0, 143]
   activeDeadlineSeconds: {{ active_deadline_seconds }}
@@ -184,7 +187,23 @@ spec:
               # Agent fills in the body; N_REPLICATES wiring + default 2
               # are pre-wired. Scorer overrides N_REPLICATES=100.
               install -m 0755 /opt/run.sh.seed /sandbox/run.sh
-              exec /opt/agent-entrypoint.sh
+              # Always-upload-on-failure: run the agent in a way that
+              # captures the exit code and ALWAYS exits 0 from the
+              # initContainer. The scorer container then runs regardless
+              # of agent success and either (a) scores + judges when
+              # agent succeeded, or (b) just mc-mirrors the partial
+              # workspace + per-step exports so OOM / crash failures are
+              # still inspectable post-mortem. Real agent exit code is
+              # recorded to /cell-data/agent_exit_code; missing-file =
+              # SIGKILL'd before the wrapper could write (still surfaced
+              # by the scorer as a catastrophic failure).
+              set +e
+              /opt/agent-entrypoint.sh
+              AGENT_EXIT=$?
+              set -e
+              echo "$AGENT_EXIT" > /cell-data/agent_exit_code
+              echo "[setup] agent exited code=$AGENT_EXIT (recorded to /cell-data/agent_exit_code)" >&2
+              exit 0
           env:
             - name: OPENROUTER_API_KEY
               valueFrom:
