@@ -56,6 +56,14 @@ DEFAULT_OPENROUTER_SECRET = "openrouter-creds"
 # container. Pinned to `codex` (openai/gpt-5-codex) so no agent in the
 # panel self-judges. Override with --judge-model.
 DEFAULT_JUDGE_MODEL = "codex"
+# GKE Autopilot compute class. Default Balanced lets the cluster
+# autoscaler consolidate nodes when mesa cells finish, which silently
+# evicts long-running josh cells (~80 % loss on mini-headline 20260521,
+# see KUBE_WATCH.md §9). Pin to Performance — dedicated nodes per Pod,
+# not subject to autoscaler consolidation, costs more but actually runs
+# to completion. The `safe-to-evict: false` annotation stays as a
+# secondary defense against maintenance / drain events.
+DEFAULT_COMPUTE_CLASS = "Performance"
 
 # Pod-level liveness ceiling. The pr5-smoke (sonnet+josh) completed in
 # 68 min wall-clock; the first mini-headline lost all 100 cells at
@@ -198,6 +206,7 @@ def _render_one(env, args, model: str, target: str, rep_idx: int, rep_count: int
         minio_prefix=args.minio_prefix or args.batch_tag,
         openrouter_secret=args.openrouter_secret,
         judge_model=args.judge_model,
+        compute_class=args.compute_class,
         active_deadline_seconds=args.active_deadline_seconds,
         ttl_seconds_after_finished=args.ttl_seconds_after_finished,
         wall_clock_backstop_sec=args.wall_clock_backstop_sec,
@@ -237,6 +246,13 @@ def main() -> int:
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL,
                         help="Short name (config/models.yaml) for the in-Pod fuzzy "
                              f"judge model. Default: {DEFAULT_JUDGE_MODEL}.")
+    parser.add_argument("--compute-class", default=DEFAULT_COMPUTE_CLASS,
+                        choices=["Performance", "Balanced", "Scale-Out"],
+                        help="GKE Autopilot compute class (nodeSelector "
+                             "cloud.google.com/compute-class). "
+                             f"Default: {DEFAULT_COMPUTE_CLASS} — dedicated nodes, "
+                             "no autoscaler consolidation. Drop to Balanced for "
+                             "cheap smoke tests where eviction risk is acceptable.")
     parser.add_argument("--minio-prefix", default="",
                         help="Object-key prefix (default: same as --batch-tag).")
 
