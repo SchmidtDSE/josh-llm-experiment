@@ -69,9 +69,10 @@ WORKDIR /sandbox
 
 # ---------- agent stage ----------
 FROM base AS agent
-# Notably does NOT contain /opt/harness/ or the scorer entrypoint —
-# `fortree:agent` cannot read /opt/harness/acceptance_ranges.json because
-# those files only exist in `fortree:scorer`. The only payload is a thin
+# Notably does NOT contain /opt/harness/, the scorer entrypoint, or `mc` —
+# `fortree:agent` cannot read /opt/harness/acceptance_ranges.json (only
+# exists in `fortree:scorer`) and has no MinIO client on PATH, so it
+# cannot exfiltrate to the bucket either. The only payload is a thin
 # wrapper that runs `opencode run` and then `opencode export` so the
 # orchestrator can read a normalized session JSON instead of walking the
 # streaming-event trajectory.
@@ -83,3 +84,13 @@ FROM base AS scorer
 COPY harness/ /opt/harness/
 COPY entrypoint-scorer.sh /opt/entrypoint-scorer.sh
 RUN chmod +x /opt/entrypoint-scorer.sh
+
+# MinIO client (`mc`) for the k8s Pod scorer entrypoint — uploads the
+# completed /sandbox to S3-compatible object storage. Installed in the
+# scorer stage only; the agent stage above has no `mc` and no path to
+# bucket credentials.
+COPY scripts/install_mc.sh /tmp/install_mc.sh
+RUN /tmp/install_mc.sh && rm /tmp/install_mc.sh
+
+COPY scorer-and-upload.sh /opt/scorer-and-upload.sh
+RUN chmod +x /opt/scorer-and-upload.sh
