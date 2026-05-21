@@ -67,7 +67,11 @@ else
 fi
 
 echo "▶ Uploading $UPLOAD_SOURCE_DIR → $DEST"
-mc mirror --overwrite --quiet "$UPLOAD_SOURCE_DIR" "$DEST"
+# Exclude opencode's bundled node_modules (~50 MiB of zod locales + esbuild
+# + zod-mini + …) — they're a runtime detail of opencode itself, totally
+# irrelevant to the experiment and re-fetched from the agent image each
+# run. The first pr5-smoke uploaded them; second smoke onwards skips them.
+mc mirror --overwrite --quiet --exclude "**/node_modules/**" "$UPLOAD_SOURCE_DIR" "$DEST"
 echo "✔ Upload done (scorer exit code: $SCORER_RC)"
 
 exit "$SCORER_RC"
