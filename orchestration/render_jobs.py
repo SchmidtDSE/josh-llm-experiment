@@ -90,20 +90,27 @@ DEFAULT_TTL_SECONDS_AFTER_FINISHED = 86400  # 24h — long enough for log fetch
 DEFAULT_WALL_CLOCK_BACKSTOP_SEC = 1800
 DEFAULT_IDLE_THRESHOLD_SEC = 120
 
-DEFAULT_AGENT_CPU_REQUEST = "4"
-DEFAULT_AGENT_CPU_LIMIT = "4"
-# Right-sized after the first pr5 smoke: agent cgroup peaked at ~1.1 GiB
-# at the canonical 7.5 km grid (was 14 k patches at 1 km grid, hence the
-# earlier 24 GiB allocation — that grid resolution is no longer in the
-# prompt). 8 GiB leaves ~5–7× headroom for the JVM during the agent's
-# self-test and for opencode + Node. Pass --agent-memory-* to override
-# for cells that legitimately need more.
-DEFAULT_AGENT_MEMORY_REQUEST = "8Gi"
-DEFAULT_AGENT_MEMORY_LIMIT = "8Gi"
-DEFAULT_SCORER_CPU_REQUEST = "2"
-DEFAULT_SCORER_CPU_LIMIT = "2"
-DEFAULT_SCORER_MEMORY_REQUEST = "4Gi"
-DEFAULT_SCORER_MEMORY_LIMIT = "4Gi"
+# 2× the prior right-sized allocation (was 4 CPU / 8 GiB) after
+# smoke-judge-20260521-1712's minimax-josh OOMed in agent step_04 with
+# exit 137 — opencode + minimax-m2.7's large-context conversation state
+# blew past 8 GiB during the model-description step. Doubling gives
+# memory-hungry models room to breathe; the prior 1.1 GiB sonnet-josh
+# peak is unaffected. Performance class n2 nodes have plenty of room
+# (n2-standard-8 = 8 vCPU / 32 GiB; n2-standard-16 = 16/64). Override
+# with --agent-{cpu,memory}-{request,limit}.
+DEFAULT_AGENT_CPU_REQUEST = "8"
+DEFAULT_AGENT_CPU_LIMIT = "8"
+DEFAULT_AGENT_MEMORY_REQUEST = "16Gi"
+DEFAULT_AGENT_MEMORY_LIMIT = "16Gi"
+# Scorer matches the agent exactly — no per-cell sim time / OOM
+# differences from machine-shape mismatch when the sim is what we're
+# actually measuring (sim_wall_seconds is a headline metric per
+# SCORING.md). Also gives the in-Pod fuzzy judge (run-judge.sh) room
+# alongside the Josh JVM + 100×100 sim.
+DEFAULT_SCORER_CPU_REQUEST = "8"
+DEFAULT_SCORER_CPU_LIMIT = "8"
+DEFAULT_SCORER_MEMORY_REQUEST = "16Gi"
+DEFAULT_SCORER_MEMORY_LIMIT = "16Gi"
 
 VALID_TARGETS = ("josh", "mesa")
 
