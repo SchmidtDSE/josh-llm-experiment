@@ -35,6 +35,18 @@ on:
     branches:
       - dev
       - feat/k8s-refactor
+      - "feat/k8s-**"   # PR branches in the k8s refactor series auto-build
+    paths:
+      - "Dockerfile"
+      - "agent-entrypoint.sh"
+      - "entrypoint-scorer.sh"
+      - "scorer-and-upload.sh"
+      - "harness/**"
+      - "scripts/install_*.sh"
+      - "scripts/init_tiktoken.sh"
+      - "prompts/steps/**"
+      - "config/requirements.txt"
+      - ".github/workflows/build-images.yml"
 
 permissions:
   contents: read
