@@ -70,7 +70,10 @@ BATCH_SLUG="$(echo "$BATCH_TAG" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-
 RENDERED_DIR="$REPO_ROOT/orchestration/rendered/$BATCH_SLUG"
 
 echo "▶ Render"
-python "$REPO_ROOT/orchestration/render_jobs.py" "${RENDER_ARGS[@]}"
+# `uv run` honours pyproject.toml + uv.lock so the renderer uses the
+# project's pinned Python + Jinja/PyYAML versions, not whatever happens
+# to be on $PATH on this host.
+( cd "$REPO_ROOT" && uv run orchestration/render_jobs.py "${RENDER_ARGS[@]}" )
 
 KUBECTL=(kubectl)
 if [ -n "$KUBECTL_CONTEXT" ]; then
