@@ -2,6 +2,4 @@ Implement this using the Josh DSL. Author `.josh` model files and whatever suppo
 
 `./run.sh` should take the workspace from its initial state and complete the task end-to-end. Whatever steps your implementation needs must live inside `./run.sh`. The scorer invokes it exactly once and reads `./output/`.
 
-Canonical Josh output for multi-replicate runs is one CSV per replicate via the `{replicate}` template variable in your `exportFiles` path; a single consolidated CSV with a `replicate` column also works.
-
 Documentation: https://raw.githubusercontent.com/SchmidtDSE/josh/refs/heads/dev/llms-full.txt
