@@ -2,18 +2,20 @@
 
 The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the engineering build state and the readiness checklist for the headline batch, see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md); for the scoring axes, metric definitions, LLM-judge spec, re-analysis recipe, and open scoring questions, see [`SCORING.md`](SCORING.md).
 
-> **Status (post phase-5c).** Phases 1–4d are merged, the
-> scoring-revision phase 5a is in, and the multi-invocation planning
-> flow (phase 5c) is verified end-to-end on claude and minimax across
-> both targets. Two simplifications since the earlier design rounds:
-> (1) the rung-detail ladder is collapsed to a single rung-5 master
-> prompt — the task at full detail is already hard enough to be a
-> useful differentiator and adding a second axis dilutes statistical
-> power; (2) the separate recovery-loop hypothesis (H2) is folded
-> into the multi-invocation flow, whose todos already include
-> validate-and-cleanup iterations. The synthetic-climate dataset
-> described in §External climate inputs is the input for both pilot
-> and headline batches.
+> **Status (Phase 6 in flight on `feat/k8s-refactor`).** Phases 1–5c
+> are merged on `dev`. The Phase 6 refactor — scoring simplification
+> + k8s execution + repo cleanup — is being landed as a 7-PR series
+> on the `feat/k8s-refactor` integration branch; see
+> [IMPLEMENTATION_PLAN.md §Phase 6](IMPLEMENTATION_PLAN.md) for the
+> sequencing and status. Two simplifications carried over from
+> earlier design rounds: (1) the rung-detail ladder is collapsed to
+> a single master prompt — the task at full detail is already hard
+> enough to be a useful differentiator and a second variation axis
+> would dilute statistical power; (2) the separate recovery-loop
+> hypothesis (H2) is folded into the multi-invocation flow, whose
+> todos already include validate-and-cleanup iterations. The
+> synthetic-climate dataset described in §External climate inputs
+> is the input for the headline batch.
 
 This is the AI-evaluation experiment reported in our USRSE'26 submission on the [Josh][josh] vegetation modeling platform.
 
@@ -213,7 +215,7 @@ forcings. Two design constraints conflict for the pilot phase:
    upstream-pipeline convention correctly", and we can't pre-compute
    the spec's predicted output to compare against.
 
-The phase-5a synthetic dataset (committed at
+The synthetic dataset (committed at
 [`data/maxtemp_synthetic.nc`](data/maxtemp_synthetic.nc) and
 [`data/precip_synthetic.nc`](data/precip_synthetic.nc), regenerated
 from [`data/generate_synthetic_climate.py`](data/generate_synthetic_climate.py))
@@ -221,10 +223,16 @@ prioritises (2). It is CF-1.8 compliant (validated by the IOOS
 `compliance-checker`), uses standard physical units (`K` for
 temperature, `kg m⁻² s⁻¹` for precipitation flux convertible to
 mm/year via `× 31_536_000`), has no NaN cells, and is deterministic
-(byte-identical netCDFs across regen runs). The gradient is
-calibrated to the spec's growth equation so a faithful
-implementation produces a visualizable diagonal pattern in year-10
-heights from ~10 m at the centre to ~0 m at the cold/dry corner.
+(byte-identical netCDFs across regen runs). The gradient is calibrated
+to the spec's growth equation so a faithful implementation produces a
+clear spatial pattern in year-100 heights: tallest where the
+combination of temperature and precipitation puts both response curves
+near their peaks, shortest where either driver is unfavourable. The
+empirical year-100 distribution from the reference simulator
+([`data/reference_sim.py`](data/reference_sim.py)) drives the
+acceptance bands in [`harness/acceptance_ranges.json`](harness/acceptance_ranges.json);
+see [SCORING.md §Scoring axes](SCORING.md) for the regression-based
+gate built on top of those bands.
 
 For the headline run, the plan is to swap back to a real-world
 dataset once a well-labeled source is available — at which point the
