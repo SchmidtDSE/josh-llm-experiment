@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Pod-mode scorer entrypoint. Lives only in `fortree:scorer` (added by
+# the scorer Dockerfile stage). Wraps the existing scorer entrypoint and
+# then mirrors the workspace to S3-compatible object storage via `mc`,
+# which is the upload responsibility currently owned by the host-side
+# `orchestration/upload_batch.sh` (deleted in PR6 once k8s submission is
+# live).
+#
+# Designed to be the main-container `command` of the target k8s Pod
+# shape (see IMPLEMENTATION_PLAN.md §K8s execution). The existing
+# `entrypoint-scorer.sh` stays in place as the canonical entrypoint for
+# local smoke fixtures and the existing local orchestration; this
+# wrapper is additive in PR3 — nothing invokes it yet.
+#
+# Invocation (under the k8s Pod, eventually):
+#   /opt/scorer-and-upload.sh --target <josh|mesa>
+#
+# Required env vars (mirror upload_batch.sh's contract — same names so
+# .env.example documentation carries over):
+#   MINIO_ENDPOINT    S3-compatible endpoint URL.
+#   MINIO_BUCKET      Destination bucket name.
+#   MINIO_ACCESS_KEY  HMAC access key.
+#   MINIO_SECRET_KEY  HMAC secret.
+#   BATCH_TAG         Batch identifier (k8s Job name in PR5).
+#   RUN_ID            Per-cell run identifier (k8s Pod name / cell tag in PR5).
+#
+# Optional:
+#   MINIO_PREFIX      Object-key prefix appended after the bucket.
+#
+# Object layout under the bucket (same as upload_batch.sh):
+#   <prefix>/<batch-tag>/<run-id>/...
+#
+# Exit code is the scorer's exit code — uploads run even on score
+# failure (failed cells are still data, matching the spirit of
+# `upload_batch.sh` running after `launch_batch.py` regardless of
+# per-cell outcome).
+
+set -euo pipefail
+
+: "${MINIO_ENDPOINT:?MINIO_ENDPOINT not set}"
+: "${MINIO_BUCKET:?MINIO_BUCKET not set}"
+: "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY not set}"
+: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY not set}"
+: "${BATCH_TAG:?BATCH_TAG not set}"
+: "${RUN_ID:?RUN_ID not set}"
+MINIO_PREFIX="${MINIO_PREFIX:-}"
+
+set +e
+python /opt/harness/run_metrics.py "$@"
+SCORER_RC=$?
+set -e
+
+ALIAS="fortree-archive"
+mc alias set "$ALIAS" "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+
+if [ -n "$MINIO_PREFIX" ]; then
+  DEST="$ALIAS/$MINIO_BUCKET/${MINIO_PREFIX%/}/$BATCH_TAG/$RUN_ID"
+else
+  DEST="$ALIAS/$MINIO_BUCKET/$BATCH_TAG/$RUN_ID"
+fi
+
+echo "▶ Uploading /sandbox → $DEST"
+mc mirror --overwrite --quiet /sandbox "$DEST"
+echo "✔ Upload done (scorer exit code: $SCORER_RC)"
+
+exit "$SCORER_RC"
