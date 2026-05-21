@@ -90,27 +90,30 @@ DEFAULT_TTL_SECONDS_AFTER_FINISHED = 86400  # 24h — long enough for log fetch
 DEFAULT_WALL_CLOCK_BACKSTOP_SEC = 1800
 DEFAULT_IDLE_THRESHOLD_SEC = 120
 
-# 2× the prior right-sized allocation (was 4 CPU / 8 GiB) after
-# smoke-judge-20260521-1712's minimax-josh OOMed in agent step_04 with
-# exit 137 — opencode + minimax-m2.7's large-context conversation state
-# blew past 8 GiB during the model-description step. Doubling gives
-# memory-hungry models room to breathe; the prior 1.1 GiB sonnet-josh
-# peak is unaffected. Performance class n2 nodes have plenty of room
-# (n2-standard-8 = 8 vCPU / 32 GiB; n2-standard-16 = 16/64). Override
-# with --agent-{cpu,memory}-{request,limit}.
+# Request vs limit are now asymmetric: requests stay at 8 CPU / 16 GiB
+# (sized for the typical happy-path observed across sonnet-mesa /
+# claude-mesa / claude-josh — peak <9 GiB working set) and limits go
+# up to 16 CPU / 32 GiB to give memory-hungry models burst headroom.
+# Burstable QoS (request<limit) means Autopilot reserves the request
+# only, so we don't pay for the burst envelope unless the cell uses it.
+# JVM heap cap (MaxRAMPercentage=50) auto-scales to 16 GiB max heap
+# under the new limit — double the prior cap for josh validate/preprocess.
+# minimax-josh peaked at 10.4 GiB working set with the prior 16 GiB
+# limit at the moment of OOM, so this should give the ~5+ GiB headroom
+# needed past that point.
 DEFAULT_AGENT_CPU_REQUEST = "8"
-DEFAULT_AGENT_CPU_LIMIT = "8"
+DEFAULT_AGENT_CPU_LIMIT = "16"
 DEFAULT_AGENT_MEMORY_REQUEST = "16Gi"
-DEFAULT_AGENT_MEMORY_LIMIT = "16Gi"
+DEFAULT_AGENT_MEMORY_LIMIT = "32Gi"
 # Scorer matches the agent exactly — no per-cell sim time / OOM
 # differences from machine-shape mismatch when the sim is what we're
 # actually measuring (sim_wall_seconds is a headline metric per
 # SCORING.md). Also gives the in-Pod fuzzy judge (run-judge.sh) room
 # alongside the Josh JVM + 100×100 sim.
 DEFAULT_SCORER_CPU_REQUEST = "8"
-DEFAULT_SCORER_CPU_LIMIT = "8"
+DEFAULT_SCORER_CPU_LIMIT = "16"
 DEFAULT_SCORER_MEMORY_REQUEST = "16Gi"
-DEFAULT_SCORER_MEMORY_LIMIT = "16Gi"
+DEFAULT_SCORER_MEMORY_LIMIT = "32Gi"
 
 VALID_TARGETS = ("josh", "mesa")
 
