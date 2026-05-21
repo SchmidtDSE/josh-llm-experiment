@@ -174,7 +174,7 @@ containers:
     # acceptance_ranges.json, and mc; the agent never sees any of these.
     command: ["/opt/scorer-and-upload.sh"]
   - name: dns-monitor
-    image: fortree:dnsmasq-passive
+    image: fortree:dnsmasq
     # Passive query logger only — no iptables, no NET_ADMIN.
     # Records every DNS query into dns.log so the scorer can include
     # it in the upload.

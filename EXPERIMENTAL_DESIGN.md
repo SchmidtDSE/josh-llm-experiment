@@ -380,12 +380,25 @@ land via the re-scoring path documented in
 [SCORING.md](SCORING.md#re-analysing-completed-runs) so headline
 runs and re-analyses sit side-by-side.
 
-## Egress observability and isolation
+## Egress observability
 
 Two layers, both committed to Git and frozen for the headline
 experiment.
 
-### Policy layer: opencode tool config
+> **Phase 6 methodology delta.** This experiment previously combined an
+> in-process tool allowlist (opencode) with a kernel-enforced egress
+> firewall (per-run docker bridge + dnsmasq + iptables + ipset, REJECT
+> on anything outside an allowlist of docs hosts). The Phase 6 refactor
+> moves cell execution to k8s Pods, which cannot express the
+> `CAP_NET_ADMIN` + shared-netns pattern that kernel enforcement
+> required. The egress boundary is now **monitored, not enforced**:
+> opencode's tool config still gates what the model can ask for, and a
+> passive dnsmasq sidecar logs every DNS query the agent issues. The
+> headline batch leans on opencode's `trajectory.jsonl` plus `dns.log`
+> as post-hoc evidence of what each cell reached. Threats-to-validity
+> implications discussed below.
+
+### Soft layer: opencode tool config
 
 opencode's per-tool configuration in
 [`config/opencode.template.json`](config/opencode.template.json) is
@@ -408,31 +421,35 @@ the only in-process constraint:
 This layer is mostly a vehicle for shape: it makes the tool surface
 visible to the model. The substantive policy is the next layer.
 
-### Policy layer: hard egress allowlist (kernel-enforced)
+### Observation layer: passive DNS query log
 
-A `dnsmasq` sidecar runs on the agent's per-run Docker bridge network
-in a privileged-NET capabilities mode. Configured in
+A `dnsmasq` sidecar runs alongside the agent container. Configured in
 [`orchestration/dnsmasq.conf`](orchestration/dnsmasq.conf) and built
-from [`Dockerfile.dnsmasq`](Dockerfile.dnsmasq). It does three things:
+from [`Dockerfile.dnsmasq`](Dockerfile.dnsmasq). It does two things:
 
-1. **Resolves DNS** for the agent container (sidecar shares its netns
-   with the agent via `--network=container:dnsmasq-<id>`).
-2. **Logs every DNS query** (host, timestamp, resolution) to a
-   per-run `dns.log` — the evidence record for what hosts the agent
-   reached, independent of which process inside the container
-   initiated the request.
-3. **Populates an `ipset` allowlist** (driven by dnsmasq's `ipset=`
-   directives) that iptables consults on the OUTPUT chain. Anything
-   resolving to an IP not in the ipset is **dropped** at the kernel,
-   not merely logged. The smoke-test firewall probe asserts this
-   enforcement (CI workflow `smoke.yml`).
+1. **Resolves DNS** for the agent container. Under k8s, the Pod sets
+   `dnsPolicy: None` + `dnsConfig.nameservers: [<sidecar-IP>]` so the
+   agent's resolver routes through this sidecar.
+2. **Logs every DNS query** (host, timestamp, resolution) to a per-run
+   `dns.log` — the evidence record for what hosts the agent reached,
+   independent of which process inside the container initiated the
+   request.
 
-Together: the in-process tool config gates what the model can ask
-opencode to do; the network layer gates what any process in the
-container can actually reach. The latter is the substantive boundary
-for the validity argument.
+There is no kernel-level REJECT chain. If the agent (or an
+agent-authored script) attempts to connect to a host outside the
+intended docs set, the query is **logged but not blocked**; the
+post-hoc analysis surfaces it via the `dns_unexpected_hosts` field on
+the run manifest. The validity argument depends on (a) opencode's
+`webfetch` tool config gating direct webfetch calls to the host
+allowlist below, (b) the pilot batches showing that the agents don't
+have a habit of fetching outside it via `bash`-shelled `curl`/`urllib`
+paths either. Both pre-headline pilots came back clean.
 
 ### Documentation host allowlist
+
+The hosts the agent is steered toward via `permission.webfetch` in
+[`config/opencode.template.json`](config/opencode.template.json) (no
+longer enforced at the kernel — see the methodology delta above):
 
 | Host                                | Purpose |
 | ----------------------------------- | ------- |
@@ -452,10 +469,6 @@ threads, gists, and source-browse links from doc pages), Stack
 Overflow, Reddit, blog hosts, PyPI's metadata pages. The agent can
 read installed package source on disk, which is a strict superset of
 what github.com source-browse would provide.
-
-The canonical allowlist lives in
-[`orchestration/dnsmasq.conf`](orchestration/dnsmasq.conf) as
-`ipset=...` directives; the table above mirrors it for readability.
 
 ### Model API host
 
@@ -581,14 +594,18 @@ paper:
 - "Relevant LOC" definition is judgement-encoded once, in
   [`harness/loc.py`](harness/loc.py); a different operationalization
   could shift numbers.
-- The egress boundary is opencode's self-enforced tool allowlist
-  (soft) with a dnsmasq DNS log as the passive observation layer.
-  Indirect egress paths (e.g., an agent-authored `./run.sh` calling
-  `urllib`) are not blocked in this design; they are observable in
-  the DNS log and reported as `dns_unexpected_hosts`. The validity
-  argument depends on the pilot showing these signals stay clean.
-  Hard-layer filtering can be added later if observation reveals
-  meaningful leaks.
+- **Egress is monitored, not enforced** (Phase 6 methodology delta —
+  see §Egress observability). Earlier pilots ran behind a
+  kernel-enforced REJECT on anything outside the docs allowlist; the
+  k8s refactor relaxed that to a passive DNS query log because the
+  per-run docker-bridge + `CAP_NET_ADMIN` pattern doesn't fit the Pod
+  model. Indirect egress paths (e.g., an agent-authored `./run.sh`
+  calling `urllib`) are now observable but not blocked, surfaced as
+  `dns_unexpected_hosts` on the run manifest. The validity argument
+  depends on the pilot batches showing those signals stay clean; if
+  the headline batch surfaces meaningful leaks, a Pod-level egress
+  NetworkPolicy can re-introduce hard filtering without reverting the
+  rest of the refactor.
 - Several methodological choices are still open and will affect
   what the experiment can claim. See §Open methodology questions
   below.

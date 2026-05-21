@@ -1,16 +1,17 @@
 name: smoke
 
 # Deterministic CI checks that exercise the harness without invoking a
-# model. Two jobs:
+# model. One job:
 #
 # - scorer-fixtures: builds fortree:scorer, runs it against every fixture
 #   under reference/, asserts expected csv_schema_ok + error substring.
-# - firewall-probe:  builds fortree:dnsmasq, joins busybox to its netns,
-#   and asserts that allowlisted hosts (openrouter.ai,
-#   mesa.readthedocs.io) connect and unallowlisted hosts (pypi.org,
-#   stackoverflow.com) are REJECTed at the kernel.
 #
-# Both run on every push and on PRs targeting dev or main. The actual
+# The Phase 6 refactor retired the firewall-probe job along with the
+# kernel-enforced egress sidecar (see Dockerfile.dnsmasq history and
+# IMPLEMENTATION_PLAN.md §Egress relaxation) — the sidecar is now a
+# passive query logger, so there are no iptables REJECT rules to probe.
+#
+# Runs on every push and on PRs targeting dev or main. The actual
 # assertion logic lives under .github/scripts/ so it's runnable locally
 # without GH Actions.
 
@@ -41,25 +42,3 @@ jobs:
 
       - name: Run scorer against every fixture
         run: .github/scripts/smoke-fixtures.sh fortree:scorer
-
-  firewall-probe:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
-
-      - name: Build fortree:dnsmasq image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
-        with:
-          context: .
-          file: Dockerfile.dnsmasq
-          tags: fortree:dnsmasq
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Probe egress allowlist (allowed connect, blocked REJECTed)
-        run: .github/scripts/firewall-probe.sh fortree:dnsmasq

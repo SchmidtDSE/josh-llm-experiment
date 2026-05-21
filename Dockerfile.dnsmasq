@@ -1,4 +1,4 @@
-# Per-run egress-enforcement sidecar. Builds `fortree:dnsmasq`.
+# Per-run passive DNS observation sidecar. Builds `fortree:dnsmasq`.
 #
 #   docker build -f Dockerfile.dnsmasq -t fortree:dnsmasq .
 #
@@ -6,43 +6,40 @@
 # structurally unrelated to base/agent/scorer:
 #
 #   - Built FROM alpine, not FROM base. Shares zero layers with the
-#     agent/scorer images. ~16 MB total vs base's ~1.5 GB.
+#     agent/scorer images. ~5 MB total vs base's ~1.5 GB.
 #   - Has no python, java, josh, opencode, or scientific stack. The only
-#     payload is dnsmasq + iptables + ipset + a small init script. That
-#     minimal surface is the point: even if sidecar-init.sh were
-#     compromised, there's no shell-out vector (no python, no curl etc.).
+#     payload is dnsmasq + a config file. Minimal surface is the point.
 #
-# Lifecycle (see orchestration/dns_sidecar.sh):
-#   1. launch_run.sh creates a per-run docker bridge network.
-#   2. Starts this image on it with CAP_NET_ADMIN +
-#      --add-host=host.docker.internal:host-gateway.
-#   3. The agent joins the sidecar's netns via
-#      --network=container:dnsmasq-<id>, so every packet it sends
-#      traverses the iptables rules installed below.
+# History (Phase 6 refactor — see IMPLEMENTATION_PLAN.md §K8s execution):
+# this image previously installed `iptables` + `ipset` and shipped a
+# `sidecar-init.sh` that set up a kernel-level OUTPUT-chain REJECT for
+# anything not in the dnsmasq-populated `allowed_dst` ipset. The k8s
+# Pod model can't express the per-run docker-bridge + CAP_NET_ADMIN
+# shape that enforcement required, so the egress boundary was relaxed
+# from *enforced* to *monitored*. The image now does just one thing:
+# log every DNS query the agent issues, so `dns.log` remains the
+# post-hoc evidence record for what hosts the agent reached. The
+# validity argument now leans on opencode's `trajectory.jsonl` +
+# `dns.log` together; see EXPERIMENTAL_DESIGN.md §Egress observability.
 #
-# Egress policy (see orchestration/sidecar-init.sh):
-#   - dnsmasq populates a netfilter ipset (`allowed_dst`) as it resolves
-#     each host listed in orchestration/dnsmasq.conf's `ipset=` lines.
-#   - iptables OUTPUT chain ACCEPTs loopback, ESTABLISHED/RELATED,
-#     53/udp+tcp to upstream DNS, the docker bridge gateway, and
-#     destinations in `allowed_dst`. Everything else is REJECTed.
+# Pod wiring (PR5): the Pod sets `dnsPolicy: None` +
+# `dnsConfig.nameservers: [<sidecar-IP>]` so the agent's resolver
+# routes through this sidecar. No `CAP_NET_ADMIN`, no shared netns.
 
 FROM alpine:3.20
-RUN apk add --no-cache dnsmasq iptables ip6tables ipset
+RUN apk add --no-cache dnsmasq
 COPY orchestration/dnsmasq.conf /etc/dnsmasq.conf
-COPY orchestration/sidecar-init.sh /usr/local/bin/sidecar-init.sh
-RUN chmod +x /usr/local/bin/sidecar-init.sh
 EXPOSE 53/udp 53/tcp
 
-# Healthcheck so the orchestrator (orchestration/dns_sidecar.sh) can
-# block the agent's start until the sidecar's iptables rules are
-# installed AND dnsmasq is actually accepting queries. `pidof dnsmasq`
-# only goes nonzero before sidecar-init.sh has reached its `exec dnsmasq`
-# line; once dnsmasq is up, iptables rules are also already in place
-# (init runs them first, sequentially, before exec). Tight cadence so
-# the orchestrator wait is short — the whole startup is sub-second on
-# a warm host.
+# `pidof dnsmasq` only goes nonzero before dnsmasq has bound to :53;
+# once it's up, queries are accepted. Tight cadence so the orchestrator
+# wait is short — startup is sub-second on a warm host.
 HEALTHCHECK --interval=1s --timeout=2s --start-period=1s --retries=5 \
   CMD pidof dnsmasq >/dev/null || exit 1
 
-ENTRYPOINT ["/usr/local/bin/sidecar-init.sh"]
+# ENTRYPOINT = dnsmasq alone (not `dnsmasq -k`) so that the conventional
+# `docker run --rm fortree:dnsmasq --test` README sanity check keeps
+# working. CMD supplies the normal-serving args; override at run time
+# for anything else.
+ENTRYPOINT ["dnsmasq"]
+CMD ["-k"]
