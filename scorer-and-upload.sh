@@ -26,6 +26,12 @@
 #
 # Optional:
 #   MINIO_PREFIX      Object-key prefix appended after the bucket.
+#   UPLOAD_SOURCE_DIR Directory tree to mirror (default `/sandbox`).
+#                     The k8s Job template sets this to `/cell-data`,
+#                     a shared emptyDir that contains both the agent's
+#                     workspace and its per-step metadata; mirroring
+#                     the whole tree gives the scorer.json + workspace
+#                     + opencode state + trajectory.jsonl in one go.
 #
 # Object layout under the bucket (same as upload_batch.sh):
 #   <prefix>/<batch-tag>/<run-id>/...
@@ -44,6 +50,7 @@ set -euo pipefail
 : "${BATCH_TAG:?BATCH_TAG not set}"
 : "${RUN_ID:?RUN_ID not set}"
 MINIO_PREFIX="${MINIO_PREFIX:-}"
+UPLOAD_SOURCE_DIR="${UPLOAD_SOURCE_DIR:-/sandbox}"
 
 set +e
 python /opt/harness/run_metrics.py "$@"
@@ -59,8 +66,8 @@ else
   DEST="$ALIAS/$MINIO_BUCKET/$BATCH_TAG/$RUN_ID"
 fi
 
-echo "▶ Uploading /sandbox → $DEST"
-mc mirror --overwrite --quiet /sandbox "$DEST"
+echo "▶ Uploading $UPLOAD_SOURCE_DIR → $DEST"
+mc mirror --overwrite --quiet "$UPLOAD_SOURCE_DIR" "$DEST"
 echo "✔ Upload done (scorer exit code: $SCORER_RC)"
 
 exit "$SCORER_RC"

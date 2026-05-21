@@ -1,0 +1,115 @@
+name: build-images
+
+# Build + push fortree:agent and fortree:scorer to GHCR. The cluster
+# (GKE Autopilot, joshsim namespace) pulls these images by tag, so a
+# manual `workflow_dispatch` is the common path before kicking off a
+# k8s submission. Also auto-builds on push to the integration branch
+# `feat/k8s-refactor` (post-merge of any PR) and to `dev` so the
+# headline batch can always reference a current `:latest` tag.
+#
+# Output tags per stage:
+#   ghcr.io/<owner>/<repo>/fortree-agent:<short-sha>
+#   ghcr.io/<owner>/<repo>/fortree-agent:<branch-slug>
+#   ghcr.io/<owner>/<repo>/fortree-agent:latest      (only on dev / feat/k8s-refactor)
+#   ghcr.io/<owner>/<repo>/fortree-scorer:<short-sha>
+#   ghcr.io/<owner>/<repo>/fortree-scorer:<branch-slug>
+#   ghcr.io/<owner>/<repo>/fortree-scorer:latest     (only on dev / feat/k8s-refactor)
+#
+# The Job manifest (rendered by orchestration/render_jobs.py) should
+# reference the `:<short-sha>` tag — that's what the job summary prints
+# at the end of this workflow for copy-paste.
+#
+# GHCR package visibility: after first push, manually set both packages
+# (fortree-agent and fortree-scorer) to Public so the cluster pulls
+# without an imagePullSecret. One-time, per package, via the GitHub UI
+# (org → Packages → package → Settings → Change visibility).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (default: current branch)"
+        required: false
+        type: string
+  push:
+    branches:
+      - dev
+      - feat/k8s-refactor
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        stage: [agent, scorer]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
+
+      - name: Lowercase image base
+        id: img
+        run: |
+          # GHCR requires lowercase. github.repository preserves case; force it.
+          echo "base=${IMAGE_BASE,,}" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          # Slug ref for a human-readable tag (replace / with -).
+          REF_NAME="${GITHUB_REF_NAME}"
+          echo "ref_slug=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          BASE="${{ steps.img.outputs.base }}"
+          SHA="${{ steps.img.outputs.sha }}"
+          REF="${{ steps.img.outputs.ref_slug }}"
+          STAGE="${{ matrix.stage }}"
+          TAGS="${BASE}/fortree-${STAGE}:${SHA}"
+          TAGS="${TAGS},${BASE}/fortree-${STAGE}:${REF}"
+          # Only tag :latest on the integration branch + dev.
+          if [ "$GITHUB_REF" = "refs/heads/feat/k8s-refactor" ] || [ "$GITHUB_REF" = "refs/heads/dev" ]; then
+            TAGS="${TAGS},${BASE}/fortree-${STAGE}:latest"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Build + push fortree:${{ matrix.stage }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
+        with:
+          context: .
+          target: ${{ matrix.stage }}
+          tags: ${{ steps.tags.outputs.tags }}
+          push: true
+          cache-from: type=gha,scope=${{ matrix.stage }}
+          cache-to: type=gha,scope=${{ matrix.stage }},mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "## fortree-${{ matrix.stage }} pushed"
+            echo
+            echo '```'
+            echo "${{ steps.tags.outputs.tags }}" | tr ',' '\n'
+            echo '```'
+            echo
+            echo "Use the short-sha tag in render_jobs.py:"
+            echo "    --image-${{ matrix.stage }} ${{ steps.img.outputs.base }}/fortree-${{ matrix.stage }}:${{ steps.img.outputs.sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"

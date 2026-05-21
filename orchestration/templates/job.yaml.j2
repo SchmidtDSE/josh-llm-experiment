@@ -1,0 +1,181 @@
+---
+# One ConfigMap per cell carrying the rendered prompt body, opencode
+# config (with the resolved OpenRouter slug substituted in), and the
+# initial PLAN.md the 8-step agent loop reads + appends to.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ configmap_name }}
+  namespace: {{ namespace }}
+  labels:
+    app: fortree
+    batch-tag: {{ batch_tag }}
+    cell-id: {{ cell_id }}
+    model: {{ model }}
+    target: {{ target }}
+data:
+  prompt_body.md: |
+{{ prompt_body | indent(4, True) }}
+  opencode.json: |
+{{ opencode_json | indent(4, True) }}
+  PLAN.md: |
+{{ plan_md | indent(4, True) }}
+---
+# Per-cell k8s Job. Pod runs:
+#   initContainer setup   — seeds /cell-data with PLAN.md + opencode.json
+#                           from the ConfigMap, makes the dirs the agent
+#                           expects.
+#   initContainer agent   — opencode 8-step flow against /cell-data.
+#                           Symlinks /opt/agent_meta and
+#                           /root/.config/opencode at /cell-data so the
+#                           scorer can read them after agent exits.
+#   container scorer      — scores /cell-data/workspace, then
+#                           `mc mirror`s the whole /cell-data tree
+#                           (workspace + agent metadata + opencode
+#                           state + scorer.json) to the bucket.
+#
+# /cell-data lives in an emptyDir shared between all three containers.
+# The Pod has no other persistence; bucket is the durable record.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ cell_id }}
+  namespace: {{ namespace }}
+  labels:
+    app: fortree
+    batch-tag: {{ batch_tag }}
+    cell-id: {{ cell_id }}
+    model: {{ model }}
+    target: {{ target }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ active_deadline_seconds }}
+  ttlSecondsAfterFinished: {{ ttl_seconds_after_finished }}
+  template:
+    metadata:
+      labels:
+        app: fortree
+        batch-tag: {{ batch_tag }}
+        cell-id: {{ cell_id }}
+        model: {{ model }}
+        target: {{ target }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ service_account }}
+      volumes:
+        - name: cell-data
+          emptyDir:
+            sizeLimit: 5Gi
+        - name: cell-config
+          configMap:
+            name: {{ configmap_name }}
+      initContainers:
+        - name: setup
+          image: busybox:1.37
+          command:
+            - sh
+            - -ec
+            - |
+              # Lay out the directory shape agent-entrypoint.sh + the
+              # scorer expect. /cell-data is the shared emptyDir.
+              mkdir -p /cell-data/workspace /cell-data/agent_meta /cell-data/opencode
+              cp /etc/cell-config/PLAN.md /cell-data/workspace/PLAN.md
+              cp /etc/cell-config/opencode.json /cell-data/opencode/opencode.json
+              cp /etc/cell-config/prompt_body.md /cell-data/prompt_body.md
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+            - name: cell-config
+              mountPath: /etc/cell-config
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+        - name: agent
+          image: {{ agent_image }}
+          # Symlink the paths agent-entrypoint.sh hardcodes onto the
+          # shared emptyDir so the scorer can read everything after the
+          # agent exits.
+          command: ["/bin/bash", "-ec"]
+          args:
+            - |
+              ln -sfn /cell-data/agent_meta /opt/agent_meta
+              ln -sfn /cell-data/prompt_body.md /opt/prompt_body.md
+              mkdir -p /root/.config
+              ln -sfn /cell-data/opencode /root/.config/opencode
+              cd /cell-data/workspace
+              exec /opt/agent-entrypoint.sh
+          env:
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ openrouter_secret }}
+                  key: api-key
+            - name: WALL_CLOCK_BACKSTOP_SEC
+              value: "{{ wall_clock_backstop_sec }}"
+            - name: IDLE_THRESHOLD_SEC
+              value: "{{ idle_threshold_sec }}"
+            - name: FAIL_FAST_ON_STEP_ERROR
+              value: "{{ fail_fast_on_step_error }}"
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+          resources:
+            requests:
+              cpu: "{{ agent_cpu_request }}"
+              memory: "{{ agent_memory_request }}"
+            limits:
+              cpu: "{{ agent_cpu_limit }}"
+              memory: "{{ agent_memory_limit }}"
+      containers:
+        - name: scorer
+          image: {{ scorer_image }}
+          command: ["/opt/scorer-and-upload.sh"]
+          args:
+            - "--target"
+            - "{{ target }}"
+            - "--workspace"
+            - "/cell-data/workspace"
+          env:
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: endpoint
+            - name: MINIO_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: bucket
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: secret-key
+            - name: MINIO_PREFIX
+              value: "{{ minio_prefix }}"
+            - name: BATCH_TAG
+              value: "{{ batch_tag }}"
+            - name: RUN_ID
+              value: "{{ cell_id }}"
+            - name: UPLOAD_SOURCE_DIR
+              value: "/cell-data"
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+          resources:
+            requests:
+              cpu: "{{ scorer_cpu_request }}"
+              memory: "{{ scorer_memory_request }}"
+            limits:
+              cpu: "{{ scorer_cpu_limit }}"
+              memory: "{{ scorer_memory_limit }}"

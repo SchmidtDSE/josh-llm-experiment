@@ -72,12 +72,16 @@ FROM base AS agent
 # Notably does NOT contain /opt/harness/, the scorer entrypoint, or `mc` —
 # `fortree:agent` cannot read /opt/harness/acceptance_ranges.json (only
 # exists in `fortree:scorer`) and has no MinIO client on PATH, so it
-# cannot exfiltrate to the bucket either. The only payload is a thin
-# wrapper that runs `opencode run` and then `opencode export` so the
-# orchestrator can read a normalized session JSON instead of walking the
-# streaming-event trajectory.
+# cannot exfiltrate to the bucket either. The payload is a thin wrapper
+# that runs `opencode run` 8× (one per todo) plus the static per-step
+# injection prompts the wrapper concatenates onto the per-cell body.
 COPY agent-entrypoint.sh /opt/agent-entrypoint.sh
 RUN chmod +x /opt/agent-entrypoint.sh
+# Bake the 8 per-step injection prompts into the image. Previously
+# bind-mounted at run time by the local orchestration (going away in
+# PR6); the k8s Pod model cannot bind-mount host files, and these
+# prompts are repo-committed, deterministic, and small (~40 lines total).
+COPY prompts/steps/ /opt/steps/
 
 # ---------- scorer stage ----------
 FROM base AS scorer

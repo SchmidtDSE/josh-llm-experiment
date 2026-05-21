@@ -15,3 +15,8 @@ __pycache__/
 analysis/aggregated.csv
 analysis/figures/
 analysis/.ipynb_checkpoints/
+
+# K8s manifests rendered per-batch by orchestration/render_jobs.py — derived
+# artefacts, regenerable from the templates. Source of truth is the template +
+# CLI args.
+orchestration/rendered/
