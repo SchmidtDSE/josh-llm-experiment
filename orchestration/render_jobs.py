@@ -59,14 +59,14 @@ DEFAULT_IDLE_THRESHOLD_SEC = 120
 
 DEFAULT_AGENT_CPU_REQUEST = "4"
 DEFAULT_AGENT_CPU_LIMIT = "4"
-# Pod memory must exceed the JVM heap (JAVA_TOOL_OPTIONS=-Xmx16g baked
-# into the image) plus opencode/Node + OS overhead, otherwise the kernel
-# OOM-kills the Pod when josh fires during the agent's run.sh self-test.
-# 24Gi gives the JVM its 16Gi heap and leaves ~8Gi for everything else;
-# the first pr5 smoke OOM'd at 16Gi=16Gi. Autopilot caps memory:CPU at
-# 6.5:1 GiB:vCPU, so 24Gi at 4 vCPU is at 6:1 — within the envelope.
-DEFAULT_AGENT_MEMORY_REQUEST = "24Gi"
-DEFAULT_AGENT_MEMORY_LIMIT = "24Gi"
+# Right-sized after the first pr5 smoke: agent cgroup peaked at ~1.1 GiB
+# at the canonical 7.5 km grid (was 14 k patches at 1 km grid, hence the
+# earlier 24 GiB allocation — that grid resolution is no longer in the
+# prompt). 8 GiB leaves ~5–7× headroom for the JVM during the agent's
+# self-test and for opencode + Node. Pass --agent-memory-* to override
+# for cells that legitimately need more.
+DEFAULT_AGENT_MEMORY_REQUEST = "8Gi"
+DEFAULT_AGENT_MEMORY_LIMIT = "8Gi"
 DEFAULT_SCORER_CPU_REQUEST = "2"
 DEFAULT_SCORER_CPU_LIMIT = "2"
 DEFAULT_SCORER_MEMORY_REQUEST = "4Gi"
@@ -142,20 +142,29 @@ def _parse_matrix(path: Path) -> list[dict]:
     return rows
 
 
-def _cell_id(batch_tag: str, model: str, target: str) -> str:
-    cid = _slugify(f"{batch_tag}-{model}-{target}")
-    # k8s name length cap is 63 chars
+def _cell_id(batch_tag: str, model: str, target: str, rep_idx: int = 0, rep_count: int = 1) -> str:
+    """Compose a k8s-safe cell ID.
+
+    If (model, target) appears more than once in the matrix, the suffix
+    `-rN` (N = rep_idx) is appended to disambiguate. Single-rep cells
+    keep the clean `<batch>-<model>-<target>` form for backward compat
+    with the pr5 smoke.
+    """
+    base = f"{batch_tag}-{model}-{target}"
+    if rep_count > 1:
+        base = f"{base}-r{rep_idx}"
+    cid = _slugify(base)
     if len(cid) > 63:
         raise SystemExit(f"cell_id exceeds 63 chars: {cid!r}")
     return cid
 
 
-def _render_one(env, args, model: str, target: str) -> tuple[str, str]:
+def _render_one(env, args, model: str, target: str, rep_idx: int, rep_count: int) -> tuple[str, str]:
     model_slug = _resolve_model(model)
     prompt_body = _render_prompt_body(target)
     opencode_json = _render_opencode_json(model_slug)
     plan_md = _render_plan_md()
-    cell_id = _cell_id(args.batch_tag, model, target)
+    cell_id = _cell_id(args.batch_tag, model, target, rep_idx=rep_idx, rep_count=rep_count)
     configmap_name = f"cell-config-{cell_id}"
 
     template = env.get_template("job.yaml.j2")
@@ -242,9 +251,19 @@ def main() -> int:
         keep_trailing_newline=True,
     )
 
+    # Count how many times each (model, target) appears so we can disambiguate
+    # duplicate rows with a `-rN` suffix on the cell_id.
+    from collections import Counter
+    pair_counts = Counter((c["model"], c["target"]) for c in cells_list)
+    pair_seen: dict[tuple[str, str], int] = {}
+
     print(f"▶ Rendering {len(cells_list)} cell(s) into {out_dir}")
     for cell in cells_list:
-        cell_id, rendered = _render_one(env, args, cell["model"], cell["target"])
+        key = (cell["model"], cell["target"])
+        rep_idx = pair_seen.get(key, 0)
+        pair_seen[key] = rep_idx + 1
+        rep_count = pair_counts[key]
+        cell_id, rendered = _render_one(env, args, cell["model"], cell["target"], rep_idx, rep_count)
         path = out_dir / f"{cell_id}.yaml"
         path.write_text(rendered, encoding="utf-8")
         print(f"  ✔ {path.relative_to(REPO_ROOT)}")
