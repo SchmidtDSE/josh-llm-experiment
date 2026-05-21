@@ -64,6 +64,15 @@ DEFAULT_JUDGE_MODEL = "codex"
 # to completion. The `safe-to-evict: false` annotation stays as a
 # secondary defense against maintenance / drain events.
 DEFAULT_COMPUTE_CLASS = "Performance"
+# Performance class requires a machine-family selector or Autopilot
+# refuses to schedule ("node(s) didn't match Pod's node affinity").
+# n2 is the workhorse Intel Cascade Lake / Ice Lake series — broad
+# us-west1 availability, balanced cost, more than enough CPU for our
+# LLM-bound agent + Josh/Python scorer. c3 / c4 are faster latest-gen
+# Intel; c2d / t2d / n2d are AMD EPYC. Ignored when compute-class is
+# Balanced or Scale-Out (the template only emits machine-family for
+# Performance). Override with --machine-family.
+DEFAULT_MACHINE_FAMILY = "n2"
 
 # Pod-level liveness ceiling. The pr5-smoke (sonnet+josh) completed in
 # 68 min wall-clock; the first mini-headline lost all 100 cells at
@@ -207,6 +216,7 @@ def _render_one(env, args, model: str, target: str, rep_idx: int, rep_count: int
         openrouter_secret=args.openrouter_secret,
         judge_model=args.judge_model,
         compute_class=args.compute_class,
+        machine_family=args.machine_family,
         active_deadline_seconds=args.active_deadline_seconds,
         ttl_seconds_after_finished=args.ttl_seconds_after_finished,
         wall_clock_backstop_sec=args.wall_clock_backstop_sec,
@@ -253,6 +263,13 @@ def main() -> int:
                              f"Default: {DEFAULT_COMPUTE_CLASS} — dedicated nodes, "
                              "no autoscaler consolidation. Drop to Balanced for "
                              "cheap smoke tests where eviction risk is acceptable.")
+    parser.add_argument("--machine-family", default=DEFAULT_MACHINE_FAMILY,
+                        help="GKE machine family for Performance class "
+                             "(nodeSelector cloud.google.com/machine-family). "
+                             f"Default: {DEFAULT_MACHINE_FAMILY}. Required when "
+                             "compute-class=Performance; ignored otherwise. "
+                             "Supported: c4, c4a, c4d, c3, c3d, c2, c2d, h3, "
+                             "h4d, t2a, t2d, e2, n1, n2, n2d, n4, n4d, z3.")
     parser.add_argument("--minio-prefix", default="",
                         help="Object-key prefix (default: same as --batch-tag).")
 

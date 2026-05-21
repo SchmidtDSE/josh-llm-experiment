@@ -112,9 +112,20 @@ spec:
       # default (the previous failure mode). Costs more per-cell but
       # actually runs to completion. Configurable via render_jobs.py
       # --compute-class; drop to Balanced for cheap smoke tests.
-      # https://cloud.google.com/kubernetes-engine/docs/concepts/autopilot-compute-classes
+      #
+      # Performance class REQUIRES a machine-family selector — without
+      # it, scheduling fails with "node(s) didn't match Pod's node
+      # affinity/selector" because Autopilot doesn't know which node
+      # type to provision. n2 is the workhorse default (Intel Cascade
+      # Lake / Ice Lake, broad us-west1 availability, balanced cost);
+      # c3 / c4 are faster but more expensive, c2d / t2d / n2d are AMD
+      # EPYC. machine-family is omitted when compute-class != Performance.
+      # Docs: https://cloud.google.com/kubernetes-engine/docs/how-to/performance-pods
       nodeSelector:
         cloud.google.com/compute-class: "{{ compute_class }}"
+        {%- if compute_class == "Performance" %}
+        cloud.google.com/machine-family: "{{ machine_family }}"
+        {%- endif %}
       volumes:
         - name: cell-data
           emptyDir:
