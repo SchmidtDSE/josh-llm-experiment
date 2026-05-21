@@ -57,31 +57,30 @@ spec:
   # https://cloud.google.com/kubernetes-engine/docs/how-to/extended-duration-pods
   backoffLimit: 3
   podFailurePolicy:
-    # Job-level failure signal is now the SCORER container's exit, not
-    # the agent's. The agent initContainer is wrapped to always exit 0
-    # (see args block below) so the scorer can run uploads regardless
-    # of whether the agent succeeded — that's the always-upload-on-
-    # failure contract. The scorer reads /cell-data/agent_exit_code and
-    # forwards it as its own exit code so this policy can still react.
     rules:
-      # Pod-level eviction → retry. DisruptionTarget is the k8s-native
-      # condition for eviction-shaped terminations.
+      # If the Pod was evicted by cluster autoscaler / scheduler, retry —
+      # don't count toward backoffLimit. `DisruptionTarget` is the
+      # k8s-native condition for eviction-shaped terminations.
       - action: Ignore
         onPodConditions:
           - type: DisruptionTarget
             status: "True"
-      # Agent was SIGTERM'd cleanly (exit 143 — eviction the pod
-      # condition didn't catch in time). Scorer forwards 143; retry.
+      # Our agent-entrypoint's SIGTERM handler exits 143 cleanly (after
+      # exporting per-step state). Treat that as a retryable eviction
+      # signal, same as DisruptionTarget — sometimes the pod condition
+      # isn't set in time before the container exits.
       - action: Ignore
         onExitCodes:
-          containerName: scorer
+          containerName: agent
           operator: In
           values: [143]
-      # Genuine non-zero exit (agent OOM, opencode crash, scorer
-      # crash, etc.). Fail immediately — retry won't help.
+      # Genuine non-zero exits from the agent (e.g., opencode crashed,
+      # all 8 steps failed, cgroup OOM) fail the Job immediately. The
+      # mirror-sidecar will have preserved up-through-last-15s of the
+      # agent's workspace in the bucket for post-mortem.
       - action: FailJob
         onExitCodes:
-          containerName: scorer
+          containerName: agent
           operator: NotIn
           values: [0, 143]
   activeDeadlineSeconds: {{ active_deadline_seconds }}
@@ -162,6 +161,65 @@ spec:
             limits:
               cpu: 250m
               memory: 256Mi
+        - name: mirror-sidecar
+          # Native k8s sidecar (initContainer + restartPolicy: Always
+          # since k8s 1.28). Starts after `setup` is done, runs alongside
+          # `agent` (and later `scorer`), terminates when the main
+          # containers exit. Job purpose: keep an up-to-date snapshot of
+          # /cell-data in the bucket so we can post-mortem agent failures
+          # (e.g. OOM at step_05) — without sidecar, a failed
+          # initContainer drops the emptyDir and we lose all evidence.
+          # The scorer container still does its own final mc mirror, so
+          # cells that succeed don't depend on the sidecar's last tick.
+          #
+          # Resource footprint is tiny (~50m CPU, ~128 MiB), and per the
+          # k8s scheduler's sidecar accounting the Pod's effective
+          # request is still dominated by `agent` or `scorer`. No node
+          # upsize required.
+          image: {{ scorer_image }}
+          restartPolicy: Always
+          command: ["/opt/mirror-sidecar.sh"]
+          env:
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: endpoint
+            - name: MINIO_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: bucket
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: secret-key
+            - name: MINIO_PREFIX
+              value: "{{ minio_prefix }}"
+            - name: BATCH_TAG
+              value: "{{ batch_tag }}"
+            - name: RUN_ID
+              value: "{{ cell_id }}"
+            - name: UPLOAD_SOURCE_DIR
+              value: "/cell-data"
+            - name: MIRROR_INTERVAL_SECONDS
+              value: "15"
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
         - name: agent
           image: {{ agent_image }}
           # Symlink the paths agent-entrypoint.sh hardcodes onto the
@@ -187,23 +245,11 @@ spec:
               # Agent fills in the body; N_REPLICATES wiring + default 2
               # are pre-wired. Scorer overrides N_REPLICATES=100.
               install -m 0755 /opt/run.sh.seed /sandbox/run.sh
-              # Always-upload-on-failure: run the agent in a way that
-              # captures the exit code and ALWAYS exits 0 from the
-              # initContainer. The scorer container then runs regardless
-              # of agent success and either (a) scores + judges when
-              # agent succeeded, or (b) just mc-mirrors the partial
-              # workspace + per-step exports so OOM / crash failures are
-              # still inspectable post-mortem. Real agent exit code is
-              # recorded to /cell-data/agent_exit_code; missing-file =
-              # SIGKILL'd before the wrapper could write (still surfaced
-              # by the scorer as a catastrophic failure).
-              set +e
-              /opt/agent-entrypoint.sh
-              AGENT_EXIT=$?
-              set -e
-              echo "$AGENT_EXIT" > /cell-data/agent_exit_code
-              echo "[setup] agent exited code=$AGENT_EXIT (recorded to /cell-data/agent_exit_code)" >&2
-              exit 0
+              # Upload-on-failure is owned by the mirror-sidecar (see
+              # initContainer below). Agent runs normally and exits with
+              # its real code; if it OOMs, the sidecar (different cgroup)
+              # still has the last-good /cell-data snapshot in the bucket.
+              exec /opt/agent-entrypoint.sh
           env:
             - name: OPENROUTER_API_KEY
               valueFrom:

@@ -132,3 +132,11 @@ COPY orchestration/extract_transcript.py /opt/orchestration/extract_transcript.p
 COPY orchestration/resolve_model.py /opt/orchestration/resolve_model.py
 COPY run-judge.sh /opt/run-judge.sh
 RUN chmod +x /opt/run-judge.sh
+
+# Mirror-sidecar: runs alongside the agent initContainer (k8s native
+# sidecar pattern, initContainer with restartPolicy: Always). Keeps
+# /cell-data continuously synced to the bucket so an agent OOM doesn't
+# take the workspace with it. See mirror-sidecar.sh for the full
+# rationale and orchestration/templates/job.yaml.j2 for the wiring.
+COPY mirror-sidecar.sh /opt/mirror-sidecar.sh
+RUN chmod +x /opt/mirror-sidecar.sh
