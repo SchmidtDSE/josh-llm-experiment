@@ -25,6 +25,7 @@ SCORER_IMAGE="${1:-fortree:scorer}"
 FIXTURES=(
   "reference/golden|true||0"
   "reference/golden-josh-defaults|true||0"
+  "reference/golden-per-replicate|true||0"
   "reference/broken/nan-heights|true||15"
   "reference/broken/nan-precip|true||9"
   "reference/broken/schema|false|missing required columns|"

@@ -178,12 +178,35 @@ def regenerate() -> None:
         GOLDEN_COLS,
     )
 
-    print(f"  golden:               {n_rows} rows")
-    print(f"  golden-josh-defaults: {len(josh_rows)} rows")
-    print(f"  broken/nan-heights:   {n_rows} rows (15 NaN meanHeight)")
-    print(f"  broken/nan-precip:    {n_rows} rows (9 NaN precipitation)")
-    print(f"  broken/schema:        {n_rows} rows (meanHeight → height)")
-    print(f"  broken/missing-year:  {len(missing_year)} rows (year {END_YEAR} omitted)")
+    # 7. golden-per-replicate — Josh's canonical per-rep layout
+    # exercising the scorer's glob path. Three replicates × 9 cells ×
+    # 100 years, split into three CSVs named results_{0,1,2}.csv with
+    # no `replicate` column inside (the filename is authoritative under
+    # this layout). Same growth dynamics as `golden`, just multi-rep.
+    per_rep_result = simulate(
+        start_year=START_YEAR,
+        end_year=END_YEAR,
+        n_replicates=3,
+        seed=SEED + 1,  # separate noise from the 1-rep golden
+        cell_mask=_build_cell_mask(),
+        collect_rows=True,
+    )
+    per_rep_dir = REFERENCE / "golden-per-replicate"
+    per_rep_dir.mkdir(parents=True, exist_ok=True)
+    per_rep_cols = [c for c in GOLDEN_COLS]  # no `replicate` column — filename is the index
+    rows_by_rep: dict[int, list[dict]] = {0: [], 1: [], 2: []}
+    for r in per_rep_result["rows"]:
+        rows_by_rep[r["replicate"]].append(_format_row(r))
+    for rep_idx, rep_rows in rows_by_rep.items():
+        _write_csv(per_rep_dir / f"results_{rep_idx}.csv", rep_rows, per_rep_cols)
+
+    print(f"  golden:                  {n_rows} rows")
+    print(f"  golden-josh-defaults:    {len(josh_rows)} rows")
+    print(f"  broken/nan-heights:      {n_rows} rows (15 NaN meanHeight)")
+    print(f"  broken/nan-precip:       {n_rows} rows (9 NaN precipitation)")
+    print(f"  broken/schema:           {n_rows} rows (meanHeight → height)")
+    print(f"  broken/missing-year:     {len(missing_year)} rows (year {END_YEAR} omitted)")
+    print(f"  golden-per-replicate:    3 files × {len(rows_by_rep[0])} rows each (per-rep layout)")
 
 
 if __name__ == "__main__":
