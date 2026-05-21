@@ -380,12 +380,25 @@ land via the re-scoring path documented in
 [SCORING.md](SCORING.md#re-analysing-completed-runs) so headline
 runs and re-analyses sit side-by-side.
 
-## Egress observability and isolation
+## Egress observability
 
-Two layers, both committed to Git and frozen for the headline
-experiment.
+One layer — opencode's tool config gates what the model can ask
+`webfetch` to reach, and opencode's `trajectory.jsonl` records every
+URL the model actually invoked. That trajectory is the post-hoc
+evidence record for the headline batch.
 
-### Policy layer: opencode tool config
+> **Phase 6 methodology delta.** Earlier pilots ran behind a
+> kernel-enforced egress firewall (per-run docker bridge + dnsmasq +
+> iptables + ipset, REJECT on anything outside an allowlist of docs
+> hosts) with a passive DNS log as the secondary observation layer.
+> The Phase 6 refactor moves cell execution to k8s Pods, which can't
+> express the `CAP_NET_ADMIN` + shared-netns pattern that kernel
+> enforcement required, and drops the DNS-log sidecar to keep the Pod
+> shape minimal. The egress boundary is now **monitored, not
+> enforced**, and `trajectory.jsonl` is the sole observation record.
+> Threats-to-validity implications discussed below.
+
+### Tool-config layer (soft)
 
 opencode's per-tool configuration in
 [`config/opencode.template.json`](config/opencode.template.json) is
@@ -402,37 +415,35 @@ the only in-process constraint:
   (caught on the phase-5a pilot batch when claude's transcript
   showed it reasoning "I don't see a bash tool in my function list").
   With the string form, bash is exposed normally.
-- `permission.webfetch: "allow"` for hosts in the egress allowlist
-  (the hard policy boundary, below).
+- `permission.webfetch: "allow"` for hosts in the docs allowlist
+  (table below). opencode enforces this in-process; the network layer
+  no longer re-enforces it at the kernel.
 
-This layer is mostly a vehicle for shape: it makes the tool surface
-visible to the model. The substantive policy is the next layer.
+### Observation: opencode trajectory log
 
-### Policy layer: hard egress allowlist (kernel-enforced)
+`trajectory.jsonl` (emitted by `opencode export`) records every
+`webfetch` URL the model invoked, in order, with timestamps. The
+analysis pipeline joins it against
+[`config/docs_categories.yaml`](config/docs_categories.yaml) to
+produce `docs_paths_by_category` and a `dns_unexpected_hosts` field
+in the run manifest, so any URL outside the docs allowlist surfaces
+clearly post-hoc.
 
-A `dnsmasq` sidecar runs on the agent's per-run Docker bridge network
-in a privileged-NET capabilities mode. Configured in
-[`orchestration/dnsmasq.conf`](orchestration/dnsmasq.conf) and built
-from [`Dockerfile.dnsmasq`](Dockerfile.dnsmasq). It does three things:
-
-1. **Resolves DNS** for the agent container (sidecar shares its netns
-   with the agent via `--network=container:dnsmasq-<id>`).
-2. **Logs every DNS query** (host, timestamp, resolution) to a
-   per-run `dns.log` — the evidence record for what hosts the agent
-   reached, independent of which process inside the container
-   initiated the request.
-3. **Populates an `ipset` allowlist** (driven by dnsmasq's `ipset=`
-   directives) that iptables consults on the OUTPUT chain. Anything
-   resolving to an IP not in the ipset is **dropped** at the kernel,
-   not merely logged. The smoke-test firewall probe asserts this
-   enforcement (CI workflow `smoke.yml`).
-
-Together: the in-process tool config gates what the model can ask
-opencode to do; the network layer gates what any process in the
-container can actually reach. The latter is the substantive boundary
-for the validity argument.
+What trajectory.jsonl does *not* see: indirect egress paths, e.g. an
+agent-authored `run.sh` that shells out to `curl` or imports
+`urllib`. opencode's `bash` tool is unconstrained inside the
+container, so a determined run could in principle reach an arbitrary
+host without it appearing in the trajectory. The validity argument
+relies on (a) the pilot batches showing agents don't have a habit of
+shelling out for HTTP, (b) the headline batch being inspectable
+post-hoc and re-runnable if anomalies surface — see Threats to
+validity.
 
 ### Documentation host allowlist
+
+The hosts the agent is steered toward via `permission.webfetch` in
+[`config/opencode.template.json`](config/opencode.template.json) (no
+longer enforced at the kernel — see the methodology delta above):
 
 | Host                                | Purpose |
 | ----------------------------------- | ------- |
@@ -452,10 +463,6 @@ threads, gists, and source-browse links from doc pages), Stack
 Overflow, Reddit, blog hosts, PyPI's metadata pages. The agent can
 read installed package source on disk, which is a strict superset of
 what github.com source-browse would provide.
-
-The canonical allowlist lives in
-[`orchestration/dnsmasq.conf`](orchestration/dnsmasq.conf) as
-`ipset=...` directives; the table above mirrors it for readability.
 
 ### Model API host
 
@@ -485,9 +492,11 @@ The discussion section of the paper will acknowledge this directly.
 
 ### Scoring phase network
 
-The scoring phase runs in a separate plain-Docker container with
-`--network=none`. The dnsmasq sidecar is not part of the scoring
-pass — there is no agent to observe.
+The scoring phase runs in a separate container from the agent
+(`--network=none` under local orchestration; under k8s, network is
+allowed only for the bucket upload via `mc`). The scorer never calls
+a model and never reaches the docs hosts — there is no agent to
+observe at scoring time.
 
 ### Reading installed package source
 
@@ -581,14 +590,23 @@ paper:
 - "Relevant LOC" definition is judgement-encoded once, in
   [`harness/loc.py`](harness/loc.py); a different operationalization
   could shift numbers.
-- The egress boundary is opencode's self-enforced tool allowlist
-  (soft) with a dnsmasq DNS log as the passive observation layer.
-  Indirect egress paths (e.g., an agent-authored `./run.sh` calling
-  `urllib`) are not blocked in this design; they are observable in
-  the DNS log and reported as `dns_unexpected_hosts`. The validity
-  argument depends on the pilot showing these signals stay clean.
-  Hard-layer filtering can be added later if observation reveals
-  meaningful leaks.
+- **Egress is monitored, not enforced** (Phase 6 methodology delta —
+  see §Egress observability). Earlier pilots ran behind a
+  kernel-enforced REJECT on anything outside the docs allowlist plus
+  a passive DNS log; the k8s refactor dropped both. The Pod model
+  can't express the per-run docker-bridge + `CAP_NET_ADMIN` pattern
+  that kernel enforcement required, and the DNS sidecar was retired
+  alongside it to keep the Pod shape minimal — opencode's
+  `trajectory.jsonl` already records every `webfetch` URL the model
+  invoked. Indirect egress paths (e.g., an agent-authored `./run.sh`
+  shelling out to `curl` or `urllib`) are no longer visible at all:
+  they don't appear in `trajectory.jsonl` (the model didn't call
+  `webfetch`) and there's no DNS log anymore. The validity argument
+  depends on the pilot batches showing agents don't have a habit of
+  shelling out for HTTP; if the headline batch surfaces concerns
+  about indirect paths, a GKE Pod-level egress `NetworkPolicy` or
+  cluster-wide Cloud DNS logging can be added without reverting the
+  rest of the refactor.
 - Several methodological choices are still open and will affect
   what the experiment can claim. See §Open methodology questions
   below.
