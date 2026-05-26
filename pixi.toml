@@ -36,9 +36,6 @@ python = ">=3.12,<3.13"
 # Used by orchestration/render_jobs.py.
 pyyaml = ">=6.0.3,<7"
 jinja2 = ">=3.1,<4"
-# Used by orchestration/launch_batch.py's live UI (still on the branch
-# until the PR6 cleanup sweep deletes it).
-rich = ">=15.0.0,<16"
 # Analysis. pandas + matplotlib for analysis/aggregate.py + headline.ipynb;
 # jupyterlab + ipykernel so `pixi run lab` works out of the box.
 pandas = ">=2.2,<3"

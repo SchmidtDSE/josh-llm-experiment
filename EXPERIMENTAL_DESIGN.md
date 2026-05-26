@@ -83,23 +83,24 @@ has to own:
 - **[OpenRouter][or]** is the inference gateway. A single API key
   covers the model panel; the OpenRouter slug pins the model.
 
-The agent container runs on its own Docker bridge network with a
-`dnsmasq` sidecar configured both as the DNS resolver and as the
-kernel-level egress allowlist (iptables + ipset, populated from
-dnsmasq's `ipset=` directives). Egress is **enforced**, not merely
-observed: anything outside the documentation-host allowlist plus
-OpenRouter is dropped at the host's network stack. The DNS log
-records every query the agent makes — this is the evidence record
-for what hosts the agent reached, regardless of which process inside
-the container initiated the request. Combined with opencode's
-per-tool trajectory log, this gives full observability of what the
-agent fetched without operating a TLS-intercepting proxy.
+Each cell runs as a single k8s Job on GKE Autopilot — one Pod, with
+an agent initContainer (`fortree:agent`) followed by a scorer
+container (`fortree:scorer`). Egress is **monitored, not enforced**:
+opencode's per-tool `trajectory.jsonl` records every `webfetch` URL
+the model invoked, and that file ends up in the bucket via the
+scorer's `mc mirror`. This is the sole egress observation layer.
+The earlier kernel-enforced allowlist (per-run docker bridge +
+dnsmasq + iptables + ipset) was retired in Phase 6 PR4; see §Egress
+observability for the methodology consequences. A mirror-sidecar
+runs alongside the agent container and continuously mirrors the
+shared `/cell-data` volume to the bucket so an OOM'd cell still
+leaves forensic state.
 
-The same image is used for the scoring pass with `--network=none`
-and a read-only workspace mount, so the agent's `./run.sh` and the
-scoring re-run see byte-identical Python, Java, Josh, and library
-versions. See [`config/VERSIONS.md`](config/VERSIONS.md) for what's
-pinned, and [`Dockerfile`](Dockerfile) for the image layering.
+The same image is used for the scoring pass, so the agent's
+`./run.sh` and the scoring re-run see byte-identical Python, Java,
+Josh, and library versions. See
+[`config/VERSIONS.md`](config/VERSIONS.md) for what's pinned, and
+[`Dockerfile`](Dockerfile) for the image layering.
 
 [opencode]: https://opencode.ai/
 [or]: https://openrouter.ai/
@@ -122,11 +123,9 @@ Earlier rounds of this design included a 1–5 rung prompt-detail
 ladder. We collapsed it to the single master prompt: at full detail
 the task is already hard enough to be a useful Josh-vs-Mesa
 differentiator, and a second variation axis would dilute the
-statistical power available within the budget. `prompts/rungs/`
-retains rung 1 (the "simulate a forest" minimal variant) on disk in
-case a follow-up wants to revive the detail axis, but headline runs
-use rung 5 (the master) only — and `RUNG` defaults to 5 in the
-orchestration.
+statistical power available within the budget. The rung-ladder
+directory (`prompts/rungs/`) was deleted in Phase 6 PR6; headline
+runs use the master prompt only.
 
 The agent phase splits this single prompt into **8 sequential opencode
 invocations against the same workspace**, one per todo from a fixed
@@ -241,35 +240,29 @@ that needs updating in `SIDECAR.md`.
 
 ## Run flow
 
-A full **run** (one (model × target × run_id) cell) consists of three
-orchestrated steps inside a single per-run Docker bridge network plus
-one validation pass by a separate scoring container.
+A full **run** (one (model × target × run_id) cell) consists of one
+agent phase + one scoring phase, executed as a single k8s Job: an
+`fortree:agent` initContainer followed by an `fortree:scorer` main
+container, sharing a `/cell-data` emptyDir volume. A mirror-sidecar
+runs alongside and continuously syncs `/cell-data` to the bucket for
+OOM forensics.
 
-The agent network and dnsmasq sidecar are brought up at step 1 and
-kept alive across the 8 opencode invocations the agent makes inside
-it; the network and sidecar are torn down once the agent container
-exits.
-
-The scoring container runs the **same** `fortree` image under plain
-Docker, `--network=none`, with a read-only mount of the agent
-workspace. Using one image for both roles guarantees the agent's
-`./run.sh` and the scoring re-run see byte-identical Python, Java,
-Josh, and library versions.
+Both containers run the same `fortree` base image; using one image
+for both roles guarantees the agent's `./run.sh` and the scoring
+re-run see byte-identical Python, Java, Josh, and library versions.
 
 ### Step 1: Agent invocation (multi-invocation planning flow)
 
-The orchestrator validates env vars (`OPENROUTER_API_KEY`, `MODEL`,
-`TARGET`, `RUN_ID`; `RUNG` defaults to 5), creates a per-run Docker
-bridge network, starts the dnsmasq sidecar on it with query logging
-enabled, renders `prompt_body.md` (rung body + target directive +
-SIDECAR), seeds `workspace/PLAN.md` from `prompts/PLAN_TEMPLATE.md`,
-and runs the `fortree:agent` container bound to that network. Inside
-the container, `agent-entrypoint.sh` invokes `opencode run` eight
-times in a row — one per pre-committed step injection in
-`prompts/steps/step_NN_*.md` — with the per-step prompt assembled as
-`prompt_body + step_NN`. Each invocation uses a fresh opencode
-session; cross-step state lives entirely on disk in `/sandbox/PLAN.md`
-and the workspace.
+The Job manifest sets `OPENROUTER_API_KEY`, `MODEL`, `TARGET`,
+`RUN_ID` from k8s Secrets / ConfigMap. The agent initContainer
+renders `prompt_body.md` (target directive + SIDECAR appended to
+BASE_PROMPT), seeds `workspace/PLAN.md` from
+`prompts/PLAN_TEMPLATE.md`, and runs `agent-entrypoint.sh` which
+invokes `opencode run` eight times in a row — one per pre-committed
+step injection in `prompts/steps/step_NN_*.md` — with the per-step
+prompt assembled as `prompt_body + step_NN`. Each invocation uses a
+fresh opencode session; cross-step state lives entirely on disk in
+`/sandbox/PLAN.md` and the workspace.
 
 The prompt **names the target framework** ("implement this using
 Josh" or "implement this using Mesa") so that tool-conformance can
@@ -278,8 +271,9 @@ be measured as a separate signal in step 2.
 The agent reads, writes, edits, greps, and may invoke `./run.sh` to
 self-validate at any point within or across the 8 sub-invocations.
 Installed Python and Java package source is readable on disk.
-Network access is constrained by opencode's `webfetch` allowlist and
-observed by the dnsmasq sidecar.
+Network access is constrained by opencode's `webfetch` allowlist;
+the realised URL set is recorded in `trajectory.jsonl` and is the
+sole egress observation layer (see §Egress observability).
 
 A cell-total wall-clock backstop (`WALL_CLOCK_BACKSTOP_SEC`, default
 1800s; bump to 3600s for headline runs given 27–39 min observed cell
@@ -542,17 +536,20 @@ which the orchestrator renders per run. The configured tools are:
 | `task`      | **Disabled.** Sub-agent dispatch produced a malformed-call loop with gemma and is unnecessary now that `bash` surfaces normally. |
 
 The bash surface is intentionally wide because the substantive
-policy boundary is at the network layer (dnsmasq + iptables + ipset
-egress allowlist), not at the in-process tool config. Disk writes
-and syscalls inside the unprivileged container are not separately
-gated — the container is ephemeral and per-run, with read-only
-mounts for shared data.
+policy boundary is the opencode `webfetch` allowlist and the
+post-hoc `trajectory.jsonl` audit (Phase 6 monitored-egress model).
+Disk writes and syscalls inside the unprivileged Pod are not
+separately gated — the Pod is ephemeral and per-cell, and the
+shared `/cell-data` volume is the only persistent surface.
 
-Indirect egress paths (e.g., an agent-authored Python script calling
-`urllib.request.urlopen`) hit the same kernel-level allowlist as
-opencode's `webfetch` and are dropped if the destination isn't in
-the ipset. They are also visible in the per-run `dns.log` as a
-record.
+Indirect egress paths (an agent-authored Python script calling
+`urllib.request.urlopen`, or a `curl` shelled out from `run.sh`) are
+**not** filtered by `webfetch`; they reach the network directly. The
+monitored-egress trade-off is acknowledged in the Threats to
+validity section above. If a future batch surfaces evidence of
+indirect-egress abuse, a Pod-level `NetworkPolicy` or cluster-wide
+Cloud DNS logging can be reintroduced without reverting the rest of
+the refactor.
 
 ## Stopping conditions
 

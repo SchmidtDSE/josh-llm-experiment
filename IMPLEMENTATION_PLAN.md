@@ -12,70 +12,52 @@ Per-PR detail lives in `git log` and the merged PR descriptions; this
 document is a navigation map, not a complete change history.
 
 > **Status (2026-05-26, on `feat/k8s-refactor`).** Phase 6 (k8s
-> refactor) is in flight — see §Phase 6 below. **PRs 1–5 merged** on
+> refactor) is in flight — see §Phase 6 below. **PRs 1–6 merged** on
 > the integration branch (scoring drop + regression bands, prompt
 > update for 100×100, image consolidation, egress relaxation +
 > sidecar drop, k8s submission path + mirror-sidecar + in-Pod fuzzy
-> judge + devcontainer). PR6 (repo cleanup) is the next blocker; PR7
-> (headline batch) and PR8 (merge to `dev`) follow. The integration
-> branch is now 67 commits ahead of `dev`; everything below in the
-> "Architecture (transitional)" section describes the historical
-> shape that the Phase 6 "Repo cleanup" step deletes.
+> judge + devcontainer, repo cleanup). PR7 (headline batch) and PR8
+> (merge to `dev`) follow. The integration branch is now 68+ commits
+> ahead of `dev`. The pre-Phase-6 local-orchestration architecture
+> (per-cell shell scripts + dnsmasq sidecar + host-side report
+> renderers) is preserved in git history; see PRs #34/#36/#40/#41/#45
+> for the migration steps.
 
-## Architecture (transitional)
-
-The diagram below describes the **as-of-start-of-Phase-6 shape**.
-PRs 3 and 4 have already partially mutated this:
-- the scorer image now also carries `mc` + `scorer-and-upload.sh`
-  (PR3, for in-Pod uploads under PR5);
-- the `fortree:dnsmasq` image is now a passive query logger — no
-  `iptables`/`ipset`, no `CAP_NET_ADMIN`, no `sidecar-init.sh` — and
-  the target Pod shape (Phase 6 §K8s execution) drops the sidecar
-  entirely (PR4). Running the **local orchestration** path under
-  `launch_run.sh` would now fail at the `sidecar-init.sh` step; that
-  whole tree disappears in PR6's cleanup sweep.
-
-The Phase 6 §K8s execution sub-section describes the target shape.
+## Architecture
 
 ```
-host:
-├── docker daemon
-└── uv (Python tool installer, manual install per README)
-
 fortree base image (Dockerfile):
 ├── Python 3.11 + scientific stack (mesa, numpy, pandas, scipy,
-│                                   xarray, netCDF4, rasterio,
-│                                   tiktoken, jinja2, compliance-checker)
+│                                   xarray, netCDF4, rasterio, tiktoken)
 ├── Eclipse Temurin 21 JRE
 ├── /usr/local/bin/josh             ← wrapper around joshsim-fat.jar
 └── /usr/local/bin/opencode         ← pinned 1.14.50
 
 stages:
-- fortree:agent   — base only; runs `opencode run` for the model
-- fortree:scorer  — base + /opt/harness/ (scoring code +
-                    spec_model.py + acceptance_ranges.json)
-- fortree:dnsmasq — separate alpine image with iptables + ipset; the
-                    egress-allowlist sidecar (Dockerfile.dnsmasq)
+- fortree:agent   — base + agent-entrypoint.sh + baked synthetic
+                    climate netCDFs + run.sh seed; no harness/, no mc
+- fortree:scorer  — base + /opt/harness/ + /opt/scorer-and-upload.sh
+                    + in-Pod judge assets + mc
 
-invocation pattern per cell (orchestrated by orchestration/launch_*.sh,
-slated for deletion in PR6):
-1. Bring up a per-run Docker bridge network.
-2. Start `fortree:dnsmasq` on it with `--cap-add NET_ADMIN`;
-   sidecar-init.sh writes the iptables OUTPUT rules.
-3. Start `fortree:agent` joining the sidecar's netns
-   (`--network=container:dnsmasq-<run-id>`); agent's egress is hard-
-   filtered at the kernel. Inside the container, agent-entrypoint.sh
-   invokes opencode **eight times in a row**, one per todo, against
-   a shared `/sandbox/PLAN.md` working document.
-4. After the multi-invocation chain finishes, run `fortree:scorer`
-   against the workspace under `--network=none`.
-5. Generate per-cell `report.md`. Tear down network + sidecar.
-6. Per-batch driver aggregates all cells into `manifest.jsonl`.
+per-cell k8s Job (one Pod):
+1. agent initContainer (fortree:agent) — agent-entrypoint.sh invokes
+   `opencode run` 8× against /sandbox/PLAN.md, populating
+   /cell-data/workspace/.
+2. mirror-sidecar (fortree:scorer, restartPolicy: Always) — continuously
+   `mc mirror`s /cell-data to the bucket for OOM forensics.
+3. scorer container (fortree:scorer) — scorer-and-upload.sh runs the
+   harness against the workspace, runs run-judge.sh for the in-Pod
+   Q1/Q2/Q3 LLM judge, then `mc mirror`s the completed /cell-data
+   tree to the bucket. Egress is monitored (trajectory.jsonl), not
+   enforced.
+
+host (devcontainer-friendly):
+└── pixi env exposes: render, apply, pull, aggregate, lab.
 ```
 
 Pinned versions in [config/VERSIONS.md](config/VERSIONS.md). Python
 deps in [config/requirements.txt](config/requirements.txt). Host
-deps in [pyproject.toml](pyproject.toml).
+deps in [pixi.toml](pixi.toml).
 
 ## Build history (compressed)
 
@@ -215,61 +197,58 @@ per-key concurrency).
 
 ### Repo cleanup
 
-PR6 deletes the local-orchestration surface area in one sweep.
+PR6 deleted the local-orchestration surface area in one sweep. 19
+paths removed under `orchestration/`, `.github/`, and the repo root:
 
-| Path | Reason |
-|---|---|
-| [orchestration/launch_batch.py](orchestration/launch_batch.py) | Replaced by k8s Job submission |
-| [orchestration/launch_cell.sh](orchestration/launch_cell.sh) | Replaced by Pod spec |
-| [orchestration/launch_run.sh](orchestration/launch_run.sh) | Replaced by Pod spec |
-| [orchestration/run_agent.sh](orchestration/run_agent.sh) | Replaced by Pod initContainer + k8s `activeDeadlineSeconds` |
-| [orchestration/dns_sidecar.sh](orchestration/dns_sidecar.sh) | DNS sidecar dropped entirely in PR4; `trajectory.jsonl` is the sole egress observation layer |
-| [orchestration/sidecar-init.sh](orchestration/sidecar-init.sh) | iptables setup no longer needed (PR4 dropped the sidecar) |
-| [Dockerfile.dnsmasq](Dockerfile.dnsmasq) | Sidecar dropped entirely; PR4 stripped iptables/ipset, PR6 deletes the file |
-| [orchestration/dnsmasq.conf](orchestration/dnsmasq.conf) | Same — config for the now-retired DNS sidecar |
-| [orchestration/generate_run_report.py](orchestration/generate_run_report.py) | Reports replaced by the headline notebook |
-| [orchestration/generate_batch_report.py](orchestration/generate_batch_report.py) | Same |
-| [orchestration/rescore_batch.py](orchestration/rescore_batch.py) | Replaced by re-score Job |
-| [orchestration/rescore_cell.sh](orchestration/rescore_cell.sh) | Same |
-| [orchestration/upload_batch.sh](orchestration/upload_batch.sh) | Upload happens inside the Pod's scorer container |
-| [orchestration/run_fuzzy_judge.sh](orchestration/run_fuzzy_judge.sh) | Becomes a k8s Job that pulls completed cells from the bucket and writes back |
-| [orchestration/extract_transcript.py](orchestration/extract_transcript.py) | Run inside the scorer container, not host-side |
-| [orchestration/extract_time_breakdown.py](orchestration/extract_time_breakdown.py) | Same |
-| [harness/conformance_fuzzy.py](harness/conformance_fuzzy.py) | Placeholder; replaced by the real host/Job-side fuzzy judge |
-| [prompts/rungs/](prompts/rungs/) | Rung ladder retired in phase 5c; the dir was already a vestige |
+- **Local-orchestration shell scripts** — `launch_batch.py`,
+  `launch_cell.sh`, `launch_run.sh`, `run_agent.sh`, `dns_sidecar.sh`,
+  `sidecar-init.sh`
+- **DNS sidecar** — `Dockerfile.dnsmasq`, `orchestration/dnsmasq.conf`
+- **Report generators** — `generate_run_report.py`,
+  `generate_batch_report.py` (replaced by [analysis/headline.ipynb](analysis/headline.ipynb))
+- **Rescore tooling** — `rescore_batch.py`, `rescore_cell.sh`
+  (replaced by a future re-score k8s Job)
+- **Host-side upload** — `upload_batch.sh` (replaced by in-Pod
+  `containers/scorer-and-upload.sh`)
+- **Host-side fuzzy judge** — `run_fuzzy_judge.sh`, `_fuzzy_summary.py`
+  (orphan); replaced by in-Pod [containers/run-judge.sh](containers/run-judge.sh)
+- **Dead helpers** — `extract_time_breakdown.py`
+- **Retired rung ladder** — `prompts/rungs/`
+- **CI** — `.github/workflows/integration.yml` (built `Dockerfile.dnsmasq`
+  and invoked `launch_cell.sh`; will be reintroduced when a CI-accessible
+  k8s test cluster exists) + `.github/scripts/setup-provider.sh`
+  (orphan with it)
 
-**Keep + repurpose:**
+**Plan corrections discovered during PR6:** the original delete table
+incorrectly listed `harness/conformance_fuzzy.py` and
+`orchestration/extract_transcript.py`. Both stay:
+- `harness/conformance_fuzzy.py` is the live schema-shape stub that
+  [harness/run_metrics.py:23](harness/run_metrics.py#L23) imports;
+  its docstring was swept to point at `containers/run-judge.sh`.
+- `orchestration/extract_transcript.py` is image-baked at
+  [Dockerfile:135](Dockerfile#L135) and called by
+  [containers/run-judge.sh:89](containers/run-judge.sh#L89) inside
+  the scorer container. The
+  [.github/workflows/build-images.yml](.github/workflows/build-images.yml)
+  path filter already names it explicitly.
 
-| Path | Repurpose |
-|---|---|
-| [orchestration/resolve_model.py](orchestration/resolve_model.py) | Used by the Job manifest renderer |
-| [orchestration/templates/](orchestration/templates/) | New home for Pod / Job Jinja templates |
-| New `orchestration/render_jobs.py` | Renders one Job per row of the matrix CSV |
-| New `orchestration/k8s_apply.sh` | Thin `kubectl apply -f -` wrapper |
-| New `orchestration/pull_artefacts.sh` | Local-side: `mc mirror` a batch from the bucket into `runs/<batch-tag>/` for analysis |
-| [scripts/install_*.sh](scripts/) | Unchanged — image build still uses them |
-| [analysis/aggregate.py](analysis/aggregate.py) | PR1 already dropped consistency columns; adds regression columns |
-| [analysis/headline.ipynb](analysis/headline.ipynb) | Drop Panel C (consistency); rename Panel A "ecology" subplots to year-100 |
+**Kept in `orchestration/`:** `render_jobs.py`, `k8s_apply.sh`,
+`pull_artefacts.sh`, `resolve_model.py`, `_fuzzy_parse.py`,
+`extract_transcript.py`, `templates/`, `matrix.csv`.
 
-**Move + tidy:** ✓ landed early (with the devcontainer extension PR,
-not deferred to PR6). The five container-entrypoint shell scripts plus
-`agent-run.sh.seed` were `git mv`'d into
-[containers/](containers/) — `containers/agent-entrypoint.sh`,
-`containers/entrypoint-scorer.sh`, `containers/scorer-and-upload.sh`,
-`containers/run-judge.sh`, `containers/mirror-sidecar.sh`,
-`containers/agent-run.sh.seed`. Dockerfile COPY paths updated;
-image-side `/opt/<name>.sh` destinations unchanged so runtime is a
-no-op. [.github/workflows/build-images.yml](.github/workflows/build-images.yml)
+**Move + tidy:** ✓ landed in PR #44 (devcontainer extension). Five
+container-entrypoint shell scripts plus `agent-run.sh.seed` moved to
+[containers/](containers/); Dockerfile COPY paths updated, image-side
+`/opt/<name>.sh` destinations unchanged, so runtime is a no-op.
+[.github/workflows/build-images.yml](.github/workflows/build-images.yml)
 path filter collapsed to a single `containers/**` glob.
 
-**CI:**
-- [.github/workflows/smoke.yml](.github/workflows/smoke.yml) — keep
-  conceptually; firewall-probe job retired with the iptables sidecar
-  in PR4.
-- [.github/workflows/integration.yml](.github/workflows/integration.yml)
-  — rewrite to submit a single k8s Job to a test cluster (or skip
-  if the test cluster isn't free), instead of the current Docker
-  Compose-shaped flow.
+**Surviving CI:**
+- [.github/workflows/smoke.yml](.github/workflows/smoke.yml) — builds
+  `fortree:scorer` and runs it against the reference fixtures on
+  every push.
+- [.github/workflows/build-images.yml](.github/workflows/build-images.yml)
+  — builds + pushes `fortree-agent` and `fortree-scorer` to GHCR.
 
 **What stays exactly the same:**
 - The prompt rendering pipeline (rung body + target directive +
@@ -331,14 +310,13 @@ path broken on `dev` if landed there directly.
    change for the existing local orchestration (smoke-fixtures still
    hit `/opt/entrypoint-scorer.sh`).
 4. **Egress relaxation + sidecar drop** ✓ (merged, PR #41).
-   Stripped iptables/ipset from
-   [Dockerfile.dnsmasq](Dockerfile.dnsmasq); the image is now a
-   passive logger. Dropped the DNS-log sidecar from the target Pod
-   shape entirely — `trajectory.jsonl` is the sole egress
-   observation layer. The image/config stay in the repo as no-ops
-   until PR6's cleanup sweep. `firewall-probe` smoke job retired.
+   Stripped iptables/ipset from `Dockerfile.dnsmasq`; the image
+   became a passive logger. Dropped the DNS-log sidecar from the
+   target Pod shape entirely — `trajectory.jsonl` is the sole egress
+   observation layer. `firewall-probe` smoke job retired.
    EXPERIMENTAL_DESIGN.md §Egress observability + §Threats to
-   validity updated.
+   validity updated. (`Dockerfile.dnsmasq` itself was deleted in
+   PR6.)
 5. **K8s submission path.** ✓ merged (PR #45). Added
    `orchestration/templates/job.yaml.j2`,
    `orchestration/render_jobs.py`, `orchestration/k8s_apply.sh`,
@@ -350,9 +328,14 @@ path broken on `dev` if landed there directly.
    landed alongside (PR #44). Mini-headline batch
    (`smoke-headline-20260521`, 100 cells) ran end-to-end on GKE
    Autopilot; artefacts present in the bucket.
-6. **Repo cleanup.** Delete everything in the "Delete" table above
-   in one sweep. README + EXPERIMENTAL_DESIGN docs catch up to the
-   new shape.
+6. **Repo cleanup.** ✓ merged. Deleted 19 paths in the
+   local-orchestration tree (per-cell shell scripts + dnsmasq sidecar
+   + host-side report renderers + rescore tooling + host-side fuzzy
+   judge + retired rung ladder + the `integration.yml` workflow that
+   exercised the local path). README + EXPERIMENTAL_DESIGN.md +
+   IMPLEMENTATION_PLAN.md swept. See §Repo cleanup above for the
+   full list and the two plan corrections (`conformance_fuzzy.py` and
+   `extract_transcript.py` were kept, not deleted).
 7. **Headline batch.** Submit the full panel as a k8s Indexed Job.
    Batch-tag suggestion: `headline-k8s-<date>`. This is the
    reportable batch — phase-5c artefacts are abandoned, not compared
@@ -387,9 +370,15 @@ path broken on `dev` if landed there directly.
 Scorer JSON schema: `phase6-v1` (`harness/run_metrics.py:SCHEMA_VERSION`)
 on `feat/k8s-refactor`; `phase5a-v1` on `dev`.
 
-**Per-cell artefacts under `runs/<batch-tag>/<run_id>/`** (current
-local-orchestration layout; will change in PR5 when the scorer
-container does in-Pod uploads):
+**Source of truth:** the GCS bucket. Per-cell artefacts land under
+`<bucket>/<prefix>/<batch-tag>/<run-id>/` directly from the scorer
+container's `mc mirror`. `pixi run pull <batch-tag>` syncs a batch
+back to `runs/<batch-tag>/` for local analysis; `pixi run aggregate
+runs/<batch-tag>` rolls it up into `analysis/aggregated.csv` for
+[analysis/headline.ipynb](analysis/headline.ipynb).
+
+**Per-cell artefacts** (under `<run-id>/` both in the bucket and
+after `pixi run pull`):
 
 - `workspace/` — agent-authored files (including `PLAN.md`)
 - `prompt_body.md` — rendered shared body
@@ -397,17 +386,7 @@ container does in-Pod uploads):
 - `agent_stderr.log` — in-order concatenation of all 8 steps' stderr
 - `agent_artifacts/session_export.json` — final attempted step's opencode export
 - `agent_artifacts/steps/step_NN/` — per-step `trajectory.jsonl`, `agent_stderr.log`, `session_export.json`, `step_meta.json`
-- `dns.log` — every DNS query the agent container made
 - `scorer.json` — full scoring record
-- `report.md` — Jinja2-rendered per-cell report *(deleted in PR6)*
+- `scorer.fuzzy.json` — Q1/Q2/Q3 in-Pod judge output
 - `transcript.md` — human-readable opencode transcript
-- `time_breakdown.json` — phase timings
-- `run_meta.json`, `run_meta.cell.json`, `run_meta.final.json` — orchestration metadata
-
-**Per-batch artefacts under `runs/<batch-tag>/`** *(most deleted in PR6)*:
-- `worklist.tsv`, `joblog.tsv`, `manifest.jsonl`, `summary.txt`, `batch_report.md`, `cell-logs/<run_id>.log`
-
-The k8s flow (PR5+) replaces this layout with the bucket as the
-source of truth — per-cell artefacts land under
-`<bucket>/<prefix>/<batch-tag>/<run-id>/` directly from the scorer
-container's `mc mirror`.
+- `run_meta.json` — orchestration metadata (model, target, image digests, timings)

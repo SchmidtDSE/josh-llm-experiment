@@ -8,15 +8,13 @@ one k8s Job. Per cell we produce a multi-document YAML:
     Job        — initContainers [setup, agent] + container [scorer],
                  sharing an emptyDir for workspace + agent metadata.
 
-The renderer is the k8s-side replacement for `orchestration/launch_run.sh`
-— the prompt + opencode-config rendering moves from a host bash script
-to this Python script + a Jinja2 template. The Job manifest is then
-applied via `orchestration/k8s_apply.sh`.
+Prompt + opencode-config rendering happens here (Python + Jinja2),
+then the Job manifest is applied via `orchestration/k8s_apply.sh`.
 
 Usage examples:
 
     # Single-cell smoke
-    uv run orchestration/render_jobs.py \\
+    pixi run render -- \\
         --batch-tag pr5-smoke \\
         --image-agent  ghcr.io/schmidtdse/josh-llm-experiment/fortree-agent:sha-abcdef \\
         --image-scorer ghcr.io/schmidtdse/josh-llm-experiment/fortree-scorer:sha-abcdef \\
