@@ -250,19 +250,16 @@ PR6 deletes the local-orchestration surface area in one sweep.
 | [analysis/aggregate.py](analysis/aggregate.py) | PR1 already dropped consistency columns; adds regression columns |
 | [analysis/headline.ipynb](analysis/headline.ipynb) | Drop Panel C (consistency); rename Panel A "ecology" subplots to year-100 |
 
-**Move + tidy:**
-- The four container-entrypoint shell scripts currently at repo root —
-  [agent-entrypoint.sh](agent-entrypoint.sh),
-  [entrypoint-scorer.sh](entrypoint-scorer.sh),
-  [scorer-and-upload.sh](scorer-and-upload.sh),
-  [run-judge.sh](run-judge.sh) — accreted at root following each other's
-  precedent (PR2 added the first, PR3/#40 added scorer-and-upload, PR-judge
-  added run-judge). They're orchestration concerns, not top-level
-  deliverables. `git mv` them into `orchestration/` (or a new `containers/`
-  if a tighter category is wanted) and update the four `COPY` lines in
-  [Dockerfile](Dockerfile); image destinations stay at `/opt/<name>.sh` so
-  nothing runtime changes. Pure layout fix — deferred here so it lands
-  alongside the other repo sweeps rather than as a one-off.
+**Move + tidy:** ✓ landed early (with the devcontainer extension PR,
+not deferred to PR6). The five container-entrypoint shell scripts plus
+`agent-run.sh.seed` were `git mv`'d into
+[containers/](containers/) — `containers/agent-entrypoint.sh`,
+`containers/entrypoint-scorer.sh`, `containers/scorer-and-upload.sh`,
+`containers/run-judge.sh`, `containers/mirror-sidecar.sh`,
+`containers/agent-run.sh.seed`. Dockerfile COPY paths updated;
+image-side `/opt/<name>.sh` destinations unchanged so runtime is a
+no-op. [.github/workflows/build-images.yml](.github/workflows/build-images.yml)
+path filter collapsed to a single `containers/**` glob.
 
 **CI:**
 - [.github/workflows/smoke.yml](.github/workflows/smoke.yml) — keep
