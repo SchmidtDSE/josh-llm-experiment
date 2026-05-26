@@ -43,13 +43,12 @@ on:
     # wider net than strictly necessary — render-only paths are excluded
     # below, everything else triggers a rebuild.
     paths:
-      # Dockerfile + all container-entrypoint scripts at repo root.
+      # Dockerfile + all container-entrypoint scripts. Entrypoints live
+      # under containers/ — one path glob covers agent-entrypoint.sh,
+      # entrypoint-scorer.sh, scorer-and-upload.sh, run-judge.sh,
+      # mirror-sidecar.sh, and agent-run.sh.seed.
       - "Dockerfile"
-      - "agent-entrypoint.sh"
-      - "agent-run.sh.seed"
-      - "entrypoint-scorer.sh"
-      - "scorer-and-upload.sh"
-      - "run-judge.sh"
+      - "containers/**"
       # Scoring code, spec primitives, validators — all baked into the
       # scorer image at /opt/harness/.
       - "harness/**"

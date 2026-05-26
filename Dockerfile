@@ -12,6 +12,10 @@ FROM python:3.11-slim-bookworm AS base
 #   - scorer: docker run --rm --network=none -v ./runs/<id>:/sandbox
 #               fortree:scorer /opt/entrypoint-scorer.sh --target <josh|mesa>
 #
+# Source layout: all container-entrypoint scripts live in `containers/`
+# at repo root. They're COPY'd into /opt/ inside the image so runtime
+# paths are unaffected by the source-side reshuffle.
+#
 # Structural separation matters: an agent container cannot read
 # /opt/harness/acceptance_ranges.json because those files only exist in
 # fortree:scorer.
@@ -75,7 +79,7 @@ FROM base AS agent
 # cannot exfiltrate to the bucket either. The payload is a thin wrapper
 # that runs `opencode run` 8× (one per todo) plus the static per-step
 # injection prompts the wrapper concatenates onto the per-cell body.
-COPY agent-entrypoint.sh /opt/agent-entrypoint.sh
+COPY containers/agent-entrypoint.sh /opt/agent-entrypoint.sh
 RUN chmod +x /opt/agent-entrypoint.sh
 # Bake the 8 per-step injection prompts into the image. Previously
 # bind-mounted at run time by the local orchestration (going away in
@@ -96,13 +100,13 @@ COPY data/*.nc /opt/data/
 # Agent prelude `install -m 0755`s this into /sandbox/run.sh so the
 # agent inherits a working stub it fills in. Scorer overrides
 # N_REPLICATES=100 at invocation time for the canonical workload.
-COPY agent-run.sh.seed /opt/run.sh.seed
+COPY containers/agent-run.sh.seed /opt/run.sh.seed
 RUN chmod 0755 /opt/run.sh.seed
 
 # ---------- scorer stage ----------
 FROM base AS scorer
 COPY harness/ /opt/harness/
-COPY entrypoint-scorer.sh /opt/entrypoint-scorer.sh
+COPY containers/entrypoint-scorer.sh /opt/entrypoint-scorer.sh
 RUN chmod +x /opt/entrypoint-scorer.sh
 
 # MinIO client (`mc`) for the k8s Pod scorer entrypoint — uploads the
@@ -112,7 +116,7 @@ RUN chmod +x /opt/entrypoint-scorer.sh
 COPY scripts/install_mc.sh /tmp/install_mc.sh
 RUN /tmp/install_mc.sh && rm /tmp/install_mc.sh
 
-COPY scorer-and-upload.sh /opt/scorer-and-upload.sh
+COPY containers/scorer-and-upload.sh /opt/scorer-and-upload.sh
 RUN chmod +x /opt/scorer-and-upload.sh
 
 # Fuzzy-judge assets — Q1/Q2/Q3 LLM-judge driven from inside the scorer
@@ -130,7 +134,7 @@ COPY config/models.yaml /opt/config/models.yaml
 COPY orchestration/_fuzzy_parse.py /opt/orchestration/_fuzzy_parse.py
 COPY orchestration/extract_transcript.py /opt/orchestration/extract_transcript.py
 COPY orchestration/resolve_model.py /opt/orchestration/resolve_model.py
-COPY run-judge.sh /opt/run-judge.sh
+COPY containers/run-judge.sh /opt/run-judge.sh
 RUN chmod +x /opt/run-judge.sh
 
 # Mirror-sidecar: runs alongside the agent initContainer (k8s native
@@ -138,5 +142,5 @@ RUN chmod +x /opt/run-judge.sh
 # /cell-data continuously synced to the bucket so an agent OOM doesn't
 # take the workspace with it. See mirror-sidecar.sh for the full
 # rationale and orchestration/templates/job.yaml.j2 for the wiring.
-COPY mirror-sidecar.sh /opt/mirror-sidecar.sh
+COPY containers/mirror-sidecar.sh /opt/mirror-sidecar.sh
 RUN chmod +x /opt/mirror-sidecar.sh
