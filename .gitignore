@@ -7,3 +7,6 @@ results/manifest.jsonl.tmp
 *.pyc
 __pycache__/
 .DS_Store
+# pixi environments
+.pixi/*
+!.pixi/config.toml
