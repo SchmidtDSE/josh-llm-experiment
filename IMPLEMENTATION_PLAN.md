@@ -12,13 +12,16 @@ Per-PR detail lives in `git log` and the merged PR descriptions; this
 document is a navigation map, not a complete change history.
 
 > **Status (2026-05-26, on `feat/k8s-refactor`).** Phase 6 (k8s
-> refactor) is in flight — see §Phase 6 below. **PRs 1–6 merged** on
-> the integration branch (scoring drop + regression bands, prompt
-> update for 100×100, image consolidation, egress relaxation +
-> sidecar drop, k8s submission path + mirror-sidecar + in-Pod fuzzy
-> judge + devcontainer, repo cleanup). PR7 (headline batch) and PR8
-> (merge to `dev`) follow. The integration branch is now 68+ commits
-> ahead of `dev`. The pre-Phase-6 local-orchestration architecture
+> refactor) is in flight — see §Phase 6 below. **PRs 1–6 merged** on the
+> integration branch (scoring drop + regression bands, prompt update for
+> 100×100, image consolidation, egress relaxation + sidecar drop, k8s
+> submission path + mirror-sidecar + in-Pod fuzzy judge + devcontainer,
+> repo cleanup). PR6 (#46) also folded in two devcontainer/render fixups,
+> and the post-PR6 workflow was smoke-validated end-to-end on
+> `sonnet × {josh, mesa}` (batch `pr6-smoke-20260526`; both cells ran,
+> conformed, β≈1.0 / R²≈0.9999). PR7 (headline batch) and PR8 (merge to
+> `dev`) follow. The integration branch is now 68+ commits ahead of
+> `dev`. The pre-Phase-6 local-orchestration architecture
 > (per-cell shell scripts + dnsmasq sidecar + host-side report
 > renderers) is preserved in git history; see PRs #34/#36/#40/#41/#45
 > for the migration steps.
@@ -232,6 +235,26 @@ incorrectly listed `harness/conformance_fuzzy.py` and
   [.github/workflows/build-images.yml](.github/workflows/build-images.yml)
   path filter already names it explicitly.
 
+**Follow-on fixups (folded into PR6 during smoke-testing):**
+- Devcontainer: the GKE auth-plugin install moved into
+  [.devcontainer/post-create.sh](.devcontainer/post-create.sh); the
+  `dhoeric/google-cloud-cli` feature's `installGkeGcloudAuthPlugin` was
+  disabled because its v1.0.1 plugin step targets the stale legacy
+  `google-cloud-sdk-*` package and silently no-ops against current gcloud.
+- Render path: `uv run` → `python` in
+  [orchestration/k8s_apply.sh](orchestration/k8s_apply.sh) (+ the
+  `render_jobs.py` docstring) so `pixi run apply` works — `uv` isn't in
+  the pixi devcontainer.
+- Lock: regenerated [.devcontainer/devcontainer-lock.json](.devcontainer/devcontainer-lock.json)
+  (the committed copy was missing the `kubectl-helm-minikube` entry).
+
+**Smoke validation:** `sonnet × {josh, mesa}` ran end-to-end against
+images built from the PR6 branch (batch `pr6-smoke-20260526`): both cells
+`did_run`, `target_conformance: true`, regression β≈1.0 / R²≈0.9999,
+fuzzy Q1 = yes. The only hiccup was a stale `openrouter-creds` Secret
+(re-synced from `.env`), unrelated to the cleanup — confirming PR6
+introduces no regression.
+
 **Kept in `orchestration/`:** `render_jobs.py`, `k8s_apply.sh`,
 `pull_artefacts.sh`, `resolve_model.py`, `_fuzzy_parse.py`,
 `extract_transcript.py`, `templates/`, `matrix.csv`.
@@ -328,14 +351,16 @@ path broken on `dev` if landed there directly.
    landed alongside (PR #44). Mini-headline batch
    (`smoke-headline-20260521`, 100 cells) ran end-to-end on GKE
    Autopilot; artefacts present in the bucket.
-6. **Repo cleanup.** ✓ merged. Deleted 19 paths in the
+6. **Repo cleanup.** ✓ merged (PR #46). Deleted 19 paths in the
    local-orchestration tree (per-cell shell scripts + dnsmasq sidecar
    + host-side report renderers + rescore tooling + host-side fuzzy
    judge + retired rung ladder + the `integration.yml` workflow that
    exercised the local path). README + EXPERIMENTAL_DESIGN.md +
-   IMPLEMENTATION_PLAN.md swept. See §Repo cleanup above for the
-   full list and the two plan corrections (`conformance_fuzzy.py` and
-   `extract_transcript.py` were kept, not deleted).
+   IMPLEMENTATION_PLAN.md swept. Also folds in two devcontainer/render
+   fixups and was smoke-validated on `sonnet × {josh, mesa}`. See §Repo
+   cleanup above for the full list, the two plan corrections
+   (`conformance_fuzzy.py` and `extract_transcript.py` were kept, not
+   deleted), the fixups, and the smoke result.
 7. **Headline batch.** Submit the full panel as a k8s Indexed Job.
    Batch-tag suggestion: `headline-k8s-<date>`. This is the
    reportable batch — phase-5c artefacts are abandoned, not compared
@@ -359,7 +384,10 @@ path broken on `dev` if landed there directly.
    *succeeded* cell goes up materially. Worth a single-cell probe per
    model under the new prompt + workload before launching the
    headline batch, to surface "model fails to engage with the new
-   run.sh contract" regressions cheaply.
+   run.sh contract" regressions cheaply. The PR6 smoke
+   (`pr6-smoke-20260526`) covered `sonnet` on both targets — it engaged
+   and scored clean — so this is done for sonnet; `gemma`, `kimi`,
+   `minimax`, and `mistral` still want a probe each before the headline.
 3. **`activeDeadlineSeconds` ceiling.** What's the right Pod-level
    timeout for 100×100? Empirically TBD; suggest first probe sets
    `activeDeadlineSeconds: 3600` and the headline batch tunes from
