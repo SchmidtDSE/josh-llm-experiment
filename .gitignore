@@ -20,3 +20,7 @@ analysis/.ipynb_checkpoints/
 # artefacts, regenerable from the templates. Source of truth is the template +
 # CLI args.
 orchestration/rendered/
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml

@@ -33,7 +33,15 @@ are present on the current branch.
 ├── EXPERIMENTAL_DESIGN.md        # Methodology, scoring, threats to validity
 ├── IMPLEMENTATION_PLAN.md        # Phase plan + current build status
 ├── Dockerfile                    # Unified fortree image (agent + scorer)
-├── entrypoint-scorer.sh          # Dispatches to harness/run_metrics.py
+├── containers/                   # Container-entrypoint shell scripts
+│   ├── agent-entrypoint.sh       # fortree:agent entry — runs the 8-step opencode flow
+│   ├── entrypoint-scorer.sh      # fortree:scorer entry — dispatches to harness/run_metrics.py
+│   ├── scorer-and-upload.sh      # k8s scorer entry — scores then `mc mirror`s to GCS
+│   ├── run-judge.sh              # k8s scorer entry — in-Pod fuzzy LLM judge
+│   ├── mirror-sidecar.sh         # k8s sidecar — continuous mc mirror for OOM forensics
+│   └── agent-run.sh.seed         # `./run.sh` seed installed by the agent prelude
+├── .devcontainer/                # Pixi-based devcontainer (DinD + kubectl + gcloud + mc)
+├── pixi.toml                     # Host-side env for the k8s submission path
 ├── .env.example                  # Copy to .env; OPENROUTER_API_KEY lives there
 ├── scripts/
 │   ├── install_josh.sh           # Installs Josh CLI inside the image
@@ -321,8 +329,21 @@ Terraform for the above lives in the infra repo under
 
 #### Operator setup *(one-time per workstation or dev VM)*
 
+**Recommended: open the repo in the devcontainer** —
+[.devcontainer/devcontainer.json](.devcontainer/devcontainer.json) is a
+Debian + pixi image preloaded with docker-in-docker, gh, gcloud +
+gke-gcloud-auth-plugin, kubectl, and mc. Open in VS Code → "Reopen in
+Container" (or `devcontainer up` from the CLI). The devcontainer's
+`postCreateCommand` runs [scripts/install_mc.sh](scripts/install_mc.sh)
+and `pixi install` automatically.
+
+If you opened in the devcontainer, skip directly to step 2 below
+(`gcloud auth login`). If you're working on a bare host without a
+devcontainer, do all four steps:
+
 ```sh
 # 1. kubectl + the GKE-specific auth plugin via Google's apt repo.
+#    (Skip if you opened the devcontainer — both are preinstalled.)
 curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
   | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
 echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
@@ -343,6 +364,20 @@ gcloud container clusters get-credentials josh-k8s-gke \
 # 4. Verify.
 kubectl get ns joshsim
 ```
+
+Once `kubectl get ns joshsim` returns the namespace, the common host
+verbs are available as pixi tasks:
+
+```sh
+pixi run render -- --batch-tag X --image-agent ... --image-scorer ... --single-cell model=sonnet,target=josh
+pixi run apply  -- --batch-tag X --image-agent ... --image-scorer ... --single-cell model=sonnet,target=josh
+pixi run pull   -- <batch-tag>
+pixi run aggregate runs/<batch-tag>
+pixi run lab
+```
+
+Tasks pass everything after `--` straight through to the underlying
+script. See [pixi.toml](pixi.toml) for the full task list.
 
 #### Repo-level one-time setup *(after the build-images workflow first lands)*
 
