@@ -70,10 +70,12 @@ BATCH_SLUG="$(echo "$BATCH_TAG" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-
 RENDERED_DIR="$REPO_ROOT/orchestration/rendered/$BATCH_SLUG"
 
 echo "▶ Render"
-# `uv run` honours pyproject.toml + uv.lock so the renderer uses the
-# project's pinned Python + Jinja/PyYAML versions, not whatever happens
-# to be on $PATH on this host.
-( cd "$REPO_ROOT" && uv run orchestration/render_jobs.py "${RENDER_ARGS[@]}" )
+# Run the renderer with plain `python`. The host env is the pixi env
+# (pixi.toml pins Jinja2 + PyYAML), so invoke this via `pixi run apply`
+# — or from any shell where those deps are importable. (Earlier revisions
+# used `uv run`, a leftover from the pre-pixi era; `uv` is not part of the
+# pixi devcontainer.)
+( cd "$REPO_ROOT" && python orchestration/render_jobs.py "${RENDER_ARGS[@]}" )
 
 KUBECTL=(kubectl)
 if [ -n "$KUBECTL_CONTEXT" ]; then

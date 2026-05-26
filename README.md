@@ -137,8 +137,10 @@ Terraform for the above lives in the infra repo under
 Debian + pixi image preloaded with docker-in-docker, gh, gcloud +
 gke-gcloud-auth-plugin, kubectl, and mc. Open in VS Code → "Reopen in
 Container" (or `devcontainer up` from the CLI). The devcontainer's
-`postCreateCommand` runs [scripts/install_mc.sh](scripts/install_mc.sh)
-and `pixi install` automatically.
+`postCreateCommand` ([.devcontainer/post-create.sh](.devcontainer/post-create.sh))
+installs the GKE auth plugin and `mc` (via
+[scripts/install_mc.sh](scripts/install_mc.sh)) and runs `pixi install`,
+all automatically.
 
 If you opened in the devcontainer, skip directly to step 2 below
 (`gcloud auth login`). If you're working on a bare host without a

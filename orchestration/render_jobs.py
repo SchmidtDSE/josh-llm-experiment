@@ -21,14 +21,14 @@ Usage examples:
         --single-cell model=claude,target=josh
 
     # Full panel (matrix CSV with `model,target` columns)
-    uv run orchestration/render_jobs.py \\
+    pixi run render -- \\
         --batch-tag headline-2026-05 \\
         --image-agent  …:sha-abcdef \\
         --image-scorer …:sha-abcdef \\
         --matrix orchestration/matrix.csv
 
 Invoked from `orchestration/k8s_apply.sh`, which wraps the render +
-kubectl apply two-step under `uv run` automatically.
+kubectl apply two-step automatically.
 """
 
 from __future__ import annotations
