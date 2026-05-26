@@ -2,6 +2,7 @@
     "name": "josh-llm-experiment",
     "image": "ghcr.io/prefix-dev/pixi:0.66.0-bullseye-slim",
     "features": {
+        "ghcr.io/devcontainers/features/common-utils": {},
         "ghcr.io/devcontainers/features/docker-in-docker:2": {
             "version": "latest",
             "moby": false,
@@ -10,16 +11,24 @@
         "ghcr.io/devcontainers/features/github-cli:1": {
             "version": "latest"
         },
-        "ghcr.io/dhoeric/features/google-cloud-cli:1": {},
-        "ghcr.io/devcontainers/features/common-utils": {}
+        "ghcr.io/dhoeric/features/google-cloud-cli:1": {
+            "installGkeGcloudAuthPlugin": "true"
+        },
+        "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+            "version": "latest",
+            "helm": "none",
+            "minikube": "none"
+        }
     },
     "runArgs": ["--privileged"],
     "remoteUser": "root",
+    "postCreateCommand": ".devcontainer/post-create.sh",
     "customizations": {
         "vscode": {
             "extensions": [
                 "ms-python.python",
-                "ms-azuretools.vscode-docker"
+                "ms-azuretools.vscode-docker",
+                "ms-kubernetes-tools.vscode-kubernetes-tools"
             ]
         }
     }
