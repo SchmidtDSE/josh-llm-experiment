@@ -11,15 +11,16 @@ how to run, see [README.md](README.md).
 Per-PR detail lives in `git log` and the merged PR descriptions; this
 document is a navigation map, not a complete change history.
 
-> **Status (2026-05-21, on `feat/k8s-refactor`).** Phase 6 (k8s
-> refactor) is in flight — see §Phase 6 below. **PRs 1–4 merged** on
+> **Status (2026-05-26, on `feat/k8s-refactor`).** Phase 6 (k8s
+> refactor) is in flight — see §Phase 6 below. **PRs 1–5 merged** on
 > the integration branch (scoring drop + regression bands, prompt
 > update for 100×100, image consolidation, egress relaxation +
-> sidecar drop). PRs 5–7 pending; final merge to `dev` happens once
-> the full series is validated end-to-end. The historical phases
-> below describe the codebase as it stood at the start of Phase 6;
-> the Phase 6 "Repo cleanup" step deletes a substantial amount of
-> that surface area.
+> sidecar drop, k8s submission path + mirror-sidecar + in-Pod fuzzy
+> judge + devcontainer). PR6 (repo cleanup) is the next blocker; PR7
+> (headline batch) and PR8 (merge to `dev`) follow. The integration
+> branch is now 67 commits ahead of `dev`; everything below in the
+> "Architecture (transitional)" section describes the historical
+> shape that the Phase 6 "Repo cleanup" step deletes.
 
 ## Architecture (transitional)
 
@@ -338,10 +339,17 @@ path broken on `dev` if landed there directly.
    until PR6's cleanup sweep. `firewall-probe` smoke job retired.
    EXPERIMENTAL_DESIGN.md §Egress observability + §Threats to
    validity updated.
-5. **K8s submission path.** Add `orchestration/templates/job.yaml.j2`
-   + `orchestration/render_jobs.py` + `orchestration/k8s_apply.sh`.
-   Submit a one-cell smoke test to a GKE Autopilot cluster; verify
-   artefacts land in the bucket.
+5. **K8s submission path.** ✓ merged (PR #45). Added
+   `orchestration/templates/job.yaml.j2`,
+   `orchestration/render_jobs.py`, `orchestration/k8s_apply.sh`,
+   `orchestration/pull_artefacts.sh`. In-Pod fuzzy judge
+   ([containers/run-judge.sh](containers/run-judge.sh)) folded in
+   (PR #42). [containers/mirror-sidecar.sh](containers/mirror-sidecar.sh)
+   continuously mirrors `/cell-data` so OOM'd cells still leave
+   forensic state. Pixi-based devcontainer + `containers/` move
+   landed alongside (PR #44). Mini-headline batch
+   (`smoke-headline-20260521`, 100 cells) ran end-to-end on GKE
+   Autopilot; artefacts present in the bucket.
 6. **Repo cleanup.** Delete everything in the "Delete" table above
    in one sweep. README + EXPERIMENTAL_DESIGN docs catch up to the
    new shape.
