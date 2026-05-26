@@ -1,0 +1,12 @@
+[workspace]
+channels = ["conda-forge"]
+name = "josh-llm-experiment"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+pyyaml = ">=6.0.3,<7"
+rich = ">=15.0.0,<16"
+python = ">=3.12,<3.13"

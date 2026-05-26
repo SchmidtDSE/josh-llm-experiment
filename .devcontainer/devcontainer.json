@@ -1,0 +1,25 @@
+{
+    "name": "josh-llm-experiment",
+    "image": "ghcr.io/prefix-dev/pixi:0.66.0-bullseye-slim",
+    "features": {
+        "ghcr.io/devcontainers/features/docker-in-docker:2": {
+            "version": "latest",
+            "moby": false,
+            "dockerDashComposeVersion": "v2"
+        },
+        "ghcr.io/devcontainers/features/github-cli:1": {
+            "version": "latest"
+        },
+        "ghcr.io/dhoeric/features/google-cloud-cli:1": {}
+    },
+    "runArgs": ["--privileged"],
+    "remoteUser": "root",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-azuretools.vscode-docker"
+            ]
+        }
+    }
+}
