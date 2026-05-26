@@ -250,6 +250,17 @@ PR6 deletes the local-orchestration surface area in one sweep.
 | [analysis/aggregate.py](analysis/aggregate.py) | PR1 already dropped consistency columns; adds regression columns |
 | [analysis/headline.ipynb](analysis/headline.ipynb) | Drop Panel C (consistency); rename Panel A "ecology" subplots to year-100 |
 
+**Move + tidy:** ✓ landed early (with the devcontainer extension PR,
+not deferred to PR6). The five container-entrypoint shell scripts plus
+`agent-run.sh.seed` were `git mv`'d into
+[containers/](containers/) — `containers/agent-entrypoint.sh`,
+`containers/entrypoint-scorer.sh`, `containers/scorer-and-upload.sh`,
+`containers/run-judge.sh`, `containers/mirror-sidecar.sh`,
+`containers/agent-run.sh.seed`. Dockerfile COPY paths updated;
+image-side `/opt/<name>.sh` destinations unchanged so runtime is a
+no-op. [.github/workflows/build-images.yml](.github/workflows/build-images.yml)
+path filter collapsed to a single `containers/**` glob.
+
 **CI:**
 - [.github/workflows/smoke.yml](.github/workflows/smoke.yml) — keep
   conceptually; firewall-probe job retired with the iptables sidecar

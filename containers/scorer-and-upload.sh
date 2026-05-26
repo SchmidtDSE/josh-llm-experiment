@@ -26,6 +26,12 @@
 #
 # Optional:
 #   MINIO_PREFIX      Object-key prefix appended after the bucket.
+#   UPLOAD_SOURCE_DIR Directory tree to mirror (default `/sandbox`).
+#                     The k8s Job template sets this to `/cell-data`,
+#                     a shared emptyDir that contains both the agent's
+#                     workspace and its per-step metadata; mirroring
+#                     the whole tree gives the scorer.json + workspace
+#                     + opencode state + trajectory.jsonl in one go.
 #
 # Object layout under the bucket (same as upload_batch.sh):
 #   <prefix>/<batch-tag>/<run-id>/...
@@ -44,11 +50,26 @@ set -euo pipefail
 : "${BATCH_TAG:?BATCH_TAG not set}"
 : "${RUN_ID:?RUN_ID not set}"
 MINIO_PREFIX="${MINIO_PREFIX:-}"
+UPLOAD_SOURCE_DIR="${UPLOAD_SOURCE_DIR:-/sandbox}"
 
+# Scorer only runs once the agent initContainer succeeds (k8s
+# initContainer ordering). If the agent OOMs or crashes, this script
+# never executes — the mirror-sidecar (different container, different
+# cgroup) handles post-mortem upload of the partial workspace for us.
+# That's why this script just assumes the workspace is in good shape
+# and runs the canonical scoring + judge + final mc-mirror sequence.
 set +e
 python /opt/harness/run_metrics.py "$@"
 SCORER_RC=$?
 set -e
+
+# Run the LLM fuzzy judge (Q1: framework usage, Q2: confusion patterns,
+# Q3: run.sh wall-clock contract) between the mechanical scorer and the
+# upload, so scorer.fuzzy.json lands in the bucket alongside scorer.json.
+# Judge failure does NOT fail the cell — partial fuzzy data is fine and
+# the script always exits 0; the _fuzzy_parse error-record path captures
+# any failure inside scorer.fuzzy.json itself.
+/opt/run-judge.sh || true
 
 ALIAS="fortree-archive"
 mc alias set "$ALIAS" "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
@@ -59,8 +80,12 @@ else
   DEST="$ALIAS/$MINIO_BUCKET/$BATCH_TAG/$RUN_ID"
 fi
 
-echo "▶ Uploading /sandbox → $DEST"
-mc mirror --overwrite --quiet /sandbox "$DEST"
+echo "▶ Uploading $UPLOAD_SOURCE_DIR → $DEST"
+# Exclude opencode's bundled node_modules (~50 MiB of zod locales + esbuild
+# + zod-mini + …) — they're a runtime detail of opencode itself, totally
+# irrelevant to the experiment and re-fetched from the agent image each
+# run. The first pr5-smoke uploaded them; second smoke onwards skips them.
+mc mirror --overwrite --quiet --exclude "**/node_modules/**" "$UPLOAD_SOURCE_DIR" "$DEST"
 echo "✔ Upload done (scorer exit code: $SCORER_RC)"
 
 exit "$SCORER_RC"
