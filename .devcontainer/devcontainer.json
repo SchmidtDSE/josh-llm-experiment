@@ -10,7 +10,8 @@
         "ghcr.io/devcontainers/features/github-cli:1": {
             "version": "latest"
         },
-        "ghcr.io/dhoeric/features/google-cloud-cli:1": {}
+        "ghcr.io/dhoeric/features/google-cloud-cli:1": {},
+        "ghcr.io/devcontainers/features/common-utils": {}
     },
     "runArgs": ["--privileged"],
     "remoteUser": "root",
