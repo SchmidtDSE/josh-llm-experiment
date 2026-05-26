@@ -4,13 +4,13 @@
 # Devcontainer features handle docker (DinD), gh, gcloud, kubectl, and
 # common-utils. This script adds the bits the features don't (reliably) cover:
 #
-#   1. The GKE gcloud auth plugin. The dhoeric/google-cloud-cli feature
-#      requests it via `installGkeGcloudAuthPlugin`, but v1.0.1 installs
-#      gcloud from the renamed `google-cloud-cli` package (current) while its
-#      plugin step targets the legacy `google-cloud-sdk-gke-gcloud-auth-plugin`
-#      package (frozen at an older version that won't co-install with the
-#      current gcloud) — so the plugin silently never lands and kubectl can't
-#      authenticate to GKE. Install the correctly-named package ourselves.
+#   1. The GKE gcloud auth plugin. The dhoeric/google-cloud-cli feature can
+#      install it via `installGkeGcloudAuthPlugin`, but v1.0.1's plugin step
+#      targets the legacy `google-cloud-sdk-gke-gcloud-auth-plugin` package
+#      (frozen at an older version that won't co-install with the renamed,
+#      current `google-cloud-cli` gcloud) — so it silently no-ops and kubectl
+#      can't authenticate to GKE. We disable that option in devcontainer.json
+#      and install the correctly-named package here instead.
 #   2. The MinIO client `mc`. Used host-side by orchestration/pull_artefacts.sh
 #      to fetch per-cell artefacts from the GCS bucket via the S3 interop API.
 #      (`mc` also lives inside fortree:scorer for the in-Pod upload; that copy
