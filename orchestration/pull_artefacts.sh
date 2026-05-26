@@ -11,7 +11,8 @@
 #   ./orchestration/pull_artefacts.sh <batch-tag>
 #
 # Reads MINIO_ENDPOINT / MINIO_BUCKET / MINIO_ACCESS_KEY / MINIO_SECRET_KEY
-# / MINIO_PREFIX from .env (gitignored), same as orchestration/upload_batch.sh.
+# / MINIO_PREFIX from .env (gitignored), same names as the in-Pod
+# scorer-and-upload.sh that wrote the artefacts.
 
 set -euo pipefail
 
@@ -25,9 +26,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Preserve env-supplied overrides — caller may run e.g.
 # `MINIO_PREFIX=pr5-smoke ./orchestration/pull_artefacts.sh pr5-smoke`
-# to override the local .env's MINIO_PREFIX (which is set for the
-# legacy upload_batch.sh path; k8s batches use the batch-tag as prefix
-# by default).
+# to override the local .env's MINIO_PREFIX.
 _ORIG_MINIO_ENDPOINT="${MINIO_ENDPOINT:-}"
 _ORIG_MINIO_BUCKET="${MINIO_BUCKET:-}"
 _ORIG_MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-}"

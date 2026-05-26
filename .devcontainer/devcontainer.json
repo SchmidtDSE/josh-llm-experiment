@@ -11,8 +11,13 @@
         "ghcr.io/devcontainers/features/github-cli:1": {
             "version": "latest"
         },
+        // GKE auth plugin is installed by .devcontainer/post-create.sh, not
+        // by this feature: v1.0.1's plugin step targets the legacy
+        // google-cloud-sdk-* package, which no-ops against the current
+        // google-cloud-cli gcloud. Left off here to avoid the misleading
+        // (silently-failing) attempt.
         "ghcr.io/dhoeric/features/google-cloud-cli:1": {
-            "installGkeGcloudAuthPlugin": "true"
+            "installGkeGcloudAuthPlugin": false
         },
         "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
             "version": "latest",

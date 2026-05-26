@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Parse one fuzzy judge raw output into scorer.fuzzy.json.
 
-Invoked from orchestration/run_fuzzy_judge.sh per cell. Reads the
-opencode run stdout transcript, extracts the LAST fenced ```json block,
-validates it against the fuzzy-v2 schema (Q1 + Q2 + Q3), and writes
-scorer.fuzzy.json.
+Invoked from containers/run-judge.sh per cell (inside the scorer
+container). Reads the opencode run stdout transcript, extracts the
+LAST fenced ```json block, validates it against the fuzzy-v2 schema
+(Q1 + Q2 + Q3), and writes scorer.fuzzy.json.
 
 On parse / validation failure, still writes scorer.fuzzy.json with a
 `parse_error` field and a snippet of the raw output, so a missing

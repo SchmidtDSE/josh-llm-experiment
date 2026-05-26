@@ -2,22 +2,18 @@
 # Agent-mode entrypoint. Lives only in `fortree:agent` (added by the agent
 # Dockerfile stage). The scorer image does not carry this file.
 #
-# Invocation (from orchestration/run_agent.sh):
-#   docker run --rm --env-file .env \
-#     -e FAIL_FAST_ON_STEP_ERROR=false \
-#     -v <RUN_DIR>/workspace:/sandbox \
-#     -v <RUN_DIR>/.opencode:/root/.config/opencode \
-#     -v <RUN_DIR>/prompt_body.md:/opt/prompt_body.md:ro \
-#     -v <REPO_ROOT>/prompts/steps:/opt/steps:ro \
-#     -v <RUN_DIR>/agent_artifacts:/opt/agent_meta \
-#     fortree:agent /opt/agent-entrypoint.sh
+# Invocation: as the `command` of the agent initContainer in the per-cell
+# k8s Job (see orchestration/templates/job.yaml.j2). /sandbox is the
+# shared /cell-data emptyDir volume, mounted at /sandbox inside the
+# initContainer by the Pod spec; /opt/prompt_body.md is rendered into
+# the volume during the setup initContainer.
 #
 # Multi-invocation flow: 8 fresh-session `opencode run` calls in a row,
 # one per todo, against the same /sandbox workspace. State carries across
-# steps via /sandbox/PLAN.md (seeded by launch_run.sh from
-# prompts/PLAN_TEMPLATE.md) and any code the previous step left behind.
-# Each call's prompt is the shared body (/opt/prompt_body.md) plus that
-# step's static injection (/opt/steps/step_NN_*.md).
+# steps via /sandbox/PLAN.md (seeded from prompts/PLAN_TEMPLATE.md before
+# the agent starts) and any code the previous step left behind. Each
+# call's prompt is the shared body (/opt/prompt_body.md) plus that step's
+# static injection (/opt/steps/step_NN_*.md).
 #
 # Failure semantics:
 #   FAIL_FAST_ON_STEP_ERROR=true  → first non-zero opencode exit aborts
@@ -30,11 +26,11 @@
 #   1. opencode run — streams JSON events to per-step trajectory.jsonl;
 #      stderr → per-step agent_stderr.log.
 #   2. Replay per-step trajectory.jsonl to entrypoint stdout, and stderr
-#      log to entrypoint stderr, so run_agent.sh's > trajectory.jsonl
-#      redirect collects an in-order rollup of all 8 step trajectories.
+#      log to entrypoint stderr, so the in-order rollup of all 8 step
+#      trajectories is captured in the container's log stream.
 #   3. opencode export <sid> → per-step session_export.json. Pick the
 #      latest session in the shared DB (the one this step just created).
-#   4. Refresh the legacy /opt/agent_meta/session_export.json to point at
+#   4. Refresh the rollup /opt/agent_meta/session_export.json to point at
 #      the most recent step's export (extract_transcript.py et al read
 #      this single-file path).
 #
@@ -52,18 +48,6 @@ OPENCODE_PID=""
 LATEST_STEP_DIR=""
 LEGACY_EXPORT_PATH="/opt/agent_meta/session_export.json"
 FAIL_FAST="${FAIL_FAST_ON_STEP_ERROR:-false}"
-
-# The agent shares the dnsmasq sidecar's network namespace via
-# --network=container:dnsmasq-<id>, and docker bind-mounts the sidecar's
-# /etc/hosts AND /etc/resolv.conf into this container at the same paths
-# (same underlying inode). So everything network-identity-shaped is
-# already configured by sidecar-init.sh:
-#   - /etc/resolv.conf → "nameserver 127.0.0.1" (dnsmasq listening on
-#     loopback in the shared netns; populates the ipset allowlist).
-#   - /etc/hosts → host.docker.internal pointing at the bridge gateway
-#     (from the sidecar's --add-host=host.docker.internal:host-gateway).
-# dns_sidecar.sh blocks on the sidecar's HEALTHCHECK before returning,
-# so by the time we get here the sidecar's writes are guaranteed visible.
 
 export_session_to() {
   # Dump the latest session in the shared DB to the given path. Across
@@ -136,9 +120,8 @@ for STEP_FILE in /opt/steps/step_*.md; do
   LAST_EXIT=$STEP_EXIT
   ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  # Replay per-step streams to the entrypoint's stdout/stderr so
-  # run_agent.sh's `> trajectory.jsonl` redirect captures an in-order
-  # rollup of all 8 steps.
+  # Replay per-step streams to the entrypoint's stdout/stderr so the
+  # container log carries an in-order rollup of all 8 steps.
   cat "$STEP_DIR/trajectory.jsonl"
   cat "$STEP_DIR/agent_stderr.log" >&2
 

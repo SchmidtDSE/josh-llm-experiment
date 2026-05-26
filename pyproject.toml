@@ -1,12 +1,11 @@
 [project]
 name = "fortree-orchestrator"
 version = "0"
-description = "Host-side orchestrator for the ForeverTree LLM experiments. Fires fortree:agent / fortree:scorer / fortree:dnsmasq containers via launch_batch.py."
+description = "ForeverTree LLM experiment harness — host-side analysis tools for batches submitted to GKE as per-cell k8s Jobs. See pixi.toml for the canonical host env."
 requires-python = ">=3.11"
 dependencies = [
     "jupyter>=1.1.1",
     "pyyaml>=6",
-    "rich>=13",
 ]
 
 [project.optional-dependencies]

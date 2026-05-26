@@ -96,9 +96,8 @@ ROW_FIELDS = [
     "steps_completed",
     "steps_total",
     "steps_all_eight_ok",
-    # fuzzy LLM judge — written by run-judge.sh in the scorer container
-    # (or orchestration/run_fuzzy_judge.sh in the host-side re-judge
-    # path). Schema: fuzzy-v2. See prompts/FUZZY_JUDGE.md for Q1/Q2/Q3.
+    # fuzzy LLM judge — written by containers/run-judge.sh in the scorer
+    # container. Schema: fuzzy-v2. See prompts/FUZZY_JUDGE.md for Q1/Q2/Q3.
     "fuzzy_q1_answer",
     "fuzzy_q1_justification",
     "fuzzy_q2_observations",

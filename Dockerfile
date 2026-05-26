@@ -20,9 +20,9 @@ FROM python:3.11-slim-bookworm AS base
 # /opt/harness/acceptance_ranges.json because those files only exist in
 # fortree:scorer.
 #
-# The per-run dnsmasq egress sidecar (fortree:dnsmasq) is built from a
-# SEPARATE Dockerfile, Dockerfile.dnsmasq. That image is alpine-based
-# and shares no layers with this one — see that file for its scope.
+# Phase 5 had a third per-run dnsmasq egress sidecar (fortree:dnsmasq)
+# built from a separate Dockerfile.dnsmasq; both that file and the
+# sidecar were retired in Phase 6 PR4 + PR6.
 
 ENV DEBIAN_FRONTEND=noninteractive
 

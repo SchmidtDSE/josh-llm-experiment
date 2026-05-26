@@ -5,12 +5,8 @@
 # resulting scorer.fuzzy.json ships to the bucket in the same upload as
 # scorer.json.
 #
-# This is the in-Pod analogue of the host-side
-# `orchestration/run_fuzzy_judge.sh` (which still works against a pulled
-# batch for ad-hoc re-judging). The two share the same JSON contract
-# (fuzzy-v2 schema, FUZZY_JUDGE.md prompt, opencode.judge.json reviewer
-# agent, _fuzzy_parse.py extractor) so a re-judge from the host produces
-# byte-for-byte equivalent output.
+# Schema: fuzzy-v2; rubric in FUZZY_JUDGE.md; reviewer agent config in
+# opencode.judge.json; parse logic in _fuzzy_parse.py.
 #
 # Inputs (cell-data tree from the agent initContainer + the scorer):
 #   /cell-data/workspace/                       — agent's source + output/

@@ -29,10 +29,10 @@ minimax:  openrouter/minimax/minimax-m2.7
 mistral:  openrouter/mistralai/mistral-medium-3.5
 
 # Judge model: not part of the agent panel; used by
-# orchestration/run_fuzzy_judge.sh (host-side LLM-judge). Pinned to a
-# different family than any agent so claude-agent cells aren't
-# self-judged. Pick a different short name in JUDGE_MODEL if a
-# second-judge sanity pass is wanted.
+# containers/run-judge.sh (in-Pod LLM judge). Pinned to a different
+# family than any agent so claude-agent cells aren't self-judged. Pick
+# a different short name in JUDGE_MODEL if a second-judge sanity pass
+# is wanted.
 codex:    openrouter/openai/gpt-5-codex
 
 # Local-LLM path for CI smoke + key-free replication. The underscore in

@@ -1,20 +1,16 @@
-"""LLM-judge fuzzy conformance — schema placeholder.
+"""LLM-judge fuzzy conformance — schema-shape stub.
 
-Returns a stable null record so the scorer JSON schema is complete and
-downstream consumers (the manifest aggregator, batch report) don't
-have to special-case a missing field.
+Returns a stable null record so the scorer JSON schema is complete
+and downstream consumers (manifest aggregator, headline notebook)
+don't have to special-case a missing field.
 
-The actual LLM-judge passes (the two questions described in
-SCORING.md §LLM-judge passes) run **host-side** via opencode against
-the completed run's `workspace/`, and write a sibling file
-`scorer.fuzzy.json` next to `scorer.json`. They do not flow back
-through this module — it just keeps `scorer.json`'s shape stable.
-The `target_conformance_fuzzy` field staying `null` here is
-intentional: the LLM-judge answers live in `scorer.fuzzy.json`,
-not in `scorer.json`.
-
-Live host-side path: `orchestration/run_fuzzy_judge.sh` (auto-invoked
-by `launch_batch.py` unless `--skip-fuzzy-evaluation` is set).
+The actual LLM-judge passes (Q1/Q2/Q3 in SCORING.md §LLM-judge
+passes) run **in-Pod** via `containers/run-judge.sh` inside the
+scorer container, and write a sibling file `scorer.fuzzy.json` next
+to `scorer.json`. They do not flow back through this module — it
+just keeps `scorer.json`'s shape stable. The `target_conformance_fuzzy`
+field staying `null` here is intentional: the LLM-judge answers live
+in `scorer.fuzzy.json`, not in `scorer.json`.
 """
 
 from __future__ import annotations

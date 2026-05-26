@@ -1,28 +1,20 @@
 #!/usr/bin/env bash
 # Pod-mode scorer entrypoint. Lives only in `fortree:scorer` (added by
-# the scorer Dockerfile stage). Wraps the existing scorer entrypoint and
-# then mirrors the workspace to S3-compatible object storage via `mc`,
-# which is the upload responsibility currently owned by the host-side
-# `orchestration/upload_batch.sh` (deleted in PR6 once k8s submission is
-# live).
+# the scorer Dockerfile stage). Wraps the existing scorer entrypoint
+# (`entrypoint-scorer.sh`, used unchanged by the smoke-fixture CI) and
+# then mirrors the workspace to S3-compatible object storage via `mc`.
+# This is the main-container `command` for the per-cell k8s Job.
 #
-# Designed to be the main-container `command` of the target k8s Pod
-# shape (see IMPLEMENTATION_PLAN.md §K8s execution). The existing
-# `entrypoint-scorer.sh` stays in place as the canonical entrypoint for
-# local smoke fixtures and the existing local orchestration; this
-# wrapper is additive in PR3 — nothing invokes it yet.
-#
-# Invocation (under the k8s Pod, eventually):
+# Invocation (under the k8s Pod):
 #   /opt/scorer-and-upload.sh --target <josh|mesa>
 #
-# Required env vars (mirror upload_batch.sh's contract — same names so
-# .env.example documentation carries over):
+# Required env vars:
 #   MINIO_ENDPOINT    S3-compatible endpoint URL.
 #   MINIO_BUCKET      Destination bucket name.
 #   MINIO_ACCESS_KEY  HMAC access key.
 #   MINIO_SECRET_KEY  HMAC secret.
-#   BATCH_TAG         Batch identifier (k8s Job name in PR5).
-#   RUN_ID            Per-cell run identifier (k8s Pod name / cell tag in PR5).
+#   BATCH_TAG         Batch identifier (k8s Job name).
+#   RUN_ID            Per-cell run identifier (k8s Pod name / cell tag).
 #
 # Optional:
 #   MINIO_PREFIX      Object-key prefix appended after the bucket.
@@ -33,13 +25,11 @@
 #                     the whole tree gives the scorer.json + workspace
 #                     + opencode state + trajectory.jsonl in one go.
 #
-# Object layout under the bucket (same as upload_batch.sh):
+# Object layout under the bucket:
 #   <prefix>/<batch-tag>/<run-id>/...
 #
 # Exit code is the scorer's exit code — uploads run even on score
-# failure (failed cells are still data, matching the spirit of
-# `upload_batch.sh` running after `launch_batch.py` regardless of
-# per-cell outcome).
+# failure (failed cells are still data).
 
 set -euo pipefail
 

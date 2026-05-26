@@ -4,16 +4,11 @@
 # - github-actions: scans every workflow under .github/workflows/ for
 #   `uses: owner/action@sha # version` lines and proposes bumps with the
 #   matching SHA + comment.
-# - docker: bumps the FROM lines in every Dockerfile* at the repo root,
-#   currently `Dockerfile` (base/agent/scorer — python:3.11-slim-bookworm)
-#   and `Dockerfile.dnsmasq` (sidecar — alpine:3.20). Dependabot's docker
-#   ecosystem auto-discovers all `Dockerfile*` files in the configured
-#   directory, so no per-file entry is needed.
-#
-# Note: dependabot does NOT scan workflow-embedded image references like
-# the ollama/ollama digest in integration.yml's env block, so that
-# pin is currently bumped by hand. Renovate would catch it; revisit if the
-# manual churn becomes a problem.
+# - docker: bumps the FROM lines in every Dockerfile* at the repo root.
+#   Currently `Dockerfile` (base/agent/scorer — python:3.11-slim-bookworm)
+#   is the only one; Dependabot's docker ecosystem auto-discovers all
+#   `Dockerfile*` files in the configured directory, so no per-file entry
+#   is needed.
 version: 2
 updates:
   - package-ecosystem: github-actions
