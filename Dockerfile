@@ -52,9 +52,14 @@ RUN /tmp/install_java.sh && rm /tmp/install_java.sh
 # JAVA_OPTS to the `josh` wrapper (see scripts/install_josh.sh).
 ENV JAVA_TOOL_OPTIONS="-Xmx16g"
 
-# Josh CLI: rolling main fat jar, sha256 pinned at build time.
+# Josh CLI: rolling DEV fat jar — it carries the `mcp` subcommand
+# (SchmidtDSE/josh#440); the `main` build does not, and dev->main won't
+# land for a while, so we pin dev deliberately for now. sha256 is recorded
+# at build time as the reproducibility anchor. Pin back to main (or any
+# build) with --build-arg JOSH_JAR_URL=https://joshsim.org/dist/main/joshsim-fat.jar.
+ARG JOSH_JAR_URL=https://joshsim.org/dist/dev/joshsim-fat.jar
 COPY scripts/install_josh.sh /tmp/install_josh.sh
-RUN /tmp/install_josh.sh && rm /tmp/install_josh.sh
+RUN JOSH_JAR_URL="$JOSH_JAR_URL" /tmp/install_josh.sh && rm /tmp/install_josh.sh
 
 # Python scientific stack (mesa, numpy, pandas, scipy, xarray, netCDF4,
 # rasterio, tiktoken — pinned in requirements.txt). System python is 3.11.

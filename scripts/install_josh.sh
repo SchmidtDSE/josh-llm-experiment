@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Install the Josh CLI: download the prod fat jar, record its sha256 as the
+# Install the Josh CLI: download the Josh fat jar, record its sha256 as the
 # reproducibility anchor (SchmidtDSE/josh has no tagged releases), drop a
 # wrapper at /usr/local/bin/josh so the CLI is on PATH.
 #
-# Invoked from the Dockerfile during image build. Idempotent: re-running
-# overwrites the jar with the current rolling-main build.
+# Defaults to the rolling DEV build: it carries the `mcp` subcommand
+# (SchmidtDSE/josh#440), which `main` lacks until dev->main lands (not
+# soon). The Dockerfile passes JOSH_JAR_URL with the same default; override
+# it there with --build-arg to pin a different build. Idempotent:
+# re-running overwrites the jar with the current rolling build.
 
 set -euo pipefail
 
-JOSH_JAR_URL="${JOSH_JAR_URL:-https://joshsim.org/dist/main/joshsim-fat.jar}"
+JOSH_JAR_URL="${JOSH_JAR_URL:-https://joshsim.org/dist/dev/joshsim-fat.jar}"
 JOSH_HOME="${JOSH_HOME:-/opt/josh}"
 
 mkdir -p "$JOSH_HOME"
