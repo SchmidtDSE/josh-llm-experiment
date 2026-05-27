@@ -26,12 +26,17 @@ mkdir -p output
 # grades THIS canonical 100-replicate run rather than stale 2-replicate artifacts.
 rm -f output/results*.csv
 
-josh preprocess simulation.josh Main data/maxtemp_synthetic.nc tasmax K temperature.jshd
-josh preprocess simulation.josh Main data/precip_synthetic.nc pr "kg m-2 s-1" precipitation.jshd
-# One `--data <externalName>=<path>` flag per external (canonical joshpy-bottle
-# syntax). The key is the name the `.josh` references via `external <name>` (NO
-# extension); the value is the path to its `.jshd`. A bare `--data .` (directory)
-# is NOT valid — it fails with "mismatched input ... expecting '='".
+# The --x-coord/--y-coord/--time-dim flags are REQUIRED: without them the CLI
+# preprocess builds a malformed .jshd that `josh run` can't deserialize at run
+# time (XzGridSerializationStrategy fails mid-simulation). The MCP preprocess_data
+# tool auto-detects these, which is why the agent's self-test runs — but the CLI
+# needs them explicit. The synthetic netCDFs are dimensioned (calendar_year, lat, lon).
+josh preprocess --x-coord lon --y-coord lat --time-dim calendar_year \
+  simulation.josh Main data/maxtemp_synthetic.nc tasmax K temperature.jshd
+josh preprocess --x-coord lon --y-coord lat --time-dim calendar_year \
+  simulation.josh Main data/precip_synthetic.nc pr "kg m-2 s-1" precipitation.jshd
+# One `--data <externalName>=<path>` flag per external (josh binds by the key's
+# stem to `external <name>`); a bare `--data .` (directory) is NOT valid.
 josh run simulation.josh Main --replicates "$N_REPLICATES" \
   --data temperature=temperature.jshd \
   --data precipitation=precipitation.jshd

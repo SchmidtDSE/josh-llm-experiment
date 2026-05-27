@@ -33,11 +33,16 @@ Your deliverable is Josh source + the `.jshd` you build via `josh_preprocess_dat
 The scorer will run exactly:
 
 ```
-josh preprocess simulation.josh Main data/maxtemp_synthetic.nc tasmax K temperature.jshd
-josh preprocess simulation.josh Main data/precip_synthetic.nc pr "kg m-2 s-1" precipitation.jshd
+josh preprocess --x-coord lon --y-coord lat --time-dim calendar_year \
+  simulation.josh Main data/maxtemp_synthetic.nc tasmax K temperature.jshd
+josh preprocess --x-coord lon --y-coord lat --time-dim calendar_year \
+  simulation.josh Main data/precip_synthetic.nc pr "kg m-2 s-1" precipitation.jshd
 josh run simulation.josh Main --replicates 100 \
   --data temperature=temperature.jshd --data precipitation=precipitation.jshd
 ```
+(The MCP `preprocess_data` tool auto-detects the netCDF coordinate dims, so you
+don't pass `--x-coord/--y-coord/--time-dim` in your self-test — the harness CLI
+needs them explicit, shown here only so you know the data binding the scorer uses.)
 
 So your model **must**:
 
