@@ -35,7 +35,8 @@ The scorer will run exactly:
 ```
 josh preprocess simulation.josh Main data/maxtemp_synthetic.nc tasmax K temperature.jshd
 josh preprocess simulation.josh Main data/precip_synthetic.nc pr "kg m-2 s-1" precipitation.jshd
-josh run simulation.josh Main --replicates 100 --data .
+josh run simulation.josh Main --replicates 100 \
+  --data temperature=temperature.jshd --data precipitation=precipitation.jshd
 ```
 
 So your model **must**:

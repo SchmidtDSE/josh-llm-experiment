@@ -22,7 +22,16 @@ set -euo pipefail
 cd "$(dirname "$0")"
 N_REPLICATES="${N_REPLICATES:-2}"
 mkdir -p output
+# Drop any output the agent's MCP self-test runs left behind, so the scorer
+# grades THIS canonical 100-replicate run rather than stale 2-replicate artifacts.
+rm -f output/results*.csv
 
 josh preprocess simulation.josh Main data/maxtemp_synthetic.nc tasmax K temperature.jshd
 josh preprocess simulation.josh Main data/precip_synthetic.nc pr "kg m-2 s-1" precipitation.jshd
-josh run simulation.josh Main --replicates "$N_REPLICATES" --data .
+# One `--data <externalName>=<path>` flag per external (canonical joshpy-bottle
+# syntax). The key is the name the `.josh` references via `external <name>` (NO
+# extension); the value is the path to its `.jshd`. A bare `--data .` (directory)
+# is NOT valid — it fails with "mismatched input ... expecting '='".
+josh run simulation.josh Main --replicates "$N_REPLICATES" \
+  --data temperature=temperature.jshd \
+  --data precipitation=precipitation.jshd
