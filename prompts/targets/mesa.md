@@ -2,5 +2,4 @@ Implement this using the `Mesa` 3.x Python framework (already installed). Use `M
 
 `./run.sh` should take the workspace from its initial state and complete the task end-to-end. Whatever steps your implementation needs must live inside `./run.sh`. The scorer invokes it exactly once and reads `./output/`. Your implementation should use only python or bash in `./run.sh`, but only what is necessary to invoke your `Mesa` implementation. 
 
-
 Documentation: https://mesa.readthedocs.io/stable
