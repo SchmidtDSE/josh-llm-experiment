@@ -56,7 +56,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PATTERN = "runs/minihl-*"
 MODELS_YAML = REPO_ROOT / "config" / "models.yaml"
-KNOWN_TARGETS = ("josh", "mesa")
+KNOWN_TARGETS = ("josh", "mesa", "josh-mcp")
 
 # Column order. Stable so downstream notebooks can rely on it.
 ROW_FIELDS = [
@@ -142,7 +142,10 @@ def _load_model_short_names() -> list[str]:
 
 
 _MODEL_SHORT_NAMES = _load_model_short_names()
-_CELL_ID_RE = re.compile(r"^(?P<model>.+)-(?P<target>josh|mesa)(?:-r(?P<rep>\d+))?$")
+# Target alternation lists `josh-mcp` before `josh` so the longer slug wins
+# (otherwise `claude-josh-mcp-r4` would parse target=`josh` + leftover `-mcp-r4`
+# and fail the shape check). Keep new hyphenated targets ahead of their prefix.
+_CELL_ID_RE = re.compile(r"^(?P<model>.+)-(?P<target>josh-mcp|josh|mesa)(?:-r(?P<rep>\d+))?$")
 
 
 def _parse_cell_id(batch_tag: str, cell_id: str) -> tuple[str, str, int]:
