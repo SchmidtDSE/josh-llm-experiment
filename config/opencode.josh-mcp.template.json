@@ -22,7 +22,7 @@
       "type": "local",
       "command": ["josh", "mcp"],
       "enabled": true,
-      "timeout": 600000,
+      "timeout": 120000,
       "environment": {
         "JAVA_TOOL_OPTIONS": "-Xmx8g"
       }

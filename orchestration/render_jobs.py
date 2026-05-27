@@ -88,21 +88,26 @@ DEFAULT_TTL_SECONDS_AFTER_FINISHED = 86400  # 24h — long enough for log fetch
 DEFAULT_WALL_CLOCK_BACKSTOP_SEC = 1800
 DEFAULT_IDLE_THRESHOLD_SEC = 120
 
-# Request vs limit are now asymmetric: requests stay at 8 CPU / 16 GiB
-# (sized for the typical happy-path observed across sonnet-mesa /
-# claude-mesa / claude-josh — peak <9 GiB working set) and limits go
-# up to 16 CPU / 32 GiB to give memory-hungry models burst headroom.
-# Burstable QoS (request<limit) means Autopilot reserves the request
-# only, so we don't pay for the burst envelope unless the cell uses it.
-# JVM heap cap (MaxRAMPercentage=50) auto-scales to 16 GiB max heap
-# under the new limit — double the prior cap for josh validate/preprocess.
-# minimax-josh peaked at 10.4 GiB working set with the prior 16 GiB
-# limit at the moment of OOM, so this should give the ~5+ GiB headroom
-# needed past that point.
+# Memory is set request==limit (Guaranteed QoS for memory) on purpose. The
+# container JVMs run -XX:MaxRAMPercentage=50, which sizes max heap to 50% of
+# the *limit*; under burstable QoS (request<limit) Autopilot sizes the node to
+# the *request*, so the JVM heap target can exceed the node's reservation and
+# the pod gets memory-evicted (observed: agent at ~16.7 GiB on a 16Gi-req /
+# 32Gi-limit cell). request==limit closes that gap. CPU stays burstable —
+# CPU is throttled, never OOM-killed.
+#
+# Sizes (smaller than the prior 32Gi limits; validated by the josh-mcp smoke,
+# where the agent peaked ~1 GiB with the MCP JVM capped at -Xmx8g):
+#   agent  16Gi — opencode (~2g) + at most one JVM (josh-mcp caps it -Xmx8g;
+#                 josh/mesa JVMs get MaxRAMPercentage=50 → 8g).
+#   scorer 24Gi — the 100-replicate `josh run` is the heavy consumer
+#                 (MaxRAMPercentage=50 → 12g heap). minimax-josh historically
+#                 peaked ~10.4 GiB, so 24Gi/12g-heap gives headroom; watch
+#                 minimax-josh in the mini-run and bump to 32Gi if it OOMs.
 DEFAULT_AGENT_CPU_REQUEST = "8"
 DEFAULT_AGENT_CPU_LIMIT = "16"
 DEFAULT_AGENT_MEMORY_REQUEST = "16Gi"
-DEFAULT_AGENT_MEMORY_LIMIT = "32Gi"
+DEFAULT_AGENT_MEMORY_LIMIT = "16Gi"
 # Scorer matches the agent exactly — no per-cell sim time / OOM
 # differences from machine-shape mismatch when the sim is what we're
 # actually measuring (sim_wall_seconds is a headline metric per
@@ -110,8 +115,8 @@ DEFAULT_AGENT_MEMORY_LIMIT = "32Gi"
 # alongside the Josh JVM + 100×100 sim.
 DEFAULT_SCORER_CPU_REQUEST = "8"
 DEFAULT_SCORER_CPU_LIMIT = "16"
-DEFAULT_SCORER_MEMORY_REQUEST = "16Gi"
-DEFAULT_SCORER_MEMORY_LIMIT = "32Gi"
+DEFAULT_SCORER_MEMORY_REQUEST = "24Gi"
+DEFAULT_SCORER_MEMORY_LIMIT = "24Gi"
 
 VALID_TARGETS = ("josh", "mesa", "josh-mcp")
 
