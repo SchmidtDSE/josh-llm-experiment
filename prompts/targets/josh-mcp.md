@@ -12,16 +12,15 @@ script's declared config / externals). Pass absolute `/sandbox/...` paths to the
 `read`/`write`/`edit`/`glob`/`grep` work on your `/sandbox` workspace, and
 `webfetch` reads the Josh docs (below).
 
-You never create, edit, or invoke `./run.sh` — the scorer runs your model for you.
-Where a todo in `PLAN.md` says to fill in or invoke `./run.sh`, do the equivalent
-with the MCP tools: build your `.jshd` with `josh_preprocess_data` and self-test
-with `josh_run_simulation` (a 2-replicate run) until it completes and writes the
-expected CSV(s) under `output/`.
+Your model is run for you — you don't arrange execution yourself. Build your
+`.jshd` with `josh_preprocess_data` and self-test with `josh_run_simulation` (a
+2-replicate run), iterating on your `.josh` source until the run completes and
+writes the expected CSV(s) under `output/`.
 
-So the scorer can run your model, it must use fixed names: the entry file
+Use these fixed names so your model can be run as-is: the entry file
 `/sandbox/simulation.josh` with a simulation named `Main`, and two externals named
-`temperature` and `precipitation` (the scorer binds the preprocessed climate data
-to them by name). Everything else — units, the precipitation conversion, the output
-CSV layout — is specified below and applies to you unchanged.
+`temperature` and `precipitation` (the climate data binds to them by name).
+Everything else — units, the precipitation conversion, the output CSV layout — is
+specified below and applies to you unchanged.
 
 Documentation: https://raw.githubusercontent.com/SchmidtDSE/josh/refs/heads/dev/llms-full.txt

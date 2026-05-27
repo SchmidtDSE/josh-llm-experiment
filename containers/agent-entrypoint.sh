@@ -10,8 +10,9 @@
 #
 # Multi-invocation flow: 8 fresh-session `opencode run` calls in a row,
 # one per todo, against the same /sandbox workspace. State carries across
-# steps via /sandbox/PLAN.md (seeded from prompts/PLAN_TEMPLATE.md before
-# the agent starts) and any code the previous step left behind. Each
+# steps via /sandbox/PLAN.md (seeded from the per-environment
+# prompts/plans/<env>/PLAN_TEMPLATE.md before the agent starts) and any
+# code the previous step left behind. Each
 # call's prompt is the shared body (/opt/prompt_body.md) plus that step's
 # static injection (/opt/steps/step_NN_*.md).
 #

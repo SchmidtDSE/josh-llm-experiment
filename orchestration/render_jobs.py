@@ -167,8 +167,16 @@ def _render_opencode_json(model_slug: str, target: str) -> str:
     return json.dumps(json.loads(rendered), indent=2) + "\n"
 
 
-def _render_plan_md() -> str:
-    return (REPO_ROOT / "prompts" / "PLAN_TEMPLATE.md").read_text(encoding="utf-8")
+def _render_plan_md(target: str) -> str:
+    # The PLAN template (seeded into /sandbox/PLAN.md) is environment-specific:
+    # the full-tools arms (josh, mesa) author and invoke ./run.sh, while the
+    # constrained josh-mcp arm drives Josh through MCP and authors no run script.
+    # Picking the matching plan keeps the seeded todos from ever telling the
+    # mcp agent to write or run run.sh.
+    env_dir = "mcp" if target == "josh-mcp" else "bash"
+    return (REPO_ROOT / "prompts" / "plans" / env_dir / "PLAN_TEMPLATE.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def _parse_single_cell(spec: str) -> dict:
@@ -219,7 +227,7 @@ def _render_one(env, args, model: str, target: str, rep_idx: int, rep_count: int
     model_slug = _resolve_model(model)
     prompt_body = _render_prompt_body(target)
     opencode_json = _render_opencode_json(model_slug, target)
-    plan_md = _render_plan_md()
+    plan_md = _render_plan_md(target)
     cell_id = _cell_id(args.batch_tag, model, target, rep_idx=rep_idx, rep_count=rep_count)
     configmap_name = f"cell-config-{cell_id}"
 

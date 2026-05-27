@@ -60,7 +60,7 @@ the data-binding layer.
 
 ### Replication
 
-Run **independent stochastic replicates** of the full 100-year simulation. Replicates share identical climate inputs and identical initial conditions; they differ only in the per-tree per-step stochastic growth-offset draws (§Stochasticity below). The CSV is keyed by `(cell, year, replicate)` — one row per combination — so the same `(cell, year)` appears once per replicate in the output. The number of replicates is parameterised via the `N_REPLICATES` env var that `run.sh` reads (see the Implementation directive).
+Run **independent stochastic replicates** of the full 100-year simulation. Replicates share identical climate inputs and identical initial conditions; they differ only in the per-tree per-step stochastic growth-offset draws (§Stochasticity below). The CSV is keyed by `(cell, year, replicate)` — one row per combination — so the same `(cell, year)` appears once per replicate in the output. The number of replicates is parameterised — your implementation must accept the count it is given rather than hard-coding one (see the Implementation directive for how it is supplied in your environment).
 
 <br>
 

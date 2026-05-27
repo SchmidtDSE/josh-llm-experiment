@@ -56,8 +56,9 @@ validity.
 │   └── maxtemp_tulare_annual.nc
 ├── prompts/
 │   ├── BASE_PROMPT.md            # Full ForeverTree spec (the only rung used by headline runs)
-│   ├── SIDECAR.md                # Boilerplate footer appended to BASE_PROMPT
-│   ├── PLAN_TEMPLATE.md          # Seed for /sandbox/PLAN.md (multi-invocation working doc)
+│   ├── SIDECAR.md                # Boilerplate footer appended to BASE_PROMPT (env, inputs, output contract)
+│   ├── RUNSH.md                  # run.sh contract; appended for the full-tools arms only (josh, mesa)
+│   ├── plans/{bash,mcp}/PLAN_TEMPLATE.md  # Seed for /sandbox/PLAN.md — bash (full-tools) vs mcp (constrained) variants
 │   ├── FUZZY_JUDGE.md            # Q1/Q2/Q3 rubric for the in-Pod LLM judge
 │   ├── steps/                    # Per-todo step injections (8 files, repo-static)
 │   └── targets/{josh,mesa,josh-mcp}.md  # Per-target directive

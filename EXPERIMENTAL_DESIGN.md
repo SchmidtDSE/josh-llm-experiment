@@ -144,8 +144,12 @@ runs use the master prompt only.
 
 The agent phase splits this single prompt into **8 sequential opencode
 invocations against the same workspace**, one per todo from a fixed
-list in `prompts/PLAN_TEMPLATE.md` (seeded into `/sandbox/PLAN.md`).
-This is the multi-invocation planning flow described in
+list in `prompts/plans/<env>/PLAN_TEMPLATE.md` (seeded into
+`/sandbox/PLAN.md`). The plan comes in two environment-specific variants
+— `bash` for the full-tools arms (todos author and invoke `./run.sh`) and
+`mcp` for the constrained `josh-mcp` arm (todos build and self-test the
+model through the MCP tools, never `run.sh`). This is the
+multi-invocation planning flow described in
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) §Phase 5c. The
 working document `PLAN.md` is both an output artefact and a working
 reference re-read at the start of every sub-invocation.
@@ -339,8 +343,8 @@ The Job manifest sets `OPENROUTER_API_KEY`, `MODEL`, `TARGET`,
 `RUN_ID` from k8s Secrets / ConfigMap. The agent initContainer
 renders `prompt_body.md` (target directive + SIDECAR appended to
 BASE_PROMPT, plus the `run.sh` contract for the full-tools arms — see
-§Prompt), seeds `workspace/PLAN.md` from
-`prompts/PLAN_TEMPLATE.md`, and runs `agent-entrypoint.sh` which
+§Prompt), seeds `workspace/PLAN.md` from the per-environment
+`prompts/plans/<env>/PLAN_TEMPLATE.md`, and runs `agent-entrypoint.sh` which
 invokes `opencode run` eight times in a row — one per pre-committed
 step injection in `prompts/steps/step_NN_*.md` — with the per-step
 prompt assembled as `prompt_body + step_NN`. Each invocation uses a
