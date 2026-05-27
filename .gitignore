@@ -24,3 +24,8 @@ orchestration/rendered/
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+# Josh fat jars fetched by `pixi run get-jars` (scripts/get_jars.py). Large
+# rolling binaries; source of truth is joshsim.org/dist/<branch>, pinned by
+# the recorded .sha256.
+jar/
