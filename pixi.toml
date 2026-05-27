@@ -30,6 +30,16 @@ render = "python orchestration/render_jobs.py"
 apply = "./orchestration/k8s_apply.sh"
 # Pull a finished batch's artefacts from GCS into runs/<batch-tag>/.
 pull = "./orchestration/pull_artefacts.sh"
+# Re-hydrate one cell for inspection: pull its artefacts (incl. the
+# auto-generated transcript.md) and import each opencode step-session so you
+# can browse them in `opencode`. Usage: pixi run rehydrate <batch> <cell-id>.
+rehydrate = { cmd = """bash -c '
+set -e
+MINIO_PREFIX="$1" ./orchestration/pull_artefacts.sh "$1" >/dev/null
+shopt -s nullglob; n=0
+for f in "runs/$1/$2"/agent_meta/steps/step_*/session_export.json; do opencode import "$f"; n=$((n+1)); done
+echo "rehydrated $n session(s) for $2 -> browse: opencode (session list) | transcript: runs/$1/$2/transcript.md"
+' rehydrate {{ BATCH }} {{ CELL }}""", args = [{ arg = "BATCH" }, { arg = "CELL" }] }
 # Roll up per-cell scorer.json + fuzzy outputs into one CSV for analysis.
 aggregate = "python analysis/aggregate.py"
 # Open the headline notebook for analysis. `--no-browser` because the
