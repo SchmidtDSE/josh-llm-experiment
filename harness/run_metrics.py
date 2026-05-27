@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shutil
 import sys
 import traceback
 from pathlib import Path
@@ -29,6 +30,21 @@ from validators import acceptance, output_schema
 SCHEMA_VERSION = "phase6-v1"
 DEFAULT_TIMEOUT_S = 3600
 DEFAULT_ACCEPTANCE_RANGES = Path("/opt/harness/acceptance_ranges.json")
+
+
+def _materialize_josh_mcp_runscript(workspace: Path) -> None:
+    """Drop the harness's canonical run.sh into the workspace for the josh-mcp arm.
+
+    josh-mcp agents are constrained to Josh-via-MCP with no bash: they author only
+    Josh source and build `.jshd` via the MCP preprocess tool, never a run.sh. The
+    harness owns the run, so copy `run_josh_mcp.sh` (preprocess + run) to
+    `<workspace>/run.sh`, overwriting anything present, and the standard
+    `runner.run(./run.sh)` path scores it exactly like the other arms.
+    """
+    src = Path(__file__).resolve().parent / "run_josh_mcp.sh"
+    dst = workspace / "run.sh"
+    shutil.copyfile(src, dst)
+    dst.chmod(0o755)
 
 
 def _ordered_record(
@@ -98,7 +114,7 @@ def _ordered_record(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="run_metrics")
-    parser.add_argument("--target", required=True, choices=["josh", "mesa"])
+    parser.add_argument("--target", required=True, choices=["josh", "mesa", "josh-mcp"])
     parser.add_argument("--workspace", type=Path, default=Path("/sandbox"))
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S)
     parser.add_argument(
@@ -128,6 +144,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         harness_errors.append(f"acceptance ranges read:\n{traceback.format_exc()}")
         ranges = {}
+
+    # josh-mcp: the agent never authored run.sh — supply the harness's canonical
+    # one (preprocess + run) before the runner times it.
+    if args.target == "josh-mcp":
+        try:
+            _materialize_josh_mcp_runscript(workspace)
+        except Exception:
+            harness_errors.append(f"materialize josh-mcp run.sh:\n{traceback.format_exc()}")
 
     try:
         runner_out = runner.run(workspace, args.timeout)

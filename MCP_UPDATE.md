@@ -6,10 +6,38 @@
 > server (Phase 1)") lands the `mcp` subcommand on Josh `dev` — stdio transport,
 > a local in-JVM backend, and **four tools** (`validate_simulation`,
 > `discover_config`, `preprocess_data`, `run_simulation`), bundling MCP SDK
-> `1.1.3`. No code in *this* repo has changed yet; this doc is the prep artifact
-> that the implementation PR will follow, now reconciled against the landed
-> server surface (see §4 and §10 for the one consequential gap: `run_simulation`
-> has no `--data`).
+> `1.1.3`. This doc was the prep artifact; the arm is now implemented on
+> `feat/k8s-refactor` — see the addendum below, which supersedes the body where
+> they conflict.
+
+## Implementation addendum (2026-05-27)
+
+The body below is the pre-implementation design. Two things changed by the time
+the arm was built and **supersede the body where they conflict**:
+
+1. **`run_simulation` gained a `data` arg** (SchmidtDSE/josh#440 commit `6c1e5e9c`):
+   a map of `external-name.jshd → path` (omit to resolve from the working dir). So
+   the agent **fully self-tests** `validate → preprocess → run` via MCP. The
+   "`run_simulation` has no `--data`" limitation in §4.2, §7, and §10 is
+   **resolved** — disregard it.
+2. **The agent does not author `run.sh`.** It writes only Josh source + builds
+   `.jshd` via the MCP preprocess tool; the **scorer materializes a canonical
+   `run.sh`** ([harness/run_josh_mcp.sh](harness/run_josh_mcp.sh): `preprocess ×2 +
+   run --data .`) per a naming convention (`simulation.josh` / `Main` /
+   `external temperature` + `precipitation`) that the directive
+   ([prompts/targets/josh-mcp.md](prompts/targets/josh-mcp.md)) enforces. Those
+   commands are byte-identical to the agent's MCP self-test, so a green self-test
+   predicts a green scoring run.
+
+Other as-built facts: the constrained palette **keeps `webfetch`** (only `bash` is
+dropped); scorer routing treats `josh-mcp == josh`
+([harness/conformance.py](harness/conformance.py), [harness/_files.py](harness/_files.py),
+[harness/run_metrics.py](harness/run_metrics.py)); the `preprocess` units are the
+known `K` / `kg m-2 s-1` from
+[data/generate_synthetic_climate.py](data/generate_synthetic_climate.py) (no dry run
+needed); and [data/validate_synthetic_climate.py](data/validate_synthetic_climate.py)
+is **stale** (asserts the phase-5 31-year / 2024–2054 grid) — the committed data is
+101 years (2024–2124) per the generator.
 
 ## 1. Goal & motivation
 

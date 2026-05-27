@@ -26,6 +26,8 @@ _EXTENSIONS_BY_TARGET = {
     "mesa": (".py",),
     # `.jshd` is binary preprocessed data, not source — see module docstring.
     "josh": (".josh",),
+    # josh-mcp produces identical Josh source; only the agent's tool palette differs.
+    "josh-mcp": (".josh",),
 }
 
 

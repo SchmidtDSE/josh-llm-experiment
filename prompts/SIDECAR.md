@@ -23,6 +23,22 @@ Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings ove
 - `data/maxtemp_synthetic.nc` — data variable `tasmax` (annual maximum air temperature, K).
 - `data/precip_synthetic.nc`  — data variable `pr` (precipitation flux).
 
+#### Grid and coverage
+
+Both files share one regular lat/lon grid (evenly spaced). You do not need to open
+the files to discover their shape — it is fixed and given here:
+
+| Dimension       | Size | Range                              |
+|-----------------|------|------------------------------------|
+| `calendar_year` | 101  | 2024–2124 (integer year, not CF time) |
+| `lat`           | 31   | 35.80 → 36.73 °N                   |
+| `lon`           | 50   | −119.52 → −117.98 °E               |
+
+Native grid = 31 × 50 = 1 550 cells per year. The fields are smooth, separable
+gradients: `tasmax` ≈ 285 K at the northern edge → ≈ 315 K at the southern edge in
+2024, warming +0.05 K/yr (≈ +5 K by 2124); `pr` ≈ 250 mm/yr at the eastern edge →
+≈ 550 mm/yr at the western edge (±40 mm/yr interannual, no long-term trend).
+
 #### Temperature
 
 The `tasmax` variable is in **Kelvin (K)**. Use the values directly. The growth equation's `T_min` and `T_max` defaults are already in Kelvin, so no unit conversion is needed; pass the netCDF values straight into the temperature impact calculation.

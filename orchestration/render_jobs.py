@@ -113,7 +113,7 @@ DEFAULT_SCORER_CPU_LIMIT = "16"
 DEFAULT_SCORER_MEMORY_REQUEST = "16Gi"
 DEFAULT_SCORER_MEMORY_LIMIT = "32Gi"
 
-VALID_TARGETS = ("josh", "mesa")
+VALID_TARGETS = ("josh", "mesa", "josh-mcp")
 
 
 def _slugify(s: str) -> str:
@@ -145,8 +145,12 @@ def _render_prompt_body(target: str) -> str:
     )
 
 
-def _render_opencode_json(model_slug: str) -> str:
-    template = (REPO_ROOT / "config" / "opencode.template.json").read_text(encoding="utf-8")
+def _render_opencode_json(model_slug: str, target: str) -> str:
+    # josh-mcp gets a constrained palette + an MCP `josh` server block; the
+    # other arms get the full default tool palette. Only the template differs;
+    # the model-slug substitution is identical.
+    name = "opencode.josh-mcp.template.json" if target == "josh-mcp" else "opencode.template.json"
+    template = (REPO_ROOT / "config" / name).read_text(encoding="utf-8")
     rendered = template.replace("${RESOLVED_MODEL_ID}", model_slug)
     # Re-emit canonical JSON so the ConfigMap doesn't carry whitespace-only diffs.
     return json.dumps(json.loads(rendered), indent=2) + "\n"
@@ -203,7 +207,7 @@ def _cell_id(batch_tag: str, model: str, target: str, rep_idx: int = 0, rep_coun
 def _render_one(env, args, model: str, target: str, rep_idx: int, rep_count: int) -> tuple[str, str]:
     model_slug = _resolve_model(model)
     prompt_body = _render_prompt_body(target)
-    opencode_json = _render_opencode_json(model_slug)
+    opencode_json = _render_opencode_json(model_slug, target)
     plan_md = _render_plan_md()
     cell_id = _cell_id(args.batch_tag, model, target, rep_idx=rep_idx, rep_count=rep_count)
     configmap_name = f"cell-config-{cell_id}"

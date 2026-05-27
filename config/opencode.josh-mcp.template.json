@@ -1,0 +1,47 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openrouter": {
+      "options": {
+        "apiKey": "{env:OPENROUTER_API_KEY}"
+      }
+    },
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "{env:OLLAMA_HOST}/v1"
+      },
+      "models": {
+        "qwen2.5-coder:1.5b": {},
+        "qwen2.5-coder:7b": {}
+      }
+    }
+  },
+  "mcp": {
+    "josh": {
+      "type": "local",
+      "command": ["josh", "mcp"],
+      "enabled": true
+    }
+  },
+  "agent": {
+    "coder": {
+      "model": "${RESOLVED_MODEL_ID}",
+      "tools": {
+        "read":     true,
+        "write":    true,
+        "edit":     true,
+        "glob":     true,
+        "grep":     true,
+        "bash":     false,
+        "webfetch": true,
+        "task":     false,
+        "josh*":    true
+      },
+      "permission": {
+        "webfetch":           "allow",
+        "external_directory": "allow"
+      }
+    }
+  }
+}

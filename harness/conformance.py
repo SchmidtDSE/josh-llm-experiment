@@ -101,7 +101,8 @@ def check(workspace: Path, target: str) -> dict:
     workspace = workspace.resolve()
     if target == "mesa":
         out = _check_mesa(workspace)
-    elif target == "josh":
+    elif target in ("josh", "josh-mcp"):
+        # josh-mcp emits identical Josh artifacts (.josh + .jshd); same check.
         out = _check_josh(workspace)
     else:
         raise ValueError(f"unknown target: {target!r}")
