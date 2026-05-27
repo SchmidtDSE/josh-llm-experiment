@@ -126,8 +126,13 @@ measured as a separate signal, but is given no guidance on *how* to
 use it. The prompt body is [`prompts/BASE_PROMPT.md`](prompts/BASE_PROMPT.md);
 the per-target directive is at
 [`prompts/targets/{josh,mesa,josh-mcp}.md`](prompts/targets/); the operational
-footer (AI environment, inputs, success criteria, working-document
-contract) is at [`prompts/SIDECAR.md`](prompts/SIDECAR.md).
+footer (AI environment, inputs, output contract, working-document
+contract) is at [`prompts/SIDECAR.md`](prompts/SIDECAR.md). The `./run.sh`
+contract ([`prompts/RUNSH.md`](prompts/RUNSH.md) — the agent authors and
+executes `run.sh` as the measured unit of work) is appended only for the
+full-tools arms (`josh`, `mesa`); the constrained `josh-mcp` agent has no
+shell and never authors `run.sh` (the scorer runs its model), so it is
+omitted there to avoid contradicting that arm's directive.
 
 Earlier rounds of this design included a 1–5 rung prompt-detail
 ladder. We collapsed it to the single master prompt: at full detail
@@ -333,7 +338,8 @@ re-run see byte-identical Python, Java, Josh, and library versions.
 The Job manifest sets `OPENROUTER_API_KEY`, `MODEL`, `TARGET`,
 `RUN_ID` from k8s Secrets / ConfigMap. The agent initContainer
 renders `prompt_body.md` (target directive + SIDECAR appended to
-BASE_PROMPT), seeds `workspace/PLAN.md` from
+BASE_PROMPT, plus the `run.sh` contract for the full-tools arms — see
+§Prompt), seeds `workspace/PLAN.md` from
 `prompts/PLAN_TEMPLATE.md`, and runs `agent-entrypoint.sh` which
 invokes `opencode run` eight times in a row — one per pre-committed
 step injection in `prompts/steps/step_NN_*.md` — with the per-step

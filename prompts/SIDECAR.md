@@ -10,7 +10,7 @@ You are running inside a container with the following pre-installed:
 - **Eclipse Temurin 21 JRE**.
 - **The Josh CLI** as `josh` on `PATH`. Subcommands: `run`, `validate`, `preprocess`, `discoverConfig`, `inspectJshd`, `inspect-exports`, `server`, `runRemote`.
 
-You may invoke `./run.sh` freely to self-test. Use what is already installed; do not assume internet access for package installation.
+Use what is already installed; do not assume internet access for package installation.
 
 ### AI workspace
 
@@ -55,21 +55,9 @@ where `31_536_000` is the number of seconds in a 365-day year.
 
 ### Success criteria
 
-A single executable file `./run.sh` in the workspace root, plus whatever source files it invokes. When invoked:
+Your implementation must produce the output CSV(s) under `./output/`. **How that output is produced and run depends on your environment — see the Implementation directive above.**
 
-```sh
-cd /sandbox && ./run.sh
-```
-
-Your code must exit 0 and write `./output/results.csv`.
-
-**`./run.sh` is the unit of work being measured** — its wall-clock time is the headline cost metric for the experiment. It must do the **entire** workload: any preprocessing the chosen framework needs (e.g. Josh's `.jshd` build, or netCDF→DataFrame conversion for Mesa), the simulation, and emission of the output CSV(s). No "pre-step" the user is expected to run by hand. The contract is "one script, end-to-end."
-
-We've seeded `/sandbox/run.sh` for you — it's already executable and runs 2 replicates by default. **Fill in the body** with your preprocess + simulation invocation, using `"$N_REPLICATES"` for the replicate count. Two replicates is the self-test scale.
-
-Before you declare yourself done, execute `./run.sh` once and confirm it exits 0 and writes the output CSV(s) at the expected path. If it fails, fix the cause and re-run.
-
-The CSV is UTF-8, comma-separated, with a header row. Required data columns:
+`output/results.csv` (or per-replicate CSVs — see the layouts below) is UTF-8, comma-separated, with a header row. Required data columns:
 
 | Column          | Type   | Unit          |
 |-----------------|--------|---------------|
@@ -85,7 +73,7 @@ Plus a per-cell identifier — either a string column `cell_id` or the pair `pos
 **Two output layouts are accepted; pick whichever is natural for your framework:**
 
 - **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate (so a 1-replicate dev run still scores).
-- **One CSV per replicate** (Josh's canonical layout) at `output/results_{N}.csv` — `results_0.csv`, `results_1.csv`, and so on. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed. For Josh, set `exportFiles.patch = "file:///sandbox/output/results_{replicate}.csv"` and combine with `--replicates "$N_REPLICATES"`.
+- **One CSV per replicate** (Josh's canonical layout) at `output/results_{N}.csv` — `results_0.csv`, `results_1.csv`, and so on. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed. For Josh, set `exportFiles.patch = "file:///sandbox/output/results_{replicate}.csv"` and run with `--replicates` set to the replicate count.
 
 Total row count across whichever layout you pick: `n_cells × 100 years × N_REPLICATES`. Whether the year-2024 row reflects pre-growth state (`meanHeight = 0`) or post-growth state (`meanHeight ≈ Δh`) is up to your framework — pick whichever is natural.
 

@@ -279,6 +279,9 @@ path filter collapsed to a single `containers/**` glob.
 **What stays exactly the same:**
 - The prompt rendering pipeline (rung body + target directive +
   SIDECAR + per-step injection) — only content changes, not shape.
+  (The `josh-mcp` arm adds one conditional: the `run.sh` contract,
+  `prompts/RUNSH.md`, is appended for the full-tools arms only — see
+  §The josh-mcp arm.)
 - The 8-step multi-invocation flow — moves into the agent
   initContainer's entrypoint script untouched.
 - The opencode pin + `config/opencode.template.json` shape.
@@ -343,6 +346,7 @@ Inputs), not by poking the netCDFs — no dry run needed to learn them.
 | [orchestration/render_jobs.py](orchestration/render_jobs.py) | `VALID_TARGETS=("josh","mesa","josh-mcp")`; `_render_opencode_json` selects the josh-mcp template; memory defaults moved to `request==limit` (agent 16Gi, scorer 24Gi) to avoid the `MaxRAMPercentage` burst-gap eviction. |
 | `prompts/targets/josh-mcp.md` *(new)* | No-bash directive: drive Josh via `josh_*` MCP tools with absolute `/sandbox` paths; do not author `run.sh`; the naming convention above. |
 | [prompts/SIDECAR.md](prompts/SIDECAR.md) §AI Inputs | Descriptive grid/coverage spec sheet (shared by all arms). |
+| [prompts/SIDECAR.md](prompts/SIDECAR.md) §Success criteria + [prompts/RUNSH.md](prompts/RUNSH.md) *(new)* | The `run.sh` contract is factored out of SIDECAR into `RUNSH.md`; `render_jobs.py` appends it for full-tools arms only, so the no-shell `josh-mcp` agent isn't told to author/run `run.sh`. SIDECAR keeps the framework-neutral output/CSV contract. |
 | `harness/run_josh_mcp.sh` *(new, baked into scorer)* | The canonical run script (above). |
 | [harness/run_metrics.py](harness/run_metrics.py) | `--target` += `josh-mcp`; copies `run_josh_mcp.sh` → workspace `run.sh` before `runner.run` when target is josh-mcp. |
 | [harness/conformance.py](harness/conformance.py) | Dispatch `josh-mcp` → `_check_josh` (identical conformance keeps the contrast clean). |

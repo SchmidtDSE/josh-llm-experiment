@@ -145,9 +145,15 @@ def _render_prompt_body(target: str) -> str:
     rung = (REPO_ROOT / "prompts" / "BASE_PROMPT.md").read_text(encoding="utf-8")
     target_directive = (REPO_ROOT / "prompts" / "targets" / f"{target}.md").read_text(encoding="utf-8")
     sidecar = (REPO_ROOT / "prompts" / "SIDECAR.md").read_text(encoding="utf-8")
-    return (
-        f"{rung}\n\n## Implementation directive\n\n{target_directive}\n\n---\n\n{sidecar}"
-    )
+    body = f"{rung}\n\n## Implementation directive\n\n{target_directive}\n\n---\n\n{sidecar}"
+    # The `./run.sh` contract (prompts/RUNSH.md) is for the unconstrained arms
+    # only — josh/mesa author and execute run.sh themselves. The josh-mcp agent
+    # has no shell and never authors run.sh (the scorer runs its model), so
+    # appending the run.sh contract would directly contradict its directive.
+    if target != "josh-mcp":
+        runsh = (REPO_ROOT / "prompts" / "RUNSH.md").read_text(encoding="utf-8")
+        body += f"\n\n{runsh}"
+    return body
 
 
 def _render_opencode_json(model_slug: str, target: str) -> str:
