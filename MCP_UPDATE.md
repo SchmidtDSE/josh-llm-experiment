@@ -231,15 +231,17 @@ gets its jar from [scripts/install_josh.sh](scripts/install_josh.sh), which pins
 targets Josh **`dev`** — so `josh mcp` does **not** reach the agent image until
 #440 propagates `dev` → `main` *and* `install_josh.sh`'s pin is bumped to a build
 that includes it. Concretely, the probe is blocked until one of: (a) #440 merges
-and `dev`→`main` flows, then we bump the pin; or (b) we temporarily point
-`install_josh.sh` at a `dev`/PR build for the probe (it already honors
-`JOSH_JAR_URL`). `pixi run get-jars` ([scripts/get_jars.py](scripts/get_jars.py))
-fetches both rolling builds into `jar/<branch>/` and records the sha256 to pin —
-and confirms the gap empirically: as of 2026-05-27 the `dev` jar carries the MCP
-classes (`org/joshsim/mcp/*` + the bundled SDK) while `main` carries none. The
-four exposed tools are known (§1); `run_simulation`'s `--data` gap (§4.2) is the
-surface limitation to design around. Track the exact pinned build in the
-implementation PR.
+and `dev`→`main` flows, then we bump the pin; or (b) point `install_josh.sh` at
+the `dev` build now. **We've taken (b)** (2026-05-27, commit `320c81b` on
+`feat/k8s-refactor`): the shared base stage now defaults to the dev jar via a
+`JOSH_JAR_URL` build arg (Dockerfile:55), and CI confirms both `fortree-agent`
+and `fortree-scorer` bundle it — the built jar's sha256 (`2c42dcdf…`) matches the
+dev jar `pixi run get-jars` fetches, which carries the MCP classes
+(`org/joshsim/mcp/*` + the bundled SDK; `main` carries none). `pixi run get-jars`
+([scripts/get_jars.py](scripts/get_jars.py)) refreshes both rolling builds into
+`jar/<branch>/` with sha256 sidecars for local smoke / re-pinning. The four
+exposed tools are known (§1); `run_simulation`'s `--data` gap (§4.2) is the
+surface limitation to design around.
 
 ## 5. The netCDF spec sheet
 
