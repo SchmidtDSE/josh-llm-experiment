@@ -1,23 +1,33 @@
 #!/usr/bin/env bash
-# Install the Josh CLI: download the Josh fat jar, record its sha256 as the
-# reproducibility anchor (SchmidtDSE/josh has no tagged releases), drop a
-# wrapper at /usr/local/bin/josh so the CLI is on PATH.
+# Install the Josh CLI: download the Josh fat jar, verify it against a pinned
+# sha256, and drop a wrapper at /usr/local/bin/josh so the CLI is on PATH.
 #
-# Defaults to the rolling DEV build: it carries the `mcp` subcommand
-# (SchmidtDSE/josh#440), which `main` lacks until dev->main lands (not
-# soon). The Dockerfile passes JOSH_JAR_URL with the same default; override
-# it there with --build-arg to pin a different build. Idempotent:
-# re-running overwrites the jar with the current rolling build.
+# Defaults to the rolling DEV build (it carries the `mcp` subcommand,
+# SchmidtDSE/josh#440, which `main` lacks). The jar is a ROLLING artifact at
+# a fixed URL, so the Dockerfile pins JOSH_JAR_SHA256 and passes it here —
+# that does double duty: (1) reproducibility/integrity (fail if the rolling
+# jar isn't the build we expect), and (2) cache-busting — the `RUN` layer is
+# cached by command, not by remote content, so without a changing pin a
+# rebuild silently keeps a STALE jar. Bump JOSH_JAR_SHA256 in the Dockerfile
+# to intentionally move to a newer dev build.
 
 set -euo pipefail
 
 JOSH_JAR_URL="${JOSH_JAR_URL:-https://joshsim.org/dist/dev/joshsim-fat.jar}"
+JOSH_JAR_SHA256="${JOSH_JAR_SHA256:-}"
 JOSH_HOME="${JOSH_HOME:-/opt/josh}"
 
 mkdir -p "$JOSH_HOME"
 curl -fSL "$JOSH_JAR_URL" -o "$JOSH_HOME/joshsim-fat.jar"
-sha256sum "$JOSH_HOME/joshsim-fat.jar" > "$JOSH_HOME/joshsim-fat.jar.sha256"
-cat "$JOSH_HOME/joshsim-fat.jar.sha256"
+ACTUAL_SHA="$(sha256sum "$JOSH_HOME/joshsim-fat.jar" | awk '{print $1}')"
+if [ -n "$JOSH_JAR_SHA256" ] && [ "$ACTUAL_SHA" != "$JOSH_JAR_SHA256" ]; then
+  echo "ERROR: joshsim-fat.jar sha256 mismatch from $JOSH_JAR_URL" >&2
+  echo "  expected (pinned): $JOSH_JAR_SHA256" >&2
+  echo "  actual:            $ACTUAL_SHA" >&2
+  exit 1
+fi
+echo "$ACTUAL_SHA  joshsim-fat.jar" > "$JOSH_HOME/joshsim-fat.jar.sha256"
+echo "Josh jar sha256: $ACTUAL_SHA (pin ${JOSH_JAR_SHA256:-<unset>})"
 
 cat > /usr/local/bin/josh <<'WRAPPER'
 #!/usr/bin/env bash

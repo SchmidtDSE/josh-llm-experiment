@@ -52,14 +52,17 @@ RUN /tmp/install_java.sh && rm /tmp/install_java.sh
 # JAVA_OPTS to the `josh` wrapper (see scripts/install_josh.sh).
 ENV JAVA_TOOL_OPTIONS="-Xmx16g"
 
-# Josh CLI: rolling DEV fat jar — it carries the `mcp` subcommand
-# (SchmidtDSE/josh#440); the `main` build does not, and dev->main won't
-# land for a while, so we pin dev deliberately for now. sha256 is recorded
-# at build time as the reproducibility anchor. Pin back to main (or any
-# build) with --build-arg JOSH_JAR_URL=https://joshsim.org/dist/main/joshsim-fat.jar.
+# Josh CLI: DEV fat jar (carries the `mcp` subcommand, SchmidtDSE/josh#440),
+# pinned by sha256. The jar is a ROLLING artifact at a fixed URL, so the pin
+# is load-bearing: install_josh.sh fails on mismatch (integrity), and bumping
+# JOSH_JAR_SHA256 busts this RUN layer's cache (otherwise a rebuild keeps the
+# stale cached jar). Bump the sha when intentionally moving to a newer dev
+# build (fetch it via `pixi run get-jars`). Pin back to main with
+# --build-arg JOSH_JAR_URL=...main/joshsim-fat.jar JOSH_JAR_SHA256=<main sha>.
 ARG JOSH_JAR_URL=https://joshsim.org/dist/dev/joshsim-fat.jar
+ARG JOSH_JAR_SHA256=5f9199371af98bedb541dcbf85c614f9076b636d79883e3cd93aab74f16137e3
 COPY scripts/install_josh.sh /tmp/install_josh.sh
-RUN JOSH_JAR_URL="$JOSH_JAR_URL" /tmp/install_josh.sh && rm /tmp/install_josh.sh
+RUN JOSH_JAR_URL="$JOSH_JAR_URL" JOSH_JAR_SHA256="$JOSH_JAR_SHA256" /tmp/install_josh.sh && rm /tmp/install_josh.sh
 
 # Python scientific stack (mesa, numpy, pandas, scipy, xarray, netCDF4,
 # rasterio, tiktoken — pinned in requirements.txt). System python is 3.11.
