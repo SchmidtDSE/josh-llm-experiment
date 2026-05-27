@@ -18,7 +18,8 @@ version = "0.1.0"
 # Download/refresh the Josh fat jars (dev + main) into jar/<branch>/,
 # recording the sha256 anchor scripts/install_josh.sh uses. The `dev` jar is
 # the MCP-enabled build (SchmidtDSE/josh#440); use it to smoke-test `josh mcp`
-# locally or to capture a sha256 for a pinned image build. See MCP_UPDATE.md.
+# locally or to capture a sha256 for a pinned image build. See
+# IMPLEMENTATION_PLAN.md §The josh-mcp arm.
 get-jars = "python scripts/get_jars.py"
 # Render per-cell k8s Job manifests from a matrix CSV (or a single cell).
 # Args are passed through, e.g.:

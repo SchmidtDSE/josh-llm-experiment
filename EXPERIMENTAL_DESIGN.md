@@ -35,6 +35,13 @@ The fewer-degrees-of-freedom effect should be visible in both
 first-attempt success rate and in the internal-consistency metrics
 that catch silent spec violations (Δh > Δh_max, age != year, etc.).
 
+H1 is the headline. The design also carries a second, controlled
+contrast: a constrained-environment Josh arm (`josh-mcp`) that holds
+the target fixed and removes the agent's shell, measuring the **cost
+of constraint** within Josh. That arm and the partial-factorial
+framing it creates are described in §Targets; it is pre-registered as
+a question (a delta vs `josh`), not a competing hypothesis.
+
 Earlier rounds of this design distinguished a separate "recovery
 quality" hypothesis measured via a second-shot prompt with structural
 feedback. That hypothesis is now folded into H1: the multi-invocation
@@ -80,6 +87,9 @@ has to own:
   per-command allowlist), bash surfaces normally to the model. The
   bash surface itself is therefore unconstrained inside the container
   — the real policy boundary is at the network layer (next bullet).
+  The `josh-mcp` arm overrides this palette — `bash` off, plus the
+  Josh pipeline delivered through an MCP server opencode spawns (see
+  §Targets and §Tool palette).
 - **[OpenRouter][or]** is the inference gateway. A single API key
   covers the model panel; the OpenRouter slug pins the model.
 
@@ -115,7 +125,7 @@ told *which* tool to use (Josh or Mesa) so target-conformance can be
 measured as a separate signal, but is given no guidance on *how* to
 use it. The prompt body is [`prompts/BASE_PROMPT.md`](prompts/BASE_PROMPT.md);
 the per-target directive is at
-[`prompts/targets/{josh,mesa}.md`](prompts/targets/); the operational
+[`prompts/targets/{josh,mesa,josh-mcp}.md`](prompts/targets/); the operational
 footer (AI environment, inputs, success criteria, working-document
 contract) is at [`prompts/SIDECAR.md`](prompts/SIDECAR.md).
 
@@ -176,26 +186,76 @@ batch tag if any entry changes.
 
 ### Targets
 
-Two implementation targets per run, set via `TARGET` environment
+Three implementation targets per run, set via `TARGET` environment
 variable:
 
 - `josh` — generate a `.josh` model file plus any required `.jshd`
-  preprocessing config.
+  preprocessing config, with the full tool palette (bash, webfetch,
+  the Josh CLI).
 - `mesa` — generate a Python module implementing the model using the
-  Mesa 3.x framework.
+  Mesa 3.x framework, with the full tool palette.
+- `josh-mcp` — generate Josh DSL exactly like `josh`, but from a
+  **constrained** agent environment: no `bash`, and the Josh pipeline
+  reachable only through an MCP server opencode spawns as a stdio
+  subprocess. The agent authors `.josh` source and builds its `.jshd`
+  through typed MCP tool calls instead of poking at a shell. See
+  §Tool palette for the constrained runtime.
 
 The harness contract (input data location, expected output CSV path
-and columns) is identical for both.
+and columns) is identical for all three.
+
+#### A second, orthogonal factor: tool environment
+
+`josh` and `mesa` hold the agent's *environment* constant (full tool
+palette) and vary only the implementation target — the clean 1-factor
+design behind H1. `josh-mcp` introduces a second factor,
+**environment ∈ {full-tools, mcp-constrained}**, holding the target
+(Josh) fixed. There is no `mesa-mcp` — there is no Mesa MCP server —
+so this is not a clean 2×2 but an **L-shaped partial factorial**:
+three of the four `{josh, mesa} × {full, mcp}` cells are populated;
+`(mesa, mcp)` is empty by design.
+
+That geometry supports three pairwise contrasts, and it matters which
+claim each one backs:
+
+| Contrast | Holds fixed | Varies | Claim it backs |
+|---|---|---|---|
+| `josh` ↔ `mesa` | environment = full-tools | target | **H1** — DSL vs framework. **This is the headline number.** |
+| `josh` ↔ `josh-mcp` | target = Josh | environment | **Cost-of-constraint** — what removing the shell buys or costs, within Josh. Controlled. |
+| `josh-mcp` ↔ `mesa` | — | target *and* environment | **Product** claim only — the Josh-MCP workflow vs a generic Mesa dev loop. *Not* controlled (Mesa keeps bash). |
+
+The rule that protects the science: **never let `josh-mcp` ↔ `mesa`
+become the headline DSL-vs-framework figure.** It is a legitimate and
+arguably more compelling *product* story, but it confounds target with
+environment and is labeled as such wherever it appears.
+
+`josh-mcp` is pre-registered as a **question, reported as a delta vs
+`josh`**, not as a winner. Removing bash removes the agent's
+debug/iterate loop (no live `./run.sh`, no ad-hoc inspection), so the
+constrained arm could score *worse*. A small gap is the strong product
+result ("you don't need to hand the agent a shell"); a large gap is
+itself the interesting finding ("the MCP surface must expose more —
+e.g. an output-shape inspector — to be viable"). Either outcome is
+informative.
+
+Because `josh-mcp` reuses the Josh target, scoring treats it
+identically to `josh` (same conformance check, same ecology gate); the
+only thing that differs is the agent's runtime and how its `run.sh` is
+produced (§Run flow, §Tool palette).
 
 ### Sample size
 
-Default `RUNS=3` per (model × target) cell. The full headline
-experiment is 5 models × 2 targets × 3 runs = **30 generations**
-(each generation now itself is 8 opencode invocations under the
-multi-invocation flow, so 240 opencode invocations total). N can
-scale up freely within OpenRouter cost budget; the practical ceiling
-is set by the cost of any downstream manual review rather than the
-runs themselves. See §Open methodology questions below for sample-size
+Default `RUNS=3` per (model × target) cell. With three targets the
+full panel is 5 models × 3 targets × 3 runs = **45 generations** —
+the `josh-mcp` arm grows the target axis by 50% over the josh/mesa
+core (each generation is itself 8 opencode invocations under the
+multi-invocation flow, so 360 opencode invocations total). The
+headline DSL-vs-framework figure remains the `josh`↔`mesa` contrast
+over the full-tools cells; the `josh-mcp` cells add the
+cost-of-constraint and product contrasts (§Targets). N can scale up
+freely within OpenRouter cost budget; the practical ceiling is set by
+the cost of any downstream manual review rather than the runs
+themselves. See §Open methodology questions below for sample-size
 and target_conformance accounting considerations.
 
 Each run is a single agent container hosting the 8-step
@@ -232,6 +292,23 @@ empirical year-100 distribution from the reference simulator
 acceptance bands in [`harness/acceptance_ranges.json`](harness/acceptance_ranges.json);
 see [SCORING.md §Scoring axes](SCORING.md) for the regression-based
 gate built on top of those bands.
+
+Because the `josh-mcp` agent has no shell, it cannot inspect the
+netCDFs interactively (`ncdump`, `xarray.open_dataset`, …). So the
+input contract is stated **descriptively** in
+[`prompts/SIDECAR.md`](prompts/SIDECAR.md) §AI Inputs — file paths,
+variable names and units, grid dimensions and ranges (`calendar_year`
+101, `lat` 31, `lon` 50), the 2024–2123 simulation window, and the
+separable gradients — enough for any arm to bind the data without
+opening the files. The spec sheet is **descriptive-only**: it omits
+the spatial-aggregation recipe and any data-binding code, which are
+part of the task the experiment measures. It is shared by **all**
+arms, not just `josh-mcp` — if only the constrained arm received it,
+the `josh`↔`josh-mcp` contrast would differ in both tool access *and*
+information and become uninterpretable. Giving it to every arm keeps
+that contrast a clean tools-only comparison; the cost is that headline
+numbers are not comparable to pre-spec-sheet batches, so the batch tag
+is bumped and all three arms are re-baselined together.
 
 For the headline run, the plan is to swap back to a real-world
 dataset once a well-labeled source is available — at which point the
@@ -274,6 +351,14 @@ Installed Python and Java package source is readable on disk.
 Network access is constrained by opencode's `webfetch` allowlist;
 the realised URL set is recorded in `trajectory.jsonl` and is the
 sole egress observation layer (see §Egress observability).
+
+For `josh-mcp` cells the agent runs under the constrained palette
+(§Tool palette): no `bash`, the Josh pipeline via MCP. It self-tests
+by calling `josh_run_simulation` rather than executing `./run.sh`
+(which it cannot), and its deliverable is Josh source plus the `.jshd`
+it builds via `josh_preprocess_data`. The scorer materializes the
+canonical `run.sh` for these cells at scoring time (step 3), so the
+wall-clock cost metric stays measured the same way across all arms.
 
 A cell-total wall-clock backstop (`WALL_CLOCK_BACKSTOP_SEC`, default
 1800s; bump to 3600s for headline runs given 27–39 min observed cell
@@ -550,6 +635,46 @@ validity section above. If a future batch surfaces evidence of
 indirect-egress abuse, a Pod-level `NetworkPolicy` or cluster-wide
 Cloud DNS logging can be reintroduced without reverting the rest of
 the refactor.
+
+### The josh-mcp constrained palette
+
+The `josh-mcp` arm renders a sibling opencode config,
+[`config/opencode.josh-mcp.template.json`](config/opencode.josh-mcp.template.json),
+that differs from the shared template in three ways:
+
+- **`bash` is disabled.** The agent has no shell — it cannot run
+  `./run.sh`, `ncdump`, or any ad-hoc command. (`webfetch` stays
+  enabled, so the agent still reads the Josh docs.)
+- **An MCP server block is added.** opencode spawns `josh mcp` as a
+  local stdio subprocess; the Josh fat jar's `mcp` subcommand
+  (from [SchmidtDSE/josh#440](https://github.com/SchmidtDSE/josh/pull/440))
+  exposes four tools that surface to the agent as
+  `josh_validate_simulation`, `josh_preprocess_data`,
+  `josh_run_simulation`, and `josh_discover_config`.
+- **`"josh*": true`** exposes those tools to the `coder` agent;
+  `read`/`write`/`edit`/`glob`/`grep`/`webfetch` stay on, `task` stays
+  off.
+
+| Tool | `josh` / `mesa` | `josh-mcp` |
+| ---- | --------------- | ---------- |
+| `read`/`write`/`edit`/`glob`/`grep` | on | on |
+| `webfetch` | on | on |
+| `bash` | on | **off** |
+| `task` | off | off |
+| `josh_*` (MCP) | — | **on** |
+
+So the model drives the Josh pipeline — validate, preprocess a netCDF
+into a `.jshd`, run a simulation — through a typed tool surface rather
+than a shell, mirroring the real Josh product direction (Josh exposed
+as an MCP tool a model can call). This isolates "just the Josh parts"
+of the agent's loop. Because the constrained agent cannot author or
+execute `./run.sh`, the **harness supplies the canonical `run.sh`** for
+`josh-mcp` cells — the agent's deliverable is Josh source plus the
+`.jshd` it builds via MCP, and the scorer materializes a fixed run
+script keyed to a naming convention the directive enforces
+(`simulation.josh` / simulation `Main` / `external temperature` +
+`precipitation`). See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
+for how that script is built and wired.
 
 ## Stopping conditions
 

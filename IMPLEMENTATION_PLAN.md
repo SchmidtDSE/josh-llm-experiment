@@ -20,7 +20,9 @@ document is a navigation map, not a complete change history.
 > and the post-PR6 workflow was smoke-validated end-to-end on
 > `sonnet × {josh, mesa}` (batch `pr6-smoke-20260526`; both cells ran,
 > conformed, β≈1.0 / R²≈0.9999). PR7 (headline batch) and PR8 (merge to
-> `dev`) follow. The integration branch is now 68+ commits ahead of
+> `dev`) follow. A third experiment target, `josh-mcp`, was built on
+> this branch after PR6 (see §The josh-mcp arm) and folds into the
+> headline panel. The integration branch is now 70+ commits ahead of
 > `dev`. The pre-Phase-6 local-orchestration architecture
 > (per-cell shell scripts + dnsmasq sidecar + host-side report
 > renderers) is preserved in git history; see PRs #34/#36/#40/#41/#45
@@ -55,7 +57,8 @@ per-cell k8s Job (one Pod):
    enforced.
 
 host (devcontainer-friendly):
-└── pixi env exposes: render, apply, pull, aggregate, lab.
+└── pixi env exposes: get-jars, render, apply, pull, rehydrate,
+    aggregate, lab.
 ```
 
 Pinned versions in [config/VERSIONS.md](config/VERSIONS.md). Python
@@ -282,6 +285,107 @@ path filter collapsed to a single `containers/**` glob.
 - The five-model panel pin and OpenRouter slug resolution.
 - The local `analysis/` workflow: pull bucket → pandas → notebook.
 
+### The `josh-mcp` arm (third target)
+
+A third experiment target, `josh-mcp`, lands on this branch after the
+PR1–6 series. It generates Josh DSL exactly like `josh` but runs the
+agent under a **constrained** opencode palette — no `bash`, with the
+Josh pipeline reachable only through an MCP server. The *methodology*
+(the environment factor, the L-shaped partial factorial, the three
+contrasts, and the "never let `josh-mcp`↔`mesa` be the headline" rule)
+lives in [EXPERIMENTAL_DESIGN.md §Targets](EXPERIMENTAL_DESIGN.md);
+this section is the engineering build-state.
+
+**MCP server (consumed, not built).** The Josh fat jar grows an `mcp`
+stdio subcommand in [SchmidtDSE/josh#440](https://github.com/SchmidtDSE/josh/pull/440)
+(base `dev`, MCP SDK 1.1.3), exposing four tools —
+`validate_simulation`, `discover_config`, `preprocess_data`,
+`run_simulation` (the last gained a `data` arg, a map of
+`external-name.jshd → path`, in commit `6c1e5e9c`). opencode spawns it
+via `command: ["josh", "mcp"]` — the wrapper forwards `mcp` to the jar
+like any other subcommand. The tools surface to the agent as
+`josh_validate_simulation`, `josh_preprocess_data`,
+`josh_run_simulation`, `josh_discover_config`.
+
+**The agent does not author `run.sh`.** Its deliverable is Josh source
+(`simulation.josh`) plus the `.jshd` it builds via
+`josh_preprocess_data`; it self-tests with `josh_run_simulation`
+(2 replicates) since it has no shell to run `./run.sh`. The **scorer
+materializes a canonical `run.sh`** from
+[harness/run_josh_mcp.sh](harness/run_josh_mcp.sh) (baked into
+`fortree:scorer`, copied over the workspace `run.sh` before the timed
+run): `josh preprocess ×2` (`tasmax` as `K`, `pr` as `kg m-2 s-1`)
+then `josh run --replicates N --data temperature.jshd=… --data
+precipitation.jshd=…`. Those commands are byte-identical to the
+agent's MCP self-test, so a green self-test predicts a green scoring
+run. The `--data` key keeps the `.jshd` extension on purpose — it
+selects the deserialization strategy; drop it and josh XZ-decodes a
+plain `.jshd` and dies mid-sim. The harness `run.sh` only works if the
+agent honors the naming convention the directive enforces
+([prompts/targets/josh-mcp.md](prompts/targets/josh-mcp.md)): entry
+`simulation.josh`, simulation `Main`, `external temperature` +
+`precipitation`, in-model `× 31_536_000` precip→mm/yr, output via
+`exportFiles.patch = "file:///sandbox/output/results_{replicate}.csv"`.
+If it doesn't, the run fails → `did_run=false` (still an informative
+cell — conformance and `josh validate` still run).
+
+**Units are known facts, not discovered.** `tasmax`→`K`,
+`pr`→`kg m-2 s-1` come straight from
+[data/generate_synthetic_climate.py](data/generate_synthetic_climate.py);
+the constrained agent reads them from the SIDECAR spec sheet (§AI
+Inputs), not by poking the netCDFs — no dry run needed to learn them.
+
+**Integration touch points (as built):**
+
+| Where | Change |
+|---|---|
+| `config/opencode.josh-mcp.template.json` *(new)* | Constrained palette: `bash:false`, `webfetch:true`, `task:false`, `"josh*":true`, plus the `mcp.josh` local-server block (`timeout:120000`, `JAVA_TOOL_OPTIONS=-Xmx8g` to cap the MCP JVM). |
+| [orchestration/render_jobs.py](orchestration/render_jobs.py) | `VALID_TARGETS=("josh","mesa","josh-mcp")`; `_render_opencode_json` selects the josh-mcp template; memory defaults moved to `request==limit` (agent 16Gi, scorer 24Gi) to avoid the `MaxRAMPercentage` burst-gap eviction. |
+| `prompts/targets/josh-mcp.md` *(new)* | No-bash directive: drive Josh via `josh_*` MCP tools with absolute `/sandbox` paths; do not author `run.sh`; the naming convention above. |
+| [prompts/SIDECAR.md](prompts/SIDECAR.md) §AI Inputs | Descriptive grid/coverage spec sheet (shared by all arms). |
+| `harness/run_josh_mcp.sh` *(new, baked into scorer)* | The canonical run script (above). |
+| [harness/run_metrics.py](harness/run_metrics.py) | `--target` += `josh-mcp`; copies `run_josh_mcp.sh` → workspace `run.sh` before `runner.run` when target is josh-mcp. |
+| [harness/conformance.py](harness/conformance.py) | Dispatch `josh-mcp` → `_check_josh` (identical conformance keeps the contrast clean). |
+| [harness/_files.py](harness/_files.py) | `_EXTENSIONS_BY_TARGET["josh-mcp"] = (".josh",)` so LOC/entropy work. |
+
+`job.yaml.j2`, `scorer-and-upload.sh`, and the fuzzy judge need no
+change — `target` flows through as a label and a `--target` arg, and
+the judge reads the (now harness-canonical) `run.sh`, which still
+carries the CLI calls.
+
+**Image dependency: the agent jar must carry `mcp`.** `josh mcp` only
+works if the image bundles a Josh build with the `McpCommand`
+subcommand. #440 targets `dev`, which won't flow to `main` for a
+while, so [scripts/install_josh.sh](scripts/install_josh.sh) and the
+Dockerfile base stage **default to the rolling `dev` jar**
+(`JOSH_JAR_URL`), pinned by `JOSH_JAR_SHA256`. The pin does double
+duty: integrity (fail on mismatch) and **cache-busting** — the `RUN`
+layer is cached by command, not by remote content, so without a
+changing pin a rebuild silently keeps a stale jar (this bit us once: a
+rebuild kept a km-grid-buggy jar). Bump the sha to move to a newer dev
+build; `pixi run get-jars` ([scripts/get_jars.py](scripts/get_jars.py))
+fetches dev+main into `jar/<branch>/` with sha256 sidecars for local
+smoke / re-pinning. Pin back to `main` with
+`--build-arg JOSH_JAR_URL=…/main/joshsim-fat.jar JOSH_JAR_SHA256=<main sha>`.
+
+**Status.** The arm is wired and the pipeline is proven end-to-end on
+the cluster: the harness `run.sh` produces `exit 0`, the full row
+count, no XZ error, and runs in a few minutes at 100 replicates under
+24Gi scorer memory with no OOM; the MCP toolchain runs clean
+(validate/preprocess/run all complete, no bash, no tool timeouts). It
+is staged for a mini-panel —
+[orchestration/matrix-mini.csv](orchestration/matrix-mini.csv):
+`{minimax, claude} × {josh, mesa, josh-mcp} × 5` = 30 cells — gated
+behind a single-cell smoke
+([orchestration/matrix-smoke.csv](orchestration/matrix-smoke.csv)).
+
+**Known stale artifact:** [data/validate_synthetic_climate.py](data/validate_synthetic_climate.py)
+still asserts the phase-5 31-year / 2024–2054 grid; the committed data
+is 101 years (2024–2124) per the generator. It is a human/CI
+maintenance script the agent never runs, so it does not affect runs,
+but it should be refreshed before it is trusted as a spec-sheet
+validator.
+
 ### Sequencing
 
 **Branching strategy.** All PRs in this series land on the long-lived
@@ -364,7 +468,9 @@ path broken on `dev` if landed there directly.
 7. **Headline batch.** Submit the full panel as a k8s Indexed Job.
    Batch-tag suggestion: `headline-k8s-<date>`. This is the
    reportable batch — phase-5c artefacts are abandoned, not compared
-   against.
+   against. The panel now spans three targets (`josh`, `mesa`,
+   `josh-mcp`); a held mini-panel (`matrix-mini.csv`, 30 cells)
+   de-risks the josh-mcp plumbing before the full run.
 8. **Merge `feat/k8s-refactor` → `dev`.** Final integration. Done
    only after PRs 1–7 have all landed on the integration branch,
    smoke CI is green on it, and the headline batch has produced the

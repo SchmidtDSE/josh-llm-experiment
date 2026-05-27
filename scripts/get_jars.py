@@ -7,15 +7,18 @@ has no joshpy dependency and pulls jars the same way the image build does:
 SchmidtDSE/josh publishes rolling per-branch fat jars at
 `https://joshsim.org/dist/<branch>/joshsim-fat.jar` (the project has no
 tagged releases, so sha256 is the reproducibility anchor). See
-scripts/install_josh.sh, which bakes the `main` jar into the agent/scorer
+scripts/install_josh.sh, which bakes the `dev` jar into the agent/scorer
 images at build time.
 
 Two builds are fetched:
 
   - dev  — the rolling `dev` branch build. As of 2026-05 this is the build
-           that carries the `mcp` subcommand (SchmidtDSE/josh#440), so it's
-           the one to smoke-test the Josh MCP server with (see MCP_UPDATE.md).
-  - main — the rolling stable build install_josh.sh uses by default.
+           that carries the `mcp` subcommand (SchmidtDSE/josh#440), and it
+           is what install_josh.sh / the image build use by default — the
+           experiment runs on `dev` (see IMPLEMENTATION_PLAN.md §The
+           josh-mcp arm).
+  - main — the rolling stable build, fetched only as a reference / for
+           pinning back to `main` if we ever leave `dev`.
 
 Each jar lands at jar/<branch>/joshsim-fat.jar (gitignored) with a matching
 .sha256 sidecar in the exact format install_josh.sh records, so a hash
