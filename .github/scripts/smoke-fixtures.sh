@@ -11,10 +11,12 @@
 # this script. To add a fixture, drop a results.csv + run.sh under
 # reference/broken/<name>/ and append a row to FIXTURES.
 #
-# Under the phase5a schema validator:
+# Under the phase6 schema validator:
 # - Schema validation is a gate, not a substantive check. NaN rows are
 #   filtered (counted via csv_rows_dropped_nan), not failed. Missing
 #   required columns and missing-target-year still fail the gate.
+# - Target year is 2123 (year 100 of a 2024-start, 100-year simulation),
+#   matching harness/acceptance_ranges.json.
 set -euo pipefail
 
 SCORER_IMAGE="${1:-fortree:scorer}"
@@ -23,10 +25,11 @@ SCORER_IMAGE="${1:-fortree:scorer}"
 FIXTURES=(
   "reference/golden|true||0"
   "reference/golden-josh-defaults|true||0"
+  "reference/golden-per-replicate|true||0"
   "reference/broken/nan-heights|true||15"
   "reference/broken/nan-precip|true||9"
   "reference/broken/schema|false|missing required columns|"
-  "reference/broken/missing-year|false|target year 2034|"
+  "reference/broken/missing-year|false|target year 2123|"
 )
 
 FAIL=0

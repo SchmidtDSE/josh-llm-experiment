@@ -50,6 +50,13 @@ def run(workspace: Path, timeout_s: int) -> dict:
         mode = script.stat().st_mode
         script.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
+    # Scorer's canonical run is at the 100-replicate contract. The
+    # workspace's run.sh defaults to N_REPLICATES=2 (cheap self-test
+    # scale, seeded into the workspace by the Pod's setup initContainer);
+    # we override here so the scorer measures the full workload exactly
+    # once per cell, never twice (agent self-tests stay at the default 2).
+    env = {**os.environ, "N_REPLICATES": "100"}
+
     start = time.monotonic()
     proc = subprocess.Popen(
         ["./run.sh"],
@@ -57,6 +64,7 @@ def run(workspace: Path, timeout_s: int) -> dict:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         preexec_fn=os.setsid,
+        env=env,
     )
     timed_out = False
     try:

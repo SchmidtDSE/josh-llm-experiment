@@ -1,33 +1,38 @@
 #!/usr/bin/env python3
-"""Aggregate one-or-more batch dirs into a single tidy CSV for analysis.
+"""Aggregate one-or-more pulled k8s batch dirs into a tidy CSV.
 
-Reads each batch's `manifest.jsonl` (one JSON object per cell, produced
-by launch_batch.aggregate_manifest) and attaches the sibling
-`scorer.fuzzy.json` + `time_breakdown.json` + per-step session exports
-per cell when present. Output is one row per (batch, cell) with every
-scalar metric flattened into a column.
+Walks each batch dir for per-cell `workspace/results/scorer.json` records
+and joins them against the sibling `agent_meta/` tree (per-step
+`step_meta.json` + `session_export.json`) to produce one row per
+(batch, cell). The k8s scorer container `mc mirror`s this tree directly
+from the Pod; there is no `manifest.jsonl` anymore — `scorer.json` is
+the source of truth.
 
 Two distinct wall-time fields are surfaced:
 
 - `sim_wall_seconds` — pure `./run.sh` execution time from the scorer
-  container (formerly `wall_time_seconds`; source: `scorer.json`).
-  Does NOT include LLM inference. The right metric for Josh-vs-Mesa
-  simulation-execution-cost comparisons.
+  container (source: `scorer.json.wall_time_seconds`). Does NOT include
+  LLM inference. The right metric for Josh-vs-Mesa simulation-execution-cost
+  comparisons.
 
-- `agent_wall_seconds` — full agent-phase wall time of the cell, from
-  `started_at` in `run_meta.json` to `ended_at` in `run_meta.final.json`.
-  Includes Docker boot + all 8 opencode invocations + LLM inference
-  + tool execution + idle.
+- `agent_wall_seconds` — agent-phase wall time computed from the per-step
+  `step_meta.json` timestamps (first step's `started_at` → last step's
+  `ended_at`). Spans all 8 opencode invocations plus inter-step overhead.
+  Does NOT include scorer time.
 
 Agent-phase cost / token / tool-call totals are summed across all 8
-per-step session exports (`agent_artifacts/steps/step_NN/session_export.json`).
-The cell-level `agent_artifacts/session_export.json` is final-step-only
-and undercounts cell totals by ~6× — see orchestration/extract_time_breakdown.py.
+per-step session exports under `agent_meta/steps/step_NN/session_export.json`.
+
+Label recovery: the k8s `scorer.json` doesn't carry `model` or `rep_idx`,
+so they are parsed from the cell-id (`<batch>-<model>-<target>[-r<N>]`).
+Short names are looked up against `config/models.yaml`. TODO: have
+`render_jobs.py` drop a `labels.json` next to `scorer.json` so this
+parser can be retired.
 
 Usage:
-  analysis/aggregate.py                      # default: all runs/batch-overnight-*
-  analysis/aggregate.py runs/batch-foo ...   # explicit batch dirs
-  analysis/aggregate.py --pattern 'runs/batch-headline-*'
+  analysis/aggregate.py                       # default: all runs/minihl-*
+  analysis/aggregate.py runs/minihl-... ...   # explicit batch dirs
+  analysis/aggregate.py --pattern 'runs/headline-*'
   analysis/aggregate.py --out analysis/snapshot.csv
 
 The output schema is stable: see ROW_FIELDS below. Re-running against
@@ -39,13 +44,19 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
+from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
 from typing import Iterable, Optional
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_PATTERN = "runs/batch-overnight-*"
+DEFAULT_PATTERN = "runs/minihl-*"
+MODELS_YAML = REPO_ROOT / "config" / "models.yaml"
+KNOWN_TARGETS = ("josh", "mesa", "josh-mcp")
 
 # Column order. Stable so downstream notebooks can rely on it.
 ROW_FIELDS = [
@@ -53,11 +64,7 @@ ROW_FIELDS = [
     "run_id",
     "model",
     "target",
-    "rung",
-    # cell-level orchestration outcomes
-    "agent_exit_code",
-    "scorer_exit_code",
-    "report_exit_code",
+    "rep_idx",
     # scorer headline gates
     "target_conformance",
     "csv_exists",
@@ -66,44 +73,43 @@ ROW_FIELDS = [
     "exit_code",
     "timed_out",
     "script_was_executable",
+    "csv_row_count",
     "csv_rows_dropped_nan",
-    # spec-parameter conformance
-    "height_year10_mean",
-    "occupancy_year10_mean",
+    "csv_source_layout",
+    # spec-parameter conformance (year 100 under phase6)
+    "height_year100_mean",
+    "occupancy_year100_mean",
     "height_in_range",
     "occupancy_in_range",
-    # internal consistency
-    "growth_rate_mean_m",
-    "growth_rate_negative_frac",
-    "growth_rate_above_ceiling_frac",
-    "age_step_off_one_frac",
-    "ntrees_change_frac",
-    "growth_temp_spearman",
-    "growth_precip_spearman",
-    "total_transition_obs",
+    # regression-based ecology gate (headline under phase6)
+    "regression_beta",
+    "regression_alpha",
+    "regression_r2",
+    "regression_n_observations",
+    "regression_fit_ok",
     # code stats
     "src_loc",
     "comment_loc",
     "imports_loc",
     "entropy_bits",
-    # multi-invocation
+    # multi-invocation diagnostics
     "steps_completed",
     "steps_total",
     "steps_all_eight_ok",
-    "plan_todos_checked",
-    "plan_todos_total",
-    # fuzzy judge
+    # fuzzy LLM judge — written by containers/run-judge.sh in the scorer
+    # container. Schema: fuzzy-v2. See prompts/FUZZY_JUDGE.md for Q1/Q2/Q3.
     "fuzzy_q1_answer",
     "fuzzy_q1_justification",
     "fuzzy_q2_observations",
+    "fuzzy_q3_answer",
+    "fuzzy_q3_justification",
     "fuzzy_parse_error",
     "fuzzy_judge_model",
+    "fuzzy_schema_version",
     # wall time + agent-phase cost / activity. See module docstring for
     # the sim_wall vs agent_wall distinction.
     "sim_wall_seconds",
     "agent_wall_seconds",
-    "agent_stream_stalled",
-    "agent_idle_killed",
     "agent_cost_usd",
     "agent_tokens_input",
     "agent_tokens_output",
@@ -124,55 +130,129 @@ def _safe_get(d: Optional[dict], *keys, default=None):
     return cur if cur is not None else default
 
 
-def _load_fuzzy(batch_dir: Path, run_id: str) -> dict:
-    fz_path = batch_dir / run_id / "scorer.fuzzy.json"
-    if not fz_path.is_file():
-        return {}
+def _load_model_short_names() -> list[str]:
+    """Read short-name keys from config/models.yaml. The cell-id parser
+    matches the longest short-name first so e.g. `ollama-qwen-coder-7b`
+    isn't mis-split as `ollama` + `-qwen-coder-7b`."""
+    if not MODELS_YAML.is_file():
+        raise SystemExit(f"missing {MODELS_YAML}")
+    data = yaml.safe_load(MODELS_YAML.read_text())
+    names = [k for k in data.keys() if isinstance(k, str)]
+    return sorted(names, key=len, reverse=True)
+
+
+_MODEL_SHORT_NAMES = _load_model_short_names()
+# Target alternation lists `josh-mcp` before `josh` so the longer slug wins
+# (otherwise `claude-josh-mcp-r4` would parse target=`josh` + leftover `-mcp-r4`
+# and fail the shape check). Keep new hyphenated targets ahead of their prefix.
+_CELL_ID_RE = re.compile(r"^(?P<model>.+)-(?P<target>josh-mcp|josh|mesa)(?:-r(?P<rep>\d+))?$")
+
+
+def _parse_cell_id(batch_tag: str, cell_id: str) -> tuple[str, str, int]:
+    """`<batch_tag>-<model>-<target>[-r<N>]` → (model, target, rep_idx)."""
+    if not cell_id.startswith(batch_tag + "-"):
+        raise ValueError(f"cell_id {cell_id!r} doesn't start with batch_tag {batch_tag!r}")
+    suffix = cell_id[len(batch_tag) + 1:]
+    m = _CELL_ID_RE.match(suffix)
+    if not m:
+        raise ValueError(f"cell_id {cell_id!r} (suffix {suffix!r}) doesn't match expected shape")
+    model = m.group("model")
+    target = m.group("target")
+    rep = int(m.group("rep")) if m.group("rep") is not None else 0
+    if model not in _MODEL_SHORT_NAMES:
+        raise ValueError(
+            f"cell_id {cell_id!r}: model {model!r} not in config/models.yaml "
+            f"(known: {_MODEL_SHORT_NAMES})"
+        )
+    if target not in KNOWN_TARGETS:
+        raise ValueError(f"cell_id {cell_id!r}: target {target!r} not in {KNOWN_TARGETS}")
+    return model, target, rep
+
+
+def _load_json(path: Path) -> Optional[dict]:
+    if not path.is_file():
+        return None
     try:
-        return json.loads(fz_path.read_text())
+        return json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
-        return {}
+        return None
 
 
-def _load_time_breakdown(batch_dir: Path, run_id: str) -> dict:
-    """time_breakdown.json's wall_time_seconds is the cell-level agent
-    wall (started_at → ended_at, both from run_meta). The boot/tool/other
-    decomposition there is final-step-only and intentionally not surfaced
-    here — we sum per-step exports below for cost/tokens/tool_calls."""
-    p = batch_dir / run_id / "time_breakdown.json"
-    if not p.is_file():
-        return {}
+def _load_fuzzy(cell_dir: Path) -> dict:
+    """K8s scorer container writes scorer.fuzzy.json under
+    workspace/results/. The host-side re-judge path matches that layout
+    on k8s-pulled batches and falls back to <cell>/scorer.fuzzy.json on
+    legacy local-orchestration batches. Try both; return {} when absent."""
+    for candidate in (
+        cell_dir / "workspace" / "results" / "scorer.fuzzy.json",
+        cell_dir / "scorer.fuzzy.json",
+    ):
+        d = _load_json(candidate)
+        if d is not None:
+            return d
+    return {}
+
+
+def _parse_iso_z(s: str) -> Optional[datetime]:
+    """Parse `2026-05-21T06:40:50Z` style timestamps from step_meta.json."""
+    if not s:
+        return None
     try:
-        return json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
 
 
-def _load_run_meta_final(batch_dir: Path, run_id: str) -> dict:
-    """run_meta.final.json holds idle_killed + stream_stalled directly
-    (time_breakdown.json carries stream_stalled but not idle_killed)."""
-    p = batch_dir / run_id / "run_meta.final.json"
-    if not p.is_file():
-        return {}
-    try:
-        return json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _sum_step_exports(batch_dir: Path, run_id: str) -> dict:
-    """Sum cost / tokens / tool-call counts across all per-step session
-    exports under agent_artifacts/steps/step_NN/session_export.json.
-
-    The cell-level agent_artifacts/session_export.json is final-step-only
-    and undercounts whole-cell totals by ~6× on a typical headline cell,
-    which is why we do the rollup here instead of reading the legacy
-    cell-level export. Returns an empty dict when no per-step exports
-    exist (e.g. older fixtures or fully-broken cells like mistral here).
-    """
-    steps_dir = batch_dir / run_id / "agent_artifacts" / "steps"
+def _summarize_steps(cell_dir: Path) -> dict:
+    """Walk agent_meta/steps/step_NN/step_meta.json. Returns:
+        steps_completed, steps_total, steps_all_eight_ok, agent_wall_seconds.
+    Missing step dirs produce a partial summary; the agent never wrote
+    them and there's nothing else on disk to recover from."""
+    steps_dir = cell_dir / "agent_meta" / "steps"
+    out = {
+        "steps_completed": None,
+        "steps_total": None,
+        "steps_all_eight_ok": None,
+        "agent_wall_seconds": None,
+    }
     if not steps_dir.is_dir():
-        return {}
+        return out
+    step_dirs = sorted(steps_dir.glob("step_*"))
+    if not step_dirs:
+        return out
+    completed = 0
+    starts: list[datetime] = []
+    ends: list[datetime] = []
+    for sd in step_dirs:
+        meta = _load_json(sd / "step_meta.json")
+        if not meta:
+            continue
+        if meta.get("exit_code") == 0:
+            completed += 1
+        t0 = _parse_iso_z(meta.get("started_at"))
+        t1 = _parse_iso_z(meta.get("ended_at"))
+        if t0:
+            starts.append(t0)
+        if t1:
+            ends.append(t1)
+    out["steps_completed"] = completed
+    out["steps_total"] = len(step_dirs)
+    out["steps_all_eight_ok"] = (completed == 8 and len(step_dirs) == 8)
+    if starts and ends:
+        out["agent_wall_seconds"] = round((max(ends) - min(starts)).total_seconds(), 3)
+    return out
+
+
+def _sum_step_exports(cell_dir: Path) -> dict:
+    """Sum cost / tokens / tool-call counts across per-step session exports.
+
+    The cell-level agent_meta/session_export.json is final-step-only and
+    undercounts whole-cell totals by ~6×, which is why we do the rollup
+    over per-step exports under agent_meta/steps/step_NN/.
+    """
+    steps_dir = cell_dir / "agent_meta" / "steps"
     totals = {
         "cost_usd": 0.0,
         "tokens_input": 0,
@@ -183,13 +263,11 @@ def _sum_step_exports(batch_dir: Path, run_id: str) -> dict:
         "tool_calls": 0,
     }
     found_any = False
+    if not steps_dir.is_dir():
+        return {}
     for step_dir in sorted(steps_dir.glob("step_*")):
-        export = step_dir / "session_export.json"
-        if not export.is_file():
-            continue
-        try:
-            d = json.loads(export.read_text())
-        except (OSError, json.JSONDecodeError):
+        d = _load_json(step_dir / "session_export.json")
+        if not d:
             continue
         found_any = True
         info = d.get("info") or {}
@@ -211,39 +289,29 @@ def _sum_step_exports(batch_dir: Path, run_id: str) -> dict:
     return totals
 
 
-def _steps_summary(row: dict) -> tuple[Optional[int], Optional[int], Optional[bool]]:
-    steps = row.get("steps") or {}
-    completed = steps.get("completed_count")
-    total = steps.get("step_count")
-    all_ok = None
-    if isinstance(completed, int) and isinstance(total, int):
-        all_ok = (completed == 8 and total == 8)
-    return completed, total, all_ok
+def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
+    """One scorer.json + sidecar agent_meta/ → one tidy CSV row."""
+    cell_id = cell_dir.name
+    model, target_from_id, rep_idx = _parse_cell_id(batch_tag, cell_id)
+    # scorer.json's target field should match; if it diverges, the cell-id
+    # parse is wrong and we'd rather know than silently disagree.
+    target_from_scorer = scorer.get("target")
+    if target_from_scorer and target_from_scorer != target_from_id:
+        raise ValueError(
+            f"{cell_id}: target disagreement — cell-id says {target_from_id!r}, "
+            f"scorer.json says {target_from_scorer!r}"
+        )
 
-
-def flatten(batch_tag: str, batch_dir: Path, row: dict) -> dict:
-    """One manifest row + its fuzzy sidecar → one tidy CSV row."""
-    scorer = row.get("scorer") or {}
-    consistency = scorer.get("consistency") or {}
-    cell = row.get("cell") or {}
-    run_id = row.get("run_id") or ""
-    fuzzy = _load_fuzzy(batch_dir, run_id)
-
-    steps_completed, steps_total, all_eight_ok = _steps_summary(row)
-    plan_todos = row.get("plan_todos") or {}
-    tb = _load_time_breakdown(batch_dir, run_id)
-    rmf = _load_run_meta_final(batch_dir, run_id)
-    step_totals = _sum_step_exports(batch_dir, run_id)
+    steps_summary = _summarize_steps(cell_dir)
+    step_totals = _sum_step_exports(cell_dir)
+    fuzzy = _load_fuzzy(cell_dir)
 
     return {
         "batch_tag": batch_tag,
-        "run_id": run_id,
-        "model": row.get("model"),
-        "target": row.get("target"),
-        "rung": row.get("rung"),
-        "agent_exit_code": _safe_get(cell, "agent", "exit_code"),
-        "scorer_exit_code": _safe_get(cell, "scorer", "exit_code"),
-        "report_exit_code": _safe_get(cell, "report", "exit_code"),
+        "run_id": cell_id,
+        "model": model,
+        "target": target_from_id,
+        "rep_idx": rep_idx,
         "target_conformance": scorer.get("target_conformance"),
         "csv_exists": scorer.get("csv_exists"),
         "csv_schema_ok": scorer.get("csv_schema_ok"),
@@ -251,37 +319,35 @@ def flatten(batch_tag: str, batch_dir: Path, row: dict) -> dict:
         "exit_code": scorer.get("exit_code"),
         "timed_out": scorer.get("timed_out"),
         "script_was_executable": scorer.get("script_was_executable"),
+        "csv_row_count": scorer.get("csv_row_count"),
         "csv_rows_dropped_nan": scorer.get("csv_rows_dropped_nan"),
-        "height_year10_mean": scorer.get("height_year10_mean"),
-        "occupancy_year10_mean": scorer.get("occupancy_year10_mean"),
+        "csv_source_layout": scorer.get("csv_source_layout"),
+        "height_year100_mean": scorer.get("height_year100_mean"),
+        "occupancy_year100_mean": scorer.get("occupancy_year100_mean"),
         "height_in_range": scorer.get("height_in_range"),
         "occupancy_in_range": scorer.get("occupancy_in_range"),
-        "growth_rate_mean_m": consistency.get("growth_rate_mean_m"),
-        "growth_rate_negative_frac": consistency.get("growth_rate_negative_frac"),
-        "growth_rate_above_ceiling_frac": consistency.get("growth_rate_above_ceiling_frac"),
-        "age_step_off_one_frac": consistency.get("age_step_off_one_frac"),
-        "ntrees_change_frac": consistency.get("ntrees_change_frac"),
-        "growth_temp_spearman": consistency.get("growth_temp_spearman"),
-        "growth_precip_spearman": consistency.get("growth_precip_spearman"),
-        "total_transition_obs": consistency.get("total_transition_obs"),
+        "regression_beta": _safe_get(scorer, "regression_fit", "beta"),
+        "regression_alpha": _safe_get(scorer, "regression_fit", "alpha"),
+        "regression_r2": _safe_get(scorer, "regression_fit", "r2"),
+        "regression_n_observations": _safe_get(scorer, "regression_fit", "n_observations"),
+        "regression_fit_ok": scorer.get("regression_fit_ok"),
         "src_loc": scorer.get("src_loc"),
         "comment_loc": scorer.get("comment_loc"),
         "imports_loc": scorer.get("imports_loc"),
         "entropy_bits": scorer.get("entropy_bits"),
-        "steps_completed": steps_completed,
-        "steps_total": steps_total,
-        "steps_all_eight_ok": all_eight_ok,
-        "plan_todos_checked": plan_todos.get("checked"),
-        "plan_todos_total": plan_todos.get("total"),
+        "steps_completed": steps_summary["steps_completed"],
+        "steps_total": steps_summary["steps_total"],
+        "steps_all_eight_ok": steps_summary["steps_all_eight_ok"],
         "fuzzy_q1_answer": _safe_get(fuzzy, "q1", "answer"),
         "fuzzy_q1_justification": _safe_get(fuzzy, "q1", "justification"),
         "fuzzy_q2_observations": _safe_get(fuzzy, "q2", "observations"),
+        "fuzzy_q3_answer": _safe_get(fuzzy, "q3", "answer"),
+        "fuzzy_q3_justification": _safe_get(fuzzy, "q3", "justification"),
         "fuzzy_parse_error": fuzzy.get("parse_error"),
         "fuzzy_judge_model": fuzzy.get("judge_model_id"),
+        "fuzzy_schema_version": fuzzy.get("schema_version"),
         "sim_wall_seconds": scorer.get("wall_time_seconds"),
-        "agent_wall_seconds": tb.get("wall_time_seconds"),
-        "agent_stream_stalled": rmf.get("stream_stalled"),
-        "agent_idle_killed": rmf.get("idle_killed"),
+        "agent_wall_seconds": steps_summary["agent_wall_seconds"],
         "agent_cost_usd": step_totals.get("cost_usd"),
         "agent_tokens_input": step_totals.get("tokens_input"),
         "agent_tokens_output": step_totals.get("tokens_output"),
@@ -295,24 +361,26 @@ def flatten(batch_tag: str, batch_dir: Path, row: dict) -> dict:
 def aggregate(batch_dirs: Iterable[Path]) -> list[dict]:
     rows: list[dict] = []
     for bd in batch_dirs:
-        manifest = bd / "manifest.jsonl"
-        if not manifest.is_file():
-            print(f"  ↷ skip {bd.name} — no manifest.jsonl", file=sys.stderr)
-            continue
         batch_tag = bd.name
+        scorer_paths = sorted(bd.glob("*/workspace/results/scorer.json"))
+        if not scorer_paths:
+            print(f"  ↷ skip {batch_tag} — no scorer.json under */workspace/results/",
+                  file=sys.stderr)
+            continue
         count = 0
-        with manifest.open() as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    raw = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    print(f"  ⚠ {bd.name}: skipping bad jsonl row: {exc}", file=sys.stderr)
-                    continue
-                rows.append(flatten(batch_tag, bd, raw))
-                count += 1
+        for sp in scorer_paths:
+            cell_dir = sp.parents[2]  # …/<cell-id>/workspace/results/scorer.json
+            scorer = _load_json(sp)
+            if not scorer:
+                print(f"  ⚠ {batch_tag}/{cell_dir.name}: unreadable scorer.json",
+                      file=sys.stderr)
+                continue
+            try:
+                rows.append(_flatten(batch_tag, cell_dir, scorer))
+            except ValueError as exc:
+                print(f"  ⚠ {batch_tag}/{cell_dir.name}: {exc}", file=sys.stderr)
+                continue
+            count += 1
         print(f"  ✓ {batch_tag} → {count} rows", file=sys.stderr)
     return rows
 
@@ -349,7 +417,6 @@ def main() -> int:
         for m in missing:
             print(f"  ⚠ not a directory: {m}", file=sys.stderr)
     else:
-        # Pattern is relative to repo root unless absolute.
         pattern = args.pattern
         if not Path(pattern).is_absolute():
             pattern = str(REPO_ROOT / pattern)
@@ -361,7 +428,7 @@ def main() -> int:
     print(f"▶ Aggregating {len(batch_dirs)} batch(es) → {args.out}", file=sys.stderr)
     rows = aggregate(batch_dirs)
     if not rows:
-        sys.exit("no rows aggregated — every batch lacked manifest.jsonl?")
+        sys.exit("no rows aggregated — every batch lacked scorer.json under */workspace/results/")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", newline="") as f:

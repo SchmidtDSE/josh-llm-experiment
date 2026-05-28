@@ -1,0 +1,375 @@
+---
+# One ConfigMap per cell carrying the rendered prompt body, opencode
+# config (with the resolved OpenRouter slug substituted in), and the
+# initial PLAN.md the 8-step agent loop reads + appends to.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ configmap_name }}
+  namespace: {{ namespace }}
+  labels:
+    app: fortree
+    batch-tag: {{ batch_tag }}
+    cell-id: {{ cell_id }}
+    model: {{ model }}
+    target: {{ target }}
+data:
+  prompt_body.md: |
+{{ prompt_body | indent(4, True) }}
+  opencode.json: |
+{{ opencode_json | indent(4, True) }}
+  PLAN.md: |
+{{ plan_md | indent(4, True) }}
+---
+# Per-cell k8s Job. Pod runs:
+#   initContainer setup   — seeds /cell-data with PLAN.md + opencode.json
+#                           from the ConfigMap, makes the dirs the agent
+#                           expects.
+#   initContainer agent   — opencode 8-step flow against /cell-data.
+#                           Symlinks /opt/agent_meta and
+#                           /root/.config/opencode at /cell-data so the
+#                           scorer can read them after agent exits.
+#   container scorer      — scores /cell-data/workspace, then
+#                           `mc mirror`s the whole /cell-data tree
+#                           (workspace + agent metadata + opencode
+#                           state + scorer.json) to the bucket.
+#
+# /cell-data lives in an emptyDir shared between all three containers.
+# The Pod has no other persistence; bucket is the durable record.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ cell_id }}
+  namespace: {{ namespace }}
+  labels:
+    app: fortree
+    batch-tag: {{ batch_tag }}
+    cell-id: {{ cell_id }}
+    model: {{ model }}
+    target: {{ target }}
+spec:
+  # backoffLimit=3 + podFailurePolicy: retry on a fresh Pod after
+  # Autopilot eviction or our own SIGTERM exit-143 path, but fail
+  # immediately on real application errors. The safe-to-evict annotation
+  # on the Pod (below) should keep evictions rare; this is the
+  # belt-and-suspenders side that turns the rare remaining eviction
+  # from "lost cell" into "retried cell, double LLM cost". GKE docs:
+  # https://cloud.google.com/kubernetes-engine/docs/how-to/extended-duration-pods
+  backoffLimit: 3
+  podFailurePolicy:
+    rules:
+      # If the Pod was evicted by cluster autoscaler / scheduler, retry —
+      # don't count toward backoffLimit. `DisruptionTarget` is the
+      # k8s-native condition for eviction-shaped terminations.
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
+            status: "True"
+      # Our agent-entrypoint's SIGTERM handler exits 143 cleanly (after
+      # exporting per-step state). Treat that as a retryable eviction
+      # signal, same as DisruptionTarget — sometimes the pod condition
+      # isn't set in time before the container exits.
+      - action: Ignore
+        onExitCodes:
+          containerName: agent
+          operator: In
+          values: [143]
+      # Genuine non-zero exits from the agent (e.g., opencode crashed,
+      # all 8 steps failed, cgroup OOM) fail the Job immediately. The
+      # mirror-sidecar will have preserved up-through-last-15s of the
+      # agent's workspace in the bucket for post-mortem.
+      - action: FailJob
+        onExitCodes:
+          containerName: agent
+          operator: NotIn
+          values: [0, 143]
+  activeDeadlineSeconds: {{ active_deadline_seconds }}
+  ttlSecondsAfterFinished: {{ ttl_seconds_after_finished }}
+  template:
+    metadata:
+      labels:
+        app: fortree
+        batch-tag: {{ batch_tag }}
+        cell-id: {{ cell_id }}
+        model: {{ model }}
+        target: {{ target }}
+      annotations:
+        # Secondary defense against maintenance / drain events. With
+        # compute-class=Performance (nodeSelector below) the autoscaler
+        # consolidator already leaves these Pods alone, but the
+        # annotation also guards against `kubectl drain`, node upgrades,
+        # etc. Observed origin: mini-headline 20260521 lost ~80 % of
+        # josh cells to autoscaler consolidation under the Balanced
+        # default; see KUBE_WATCH.md §9.
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      restartPolicy: Never
+      # Wider window for the agent's SIGTERM handler to write per-step
+      # exports before SIGKILL — default 30 s clips opencode's export.
+      terminationGracePeriodSeconds: 120
+      serviceAccountName: {{ service_account }}
+      # GKE Autopilot compute class — Performance gives each Pod its own
+      # dedicated node and is NOT subject to the autoscaler bin-packing
+      # consolidation that took out the josh cells on the Balanced
+      # default (the previous failure mode). Costs more per-cell but
+      # actually runs to completion. Configurable via render_jobs.py
+      # --compute-class; drop to Balanced for cheap smoke tests.
+      #
+      # Performance class REQUIRES a machine-family selector — without
+      # it, scheduling fails with "node(s) didn't match Pod's node
+      # affinity/selector" because Autopilot doesn't know which node
+      # type to provision. n2 is the workhorse default (Intel Cascade
+      # Lake / Ice Lake, broad us-west1 availability, balanced cost);
+      # c3 / c4 are faster but more expensive, c2d / t2d / n2d are AMD
+      # EPYC. machine-family is omitted when compute-class != Performance.
+      # Docs: https://cloud.google.com/kubernetes-engine/docs/how-to/performance-pods
+      nodeSelector:
+        cloud.google.com/compute-class: "{{ compute_class }}"
+        {%- if compute_class == "Performance" %}
+        cloud.google.com/machine-family: "{{ machine_family }}"
+        {%- endif %}
+      volumes:
+        - name: cell-data
+          emptyDir:
+            sizeLimit: 5Gi
+        - name: cell-config
+          configMap:
+            name: {{ configmap_name }}
+      initContainers:
+        - name: setup
+          image: busybox:1.37
+          command:
+            - sh
+            - -ec
+            - |
+              # Lay out the directory shape agent-entrypoint.sh + the
+              # scorer expect. /cell-data is the shared emptyDir.
+              mkdir -p /cell-data/workspace /cell-data/agent_meta /cell-data/opencode
+              cp /etc/cell-config/PLAN.md /cell-data/workspace/PLAN.md
+              cp /etc/cell-config/opencode.json /cell-data/opencode/opencode.json
+              cp /etc/cell-config/prompt_body.md /cell-data/prompt_body.md
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+            - name: cell-config
+              mountPath: /etc/cell-config
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+        - name: mirror-sidecar
+          # Native k8s sidecar (initContainer + restartPolicy: Always
+          # since k8s 1.28). Starts after `setup` is done, runs alongside
+          # `agent` (and later `scorer`), terminates when the main
+          # containers exit. Job purpose: keep an up-to-date snapshot of
+          # /cell-data in the bucket so we can post-mortem agent failures
+          # (e.g. OOM at step_05) — without sidecar, a failed
+          # initContainer drops the emptyDir and we lose all evidence.
+          # The scorer container still does its own final mc mirror, so
+          # cells that succeed don't depend on the sidecar's last tick.
+          #
+          # Resource footprint is tiny (~50m CPU, ~128 MiB), and per the
+          # k8s scheduler's sidecar accounting the Pod's effective
+          # request is still dominated by `agent` or `scorer`. No node
+          # upsize required.
+          image: {{ scorer_image }}
+          restartPolicy: Always
+          command: ["/opt/mirror-sidecar.sh"]
+          env:
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: endpoint
+            - name: MINIO_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: bucket
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: secret-key
+            - name: MINIO_PREFIX
+              value: "{{ minio_prefix }}"
+            - name: BATCH_TAG
+              value: "{{ batch_tag }}"
+            - name: RUN_ID
+              value: "{{ cell_id }}"
+            - name: UPLOAD_SOURCE_DIR
+              value: "/cell-data"
+            - name: MIRROR_INTERVAL_SECONDS
+              value: "15"
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+        - name: agent
+          image: {{ agent_image }}
+          # Symlink the paths agent-entrypoint.sh hardcodes onto the
+          # shared emptyDir so the scorer can read everything after the
+          # agent exits. /sandbox is mounted directly via subPath (next
+          # block) because agent-entrypoint.sh invokes opencode with
+          # `--dir /sandbox` and opencode writes the workspace there.
+          command: ["/bin/bash", "-ec"]
+          args:
+            - |
+              ln -sfn /cell-data/agent_meta /opt/agent_meta
+              ln -sfn /cell-data/prompt_body.md /opt/prompt_body.md
+              mkdir -p /root/.config
+              ln -sfn /cell-data/opencode /root/.config/opencode
+              # Seed the workspace's data/ from the netCDFs baked into
+              # the agent image. SIDECAR.md tells the agent that
+              # data/<...>.nc is provided; without this copy the agent
+              # writes its own generate_data.py and stalls preprocess
+              # on a higher-resolution synthetic grid.
+              mkdir -p /sandbox/data
+              cp /opt/data/*.nc /sandbox/data/
+              # Seed run.sh from the baked template (already x-bit).
+              # Agent fills in the body; N_REPLICATES wiring + default 2
+              # are pre-wired. Scorer overrides N_REPLICATES=100.
+              install -m 0755 /opt/run.sh.seed /sandbox/run.sh
+              # Upload-on-failure is owned by the mirror-sidecar (see
+              # initContainer below). Agent runs normally and exits with
+              # its real code; if it OOMs, the sidecar (different cgroup)
+              # still has the last-good /cell-data snapshot in the bucket.
+              exec /opt/agent-entrypoint.sh
+          env:
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ openrouter_secret }}
+                  key: api-key
+            - name: WALL_CLOCK_BACKSTOP_SEC
+              value: "{{ wall_clock_backstop_sec }}"
+            - name: IDLE_THRESHOLD_SEC
+              value: "{{ idle_threshold_sec }}"
+            - name: FAIL_FAST_ON_STEP_ERROR
+              value: "{{ fail_fast_on_step_error }}"
+            # Override the Dockerfile's hardcoded `ENV JAVA_TOOL_OPTIONS="-Xmx16g"`
+            # so the Josh JVM heap stays inside the container limit. -Xmx16g
+            # was chosen for the original 24 GiB containers and survived the
+            # container right-sizing untouched, which OOM-killed every josh
+            # cell where the JVM tried to allocate beyond cgroup memory.
+            # MaxRAMPercentage=50 leaves ~half the container for non-heap
+            # (metaspace + code cache + threads + native libs + opencode +
+            # Python) and auto-scales with --agent-memory-* overrides.
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=50.0"
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+            # /sandbox = the workspace subtree. agent-entrypoint.sh's
+            # `opencode run --dir /sandbox` writes here; the mount makes
+            # those writes land in the emptyDir at /cell-data/workspace
+            # so the scorer (next container) sees them after agent exits.
+            - name: cell-data
+              mountPath: /sandbox
+              subPath: workspace
+          resources:
+            requests:
+              cpu: "{{ agent_cpu_request }}"
+              memory: "{{ agent_memory_request }}"
+            limits:
+              cpu: "{{ agent_cpu_limit }}"
+              memory: "{{ agent_memory_limit }}"
+      containers:
+        - name: scorer
+          image: {{ scorer_image }}
+          command: ["/opt/scorer-and-upload.sh"]
+          args:
+            - "--target"
+            - "{{ target }}"
+            - "--workspace"
+            - "/cell-data/workspace"
+          env:
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: endpoint
+            - name: MINIO_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: bucket
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: secret-key
+            - name: MINIO_PREFIX
+              value: "{{ minio_prefix }}"
+            - name: BATCH_TAG
+              value: "{{ batch_tag }}"
+            - name: RUN_ID
+              value: "{{ cell_id }}"
+            - name: UPLOAD_SOURCE_DIR
+              value: "/cell-data"
+            # Fuzzy judge (run-judge.sh) needs OpenRouter access to drive
+            # the reviewer agent. Same Secret the agent initContainer
+            # mounts; judge model is configured separately via
+            # JUDGE_MODEL (default `codex` in run-judge.sh). The trust
+            # boundary stays at the image level — the agent image still
+            # has no mc, no bucket creds, and no FUZZY_JUDGE.md.
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ openrouter_secret }}
+                  key: api-key
+            - name: JUDGE_MODEL
+              value: "{{ judge_model }}"
+            # Same Dockerfile -Xmx16g override as the agent — see the
+            # agent's env block for the full rationale. Scorer runs the
+            # Josh JVM during `./run.sh` for josh cells, so the same
+            # cgroup-aware heap cap applies here.
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=50.0"
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+            # MIRROR THE AGENT'S /sandbox MOUNT. The agent has
+            # `mountPath: /sandbox, subPath: workspace` so that opencode's
+            # `--dir /sandbox` writes land in /cell-data/workspace. The
+            # agent's authored .josh hardcodes `file:///sandbox/output/...`
+            # per BASE_PROMPT, so any `josh run` invocation needs /sandbox
+            # to resolve to the same workspace. Without this mount, the
+            # scorer's canonical N_REPLICATES=100 run writes 100 CSVs to
+            # the scorer container's ephemeral /sandbox (which is just
+            # the Dockerfile WORKDIR, NOT the shared emptyDir) and they
+            # vanish on container exit. mc mirror only sees the 2 CSVs
+            # the AGENT wrote during its self-test under N_REPLICATES=2.
+            # This was the root cause of every josh cell from 2026-05-21
+            # appearing to have only 2 replicates' output despite Josh
+            # reporting "Total replicates run: 100" in stdout.
+            - name: cell-data
+              mountPath: /sandbox
+              subPath: workspace
+          resources:
+            requests:
+              cpu: "{{ scorer_cpu_request }}"
+              memory: "{{ scorer_memory_request }}"
+            limits:
+              cpu: "{{ scorer_cpu_limit }}"
+              memory: "{{ scorer_memory_limit }}"

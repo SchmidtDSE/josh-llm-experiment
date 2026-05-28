@@ -36,17 +36,31 @@ This simulation requires operating across both space and time.
 
 | Parameter        | Default value                                    |
 |------------------|--------------------------------------------------|
-| Patch edge length| 1 km                                             |
+| Patch edge length| 16 km                                            |
 | Bounding box low | 35.80° latitude, −119.52° longitude              |
 | Bounding box high| 36.73° latitude, −117.98° longitude              |
 
+The patch edge length is intentionally *coarser* than the climate
+netCDFs' native ~3 km grid resolution — roughly 5× coarser, so each
+patch covers ~25 native climate cells and the implementation has to
+do non-trivial spatial aggregation (or interpolation, or
+nearest-neighbour — all acceptable strategies; the acceptance gate
+doesn't care which, as long as the agent's reported `temperature`
+and `precipitation` columns reflect what the simulation actually
+used). The 16 km grid yields roughly 60–70 patches over the region,
+which keeps memory + sim wall-clock tractable while still exercising
+the data-binding layer.
+
 ### Temporal domain
 
-- Each simulation step represents **one calendar year**.
-- The simulation runs from a configurable start step to a configurable end
-  step (e.g. step 0 through step 10, representing years 2024–2034).
-- The implementing engine is expected to evaluate every patch and every
-  agent within a patch exactly once per step.
+- Each simulation step represents one calendar year.
+- The simulation runs years 2024 through 2123 inclusive — 100 calendar years, one growth event per tree per year.
+- Trees start at `age = 0`, `height = 0` and grow once per year.
+- The implementing engine is expected to evaluate every patch and every agent within a patch exactly once per step.
+
+### Replication
+
+Run **independent stochastic replicates** of the full 100-year simulation. Replicates share identical climate inputs and identical initial conditions; they differ only in the per-tree per-step stochastic growth-offset draws (§Stochasticity below). The CSV is keyed by `(cell, year, replicate)` — one row per combination — so the same `(cell, year)` appears once per replicate in the output. The number of replicates is parameterised — your implementation must accept the count it is given rather than hard-coding one (see the Implementation directive for how it is supplied in your environment).
 
 <br>
 
@@ -77,7 +91,7 @@ A ForeverTree is an individual tree.
 | `age`     | $y$         | The tree's age in years.                 |
 | `height`  | $h$         | The tree's height in meters.             |
 
-All trees start with `age` of 0 years and `height` of 0 m. However, per step, they change accordingly:
+All trees start at `age = 0` years and `height = 0` m. Each year of the simulation:
 
 - `age` increases by exactly 1 year ($y_{i} = y_{i-1} + 1$).
 - `height` increases by an amount called `newGrowth` ($\Delta h$), which depends on the climate at the tree's patch this step. See Section 5.
@@ -129,6 +143,8 @@ All this in mind, $P_{low}$ of 300 mm/year and $P_high$ of 500 mm/year is recomm
 ### Stochasticity
 There is a stochastic element $O$ which is anticiated to offset the percentage used for $\Delta h_{max}$ and should be a gaussian value with mean of 1 and std deviation of 0.05. This means that it is possible that some trees may grow over $\Delta h_{max}$ under ideal conditions.
 
+$O$ is drawn independently per (tree, year, replicate). Trees on the same patch see the same `temperature` and `precipitation` each year but each gets its own draw of $O$; that's the only source of within-patch tree-to-tree variation in this spec. Across replicates of the same simulation, the climate inputs and initial conditions are identical — replicates differ only in their $O$ draws.
+
 <br>
 
 ## Style
@@ -137,7 +153,7 @@ The resultant code should be self-documenting, wherever possible, with comments 
 
 ## Outputs
 
-The model should export **per cell, per step**:
+The model should export **per cell, per step, per replicate**:
 
 | Variable        | Definition                                              |
 |-----------------|---------------------------------------------------------|
@@ -147,6 +163,11 @@ The model should export **per cell, per step**:
 | `temperature`   | The patch's annual mean temperature this step (K).      |
 | `precipitation` | The patch's annual precipitation this step (mm/year).   |
 
-This should happen as a CSV where each cell is identified either by latitude / longitude or a cell index.
+Each cell is identified either by latitude / longitude or a cell index. Two output layouts are accepted; pick whichever is natural for your framework:
+
+- **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate.
+- **One CSV per replicate** at `output/results_{N}.csv` — `results_0.csv`, `results_1.csv`, and so on. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed.
+
+Total row count across whichever layout you pick: `n_cells × 100 years × N_REPLICATES`.
 
 <br>

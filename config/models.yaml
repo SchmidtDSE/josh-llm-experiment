@@ -9,9 +9,10 @@
 # weights the headline saw.
 #
 # OpenRouter catalog re-check on 2026-05-20:
-#   - claude-sonnet-4.5 retired from the catalog; sonnet only available
-#     via rolling `~claude-sonnet-latest`. Switched to claude-opus-4.7
-#     (versioned, current Anthropic main line).
+#   - claude-sonnet-4.5 retired from the catalog. claude-sonnet-4.6 is
+#     now pinned (versioned slug, not the rolling `*-latest` alias) as
+#     a cheaper sibling of claude-opus-4.7. The headline panel uses
+#     `sonnet`; `claude` (opus) remains available for sensitivity runs.
 #   - gemma-3-27b-it still listed but underperformed catastrophically
 #     in our phase-5c panel batch (0/4 cells did any tool work).
 #     Collapsed to one `gemma` entry pinned at gemma-4-26b-a4b-it,
@@ -21,16 +22,17 @@
 #   - mistral-large-2411 retired; mistral-medium-3.5 is the current
 #     main-line dense Mistral.
 claude:   openrouter/anthropic/claude-opus-4.7
+sonnet:   openrouter/anthropic/claude-sonnet-4.6
 gemma:    openrouter/google/gemma-4-26b-a4b-it
 kimi:     openrouter/moonshotai/kimi-k2.6
 minimax:  openrouter/minimax/minimax-m2.7
 mistral:  openrouter/mistralai/mistral-medium-3.5
 
 # Judge model: not part of the agent panel; used by
-# orchestration/run_fuzzy_judge.sh (host-side LLM-judge). Pinned to a
-# different family than any agent so claude-agent cells aren't
-# self-judged. Pick a different short name in JUDGE_MODEL if a
-# second-judge sanity pass is wanted.
+# containers/run-judge.sh (in-Pod LLM judge). Pinned to a different
+# family than any agent so claude-agent cells aren't self-judged. Pick
+# a different short name in JUDGE_MODEL if a second-judge sanity pass
+# is wanted.
 codex:    openrouter/openai/gpt-5-codex
 
 # Local-LLM path for CI smoke + key-free replication. The underscore in

@@ -1,18 +1,39 @@
 {
-  "schema_version": "phase2-v1",
-  "target_year": 2034,
-
-  "_note_target_year": "Simulation runs years 2024 through 2034 inclusive (11 output rows per cell). 'Year 10' is the eleventh row, calendar year 2034. Phase-2b's validator filters the CSV to year == target_year and computes the metrics below.",
-
-  "height_year10": {
-    "_metric": "Mean (across all cells) of meanHeight column at year == target_year.",
-    "lo_m": 0,
-    "hi_m": 11
+  "schema_version": "phase6-v1",
+  "_generated_by": "data/reference_sim.py",
+  "_climate_inputs": [
+    "data/maxtemp_synthetic.nc",
+    "data/precip_synthetic.nc"
+  ],
+  "_note": "Generated artefact \u2014 do NOT hand-edit. Bands derived from a spec-faithful reference simulation against the committed synthetic climate netCDFs. The headline gate is the observed-vs-predicted regression (\u03b2/\u03b1/R\u00b2); the mean band is a coarse secondary sanity check. Re-run data/reference_sim.py and commit both to update.",
+  "start_year": 2024,
+  "target_year": 2123,
+  "n_replicates_reference": 100,
+  "regression_band": {
+    "_metric": "Fit observed_year_target ~ predicted_growth across all (cell, replicate) pairs, where predicted_growth is the spec's deterministic time-integral \u03a3_t \u0394h_max \u00b7 %_T(T(t,cell)) \u00b7 %_P(P(t,cell)) using the agent's reported climate values.",
+    "beta_lo": 0.95,
+    "beta_hi": 1.05,
+    "alpha_lo_m": -0.5,
+    "alpha_hi_m": 0.5,
+    "r2_min": 0.95,
+    "_reference_observed": {
+      "beta": 1.000016,
+      "alpha": -0.000286,
+      "r2": 0.999993,
+      "n_observations": 155000
+    }
   },
-
-  "occupancy_year10": {
-    "_metric": "Mean tree count per cell at year == target_year.",
-    "lo_count": 9.9,
-    "hi_count": 10.1
+  "height_year100": {
+    "_metric": "Mean meanHeight across all cells \u00d7 replicates at year == target_year. Coarse secondary sanity check.",
+    "lo_m": 0.0,
+    "hi_m": 154.0828,
+    "_observed_mean": 45.0101,
+    "_observed_std": 36.3576,
+    "_sigma_mult": 3.0
+  },
+  "occupancy_year100": {
+    "_metric": "Mean nTrees per cell at year == target_year. Spec value is exactly 10 \u2014 no death, reproduction, migration. Narrow tolerance is for floating-point representation, not biological variability.",
+    "lo_count": 9.999,
+    "hi_count": 10.001
   }
 }

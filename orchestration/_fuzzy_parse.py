@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Parse one fuzzy judge raw output into scorer.fuzzy.json.
 
-Invoked from orchestration/run_fuzzy_judge.sh per cell. Reads the
-opencode run stdout transcript, extracts the LAST fenced ```json block,
-validates it against the fuzzy-v1 schema, and writes scorer.fuzzy.json.
+Invoked from containers/run-judge.sh per cell (inside the scorer
+container). Reads the opencode run stdout transcript, extracts the
+LAST fenced ```json block, validates it against the fuzzy-v2 schema
+(Q1 + Q2 + Q3), and writes scorer.fuzzy.json.
 
 On parse / validation failure, still writes scorer.fuzzy.json with a
 `parse_error` field and a snippet of the raw output, so a missing
@@ -21,7 +22,7 @@ import re
 import sys
 from pathlib import Path
 
-VALID_Q1 = {"yes", "no", "partial"}
+VALID_ANSWER = {"yes", "no", "partial"}
 JSON_FENCE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 
 
@@ -38,23 +39,29 @@ def extract_last_json_block(text: str) -> str | None:
     return matches[-1].strip()
 
 
+def _validate_yes_no_partial(parsed: dict, key: str, errs: list[str]) -> None:
+    """Validate a Q1- or Q3-shaped {answer, justification} block in place."""
+    q = parsed.get(key)
+    if not isinstance(q, dict):
+        errs.append(f"{key} missing or not an object")
+        return
+    if q.get("answer") not in VALID_ANSWER:
+        errs.append(f"{key}.answer not in {sorted(VALID_ANSWER)}: {q.get('answer')!r}")
+    if not isinstance(q.get("justification"), str) or not q.get("justification").strip():
+        errs.append(f"{key}.justification missing or empty")
+
+
 def validate(parsed: dict) -> list[str]:
     """Return a list of validation errors. Empty list = valid."""
-    errs = []
-    q1 = parsed.get("q1")
-    if not isinstance(q1, dict):
-        errs.append("q1 missing or not an object")
-    else:
-        if q1.get("answer") not in VALID_Q1:
-            errs.append(f"q1.answer not in {sorted(VALID_Q1)}: {q1.get('answer')!r}")
-        if not isinstance(q1.get("justification"), str) or not q1.get("justification").strip():
-            errs.append("q1.justification missing or empty")
+    errs: list[str] = []
+    _validate_yes_no_partial(parsed, "q1", errs)
     q2 = parsed.get("q2")
     if not isinstance(q2, dict):
         errs.append("q2 missing or not an object")
     else:
         if not isinstance(q2.get("observations"), str) or not q2.get("observations").strip():
             errs.append("q2.observations missing or empty")
+    _validate_yes_no_partial(parsed, "q3", errs)
     return errs
 
 
@@ -72,6 +79,7 @@ def write_error_record(
         "raw_snippet": raw_snippet[:2000],
         "q1": None,
         "q2": None,
+        "q3": None,
     }
     out_path.write_text(json.dumps(record, indent=2) + "\n")
 
@@ -149,6 +157,10 @@ def main() -> int:
         },
         "q2": {
             "observations": parsed["q2"]["observations"].strip(),
+        },
+        "q3": {
+            "answer": parsed["q3"]["answer"],
+            "justification": parsed["q3"]["justification"].strip(),
         },
     }
     args.out.write_text(json.dumps(record, indent=2) + "\n")

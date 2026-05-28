@@ -1,436 +1,531 @@
 # Implementation plan — engineering build state
 
 Engineering-side state of the ForeverTree LLM experiment harness:
-what's built, how it's structured, and what remains. For the
-experimental methodology (hypothesis, run flow, threats to validity),
-see [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md). For the scoring
-axes, metric definitions, LLM-judge spec, re-analysis recipe, and
-open scoring questions, see [SCORING.md](SCORING.md). For installation
-and how to run, see [README.md](README.md).
+what's built, what's in flight, and what remains. For the experimental
+methodology (hypothesis, run flow, threats to validity), see
+[EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md). For the scoring axes,
+metric definitions, LLM-judge spec, re-analysis recipe, and open
+scoring questions, see [SCORING.md](SCORING.md). For installation and
+how to run, see [README.md](README.md).
 
 Per-PR detail lives in `git log` and the merged PR descriptions; this
 document is a navigation map, not a complete change history.
 
+> **Status (2026-05-26, on `feat/k8s-refactor`).** Phase 6 (k8s
+> refactor) is in flight — see §Phase 6 below. **PRs 1–6 merged** on the
+> integration branch (scoring drop + regression bands, prompt update for
+> 100×100, image consolidation, egress relaxation + sidecar drop, k8s
+> submission path + mirror-sidecar + in-Pod fuzzy judge + devcontainer,
+> repo cleanup). PR6 (#46) also folded in two devcontainer/render fixups,
+> and the post-PR6 workflow was smoke-validated end-to-end on
+> `sonnet × {josh, mesa}` (batch `pr6-smoke-20260526`; both cells ran,
+> conformed, β≈1.0 / R²≈0.9999). PR7 (headline batch) and PR8 (merge to
+> `dev`) follow. A third experiment target, `josh-mcp`, was built on
+> this branch after PR6 (see §The josh-mcp arm) and folds into the
+> headline panel. The integration branch is now 70+ commits ahead of
+> `dev`. The pre-Phase-6 local-orchestration architecture
+> (per-cell shell scripts + dnsmasq sidecar + host-side report
+> renderers) is preserved in git history; see PRs #34/#36/#40/#41/#45
+> for the migration steps.
+
 ## Architecture
 
-One Docker base image, three roles, wired together by a Python
-orchestrator on the host:
-
 ```
-host:
-├── docker daemon
-└── uv (Python tool installer, manual install per README)
-
 fortree base image (Dockerfile):
 ├── Python 3.11 + scientific stack (mesa, numpy, pandas, scipy,
-│                                   xarray, netCDF4, rasterio,
-│                                   tiktoken, jinja2, compliance-checker)
+│                                   xarray, netCDF4, rasterio, tiktoken)
 ├── Eclipse Temurin 21 JRE
 ├── /usr/local/bin/josh             ← wrapper around joshsim-fat.jar
 └── /usr/local/bin/opencode         ← pinned 1.14.50
 
 stages:
-- fortree:agent   — base only; runs `opencode run` for the model
-- fortree:scorer  — base + /opt/harness/ (scoring code)
-- fortree:dnsmasq — separate alpine image with iptables + ipset; the
-                    egress-allowlist sidecar (Dockerfile.dnsmasq)
+- fortree:agent   — base + agent-entrypoint.sh + baked synthetic
+                    climate netCDFs + run.sh seed; no harness/, no mc
+- fortree:scorer  — base + /opt/harness/ + /opt/scorer-and-upload.sh
+                    + in-Pod judge assets + mc
 
-invocation pattern per cell (orchestrated by orchestration/launch_*.sh):
-1. Bring up a per-run Docker bridge network.
-2. Start `fortree:dnsmasq` on it with `--cap-add NET_ADMIN`;
-   sidecar-init.sh writes the iptables OUTPUT rules (default DROP +
-   carve-outs for lo/conntrack/upstream-DNS/bridge-gateway/allowlist).
-3. Start `fortree:agent` joining the sidecar's netns
-   (`--network=container:dnsmasq-<run-id>`); agent's egress is hard-
-   filtered at the kernel. Inside the container, agent-entrypoint.sh
-   invokes opencode **eight times in a row**, one per todo, against
-   a shared `/sandbox/PLAN.md` working document (see "Phase 5c" below).
-4. After the multi-invocation chain finishes, run `fortree:scorer`
-   against the workspace under `--network=none` with a writable
-   `results/` and read-only data/ + workspace mounts.
-5. Generate per-cell `report.md`. Tear down network + sidecar.
-6. Per-batch driver aggregates all cells into `manifest.jsonl` and
-   renders `batch_report.md`.
+per-cell k8s Job (one Pod):
+1. agent initContainer (fortree:agent) — agent-entrypoint.sh invokes
+   `opencode run` 8× against /sandbox/PLAN.md, populating
+   /cell-data/workspace/.
+2. mirror-sidecar (fortree:scorer, restartPolicy: Always) — continuously
+   `mc mirror`s /cell-data to the bucket for OOM forensics.
+3. scorer container (fortree:scorer) — scorer-and-upload.sh runs the
+   harness against the workspace, runs run-judge.sh for the in-Pod
+   Q1/Q2/Q3 LLM judge, then `mc mirror`s the completed /cell-data
+   tree to the bucket. Egress is monitored (trajectory.jsonl), not
+   enforced.
+
+host (devcontainer-friendly):
+└── pixi env exposes: get-jars, render, apply, pull, rehydrate,
+    aggregate, lab.
+```
 
 Pinned versions in [config/VERSIONS.md](config/VERSIONS.md). Python
 deps in [config/requirements.txt](config/requirements.txt). Host
-deps in [pyproject.toml](pyproject.toml) (`pyyaml`, `rich`).
+deps in [pixi.toml](pixi.toml).
 
-## Build history
+## Build history (compressed)
 
-### Phase 1 — Environment bootstrap (PR #2) ✓
+Each phase's detail is preserved in `git log` and the merged PR
+descriptions. The summary below is the navigation map.
 
-Single Docker image with Python 3.11, JDK, the Josh CLI as a wrapper
-around `joshsim-fat.jar` (sha256-pinned), and opencode 1.14.50
-installed via upstream. Scorer entrypoint stub that defers to the
-harness in later phases. Initial pinned `requirements.txt`,
-`.env.example`, and the README "Host prerequisites" section.
+| Phase | Scope | PRs |
+|---|---|---|
+| **1** | Environment bootstrap — single Docker image with Python 3.11, JDK 21, Josh CLI sha256-pinned, opencode 1.14.50 | #2 |
+| **2a** | JRE 17→21; BASE_PROMPT bbox / year pin; SIDECAR boilerplate; v0 acceptance ranges | #3 |
+| **2b** | Multistage Dockerfile (base/agent/scorer); scoring harness; static fixtures under `reference/`; smoke CI | #4, #5, #7, #8 |
+| **3** | Single-agent end-to-end (rung prompts retired in 5c); `launch_run.sh`; opencode template | #6 |
+| **4a** | CI workflows (smoke + integration); Ollama path for key-free CI | #9, #14 |
+| **4b** | dnsmasq sidecar + kernel-level egress enforcement; firewall-probe smoke job | #10, #13 |
+| **4b-polish** | `generate_run_report.py` (Jinja2); SIDECAR self-test contract; idle watcher on opencode session-DB mtime | #11, #12, #15, #16, #17 |
+| **4c** | Local parallelism — `launch_cell.sh` + `launch_batch.py` (Rich live panel, orphan cleanup); per-batch manifests | #19, #20, #21–24 |
+| **4d** | Durable upload — host-side `upload_batch.sh` (mc), `launch_batch.py --upload` auto-invoke. *Replaced by in-pod upload in Phase 6 PR3+.* | (merged) |
+| **5a** | Post-pilot scoring revision: scorer JSON `phase5a-v1`; conformance + internal_consistency modules; synthetic CF-1.8 climate netCDFs | #25, #26, #27 |
+| **5b** | Recovery-loop hypothesis — **retired**; folded into 5c's todos 5–8 | (retired) |
+| **5c** | Multi-invocation planning flow — agent runs opencode 8× per cell against shared `/sandbox/PLAN.md`; `prompts/steps/`; per-step session exports; permissive cell-identity schema; `.jshd` LOC bugfix; batch-report multi-invocation diagnostics | (merged) |
+| **6 (in flight)** | k8s refactor + scoring simplification — see §Phase 6 below | #34/#36/#40/#41 (PRs 1–4 merged), 5–7 pending |
 
-### Phase 2 — Scoring harness end-to-end on static fixtures
+## Phase 6 — k8s refactor (in flight)
 
-**Phase 2a (PR #3) ✓** — JRE upgraded from 17 to 21 (Temurin),
-`josh` wrapper exec's `java -jar` correctly. BASE_PROMPT bbox and
-year range pinned. SIDECAR boilerplate (env, External Inputs,
-`./run.sh` + `./output/results.csv` schema). Initial v0
-`acceptance_ranges.json` (height 0–11 m, occupancy 9.9–10.1).
+Refactor unifying three coupled scope buckets: drop the local-
+orchestration tree, move to per-cell k8s Jobs, and simplify the
+scorer to the headline-relevant axes only.
 
-**Phase 2b-core (PR #4) ✓** — Multistage Dockerfile splitting into
-`base` / `agent` / `scorer`. Scoring harness: `run_metrics.py`
-(orchestrator), `runner.py` (invokes `./run.sh` with process-group
-timeout), `validators/output_schema.py`, `validators/acceptance.py`,
-`loc.py`, `entropy.py`, `_files.py` (target-aware file enumeration).
-Scorer JSON schema v1 (`phase2-v1`).
+### TL;DR
 
-**Phase 2b-fixtures (PR #5) ✓** — Static CSV fixtures under
-`reference/golden/` and `reference/broken/{schema,nan-heights,
-missing-year,nan-precip}/`. Each fixture is a tiny `run.sh` that
-emits a canned CSV; the scorer is asserted against each fixture's
-expected outcome in `.github/scripts/smoke-fixtures.sh` (run on
-every push by `smoke.yml`).
+| Bucket | Before (phase 5c) | After (phase 6) |
+|---|---|---|
+| **Scoring** | 4 axes incl. growth-rate / age-step / nTrees consistency block; scorer runs the agent's `./run.sh` once for 11 sim years | 3 axes — *target conformance*, *ecology* (year-100 height + occupancy + observed-vs-predicted regression), *style* (LOC / imports / entropy); scorer runs 100 replicates × 100 sim years for real wall-clock |
+| **Infra** | Per-cell dnsmasq+iptables sidecar in shared netns; local Docker daemon; host-side `launch_batch.py` driver | Per-cell k8s Job (one Pod, `fortree:agent` initContainer → `fortree:scorer` main container); egress *monitored* not enforced; the scorer container uploads artefacts via `mc` |
+| **Repo** | `orchestration/` carries batch driver, per-cell wrapper, report renderers, rescore tooling, `upload_batch.sh` | `orchestration/` reduced to a Job manifest renderer + local `mc` download helper; reports + rescore tooling deleted; `analysis/` is the only local-workflow surface |
 
-**Phase 2 polish**: PR #7 added the `nTrees` column to the schema so
-the occupancy check could count trees directly rather than rows.
-PR #8 added the idle-stream heartbeat (later refactored in PR #17 to
-poll the opencode session-DB mtime instead of trajectory.jsonl size).
+### Scoring simplification
 
-### Phase 3 — Single agent call, end-to-end (PR #6) ✓
+PR1 (merged) implemented this bucket.
 
-`prompts/rung1_minimal.md`, `prompts/rung5_master.md`, derived from
-BASE_PROMPT plus the SIDECAR footer. `config/models.yaml` (short
-name → OpenRouter slug). `config/opencode.template.json` rendered per
-run with API key + model + workspace substitutions. `config/
-docs_categories.yaml` for post-hoc URL categorisation. The driver:
-[orchestration/launch_run.sh](orchestration/launch_run.sh).
+**Kept axes:**
+- **Target conformance** (mechanical) — `josh validate` exit zero on
+  `.josh` files, or `import mesa` + Mesa class subclassing on Mesa runs.
+- **Ecology** — headline gate is now an `observed ~ predicted`
+  regression against the spec-faithful reference simulator
+  ([`data/reference_sim.py`](data/reference_sim.py)) run on the
+  committed synthetic climate netCDFs. β/α/R² targets derived from
+  physics. Secondary mean-band check kept as a coarse sanity gate.
+- **Style** — `src_loc`, `comment_loc`, `imports_loc`, `entropy_bits`.
+  Reported even when the cell fails to run.
+- **Wall-clock** — promoted to a *headline measurement* under the
+  100×100 contract. The agent's `./run.sh` carries preprocess +
+  `--replicates 100` × 100 simulated years.
+- **Schema gate** — precondition for ecology metrics.
 
-### Phase 4 — Observation, parallelism, CI
+**Dropped:**
+- Internal-consistency block ([`harness/internal_consistency.py`](harness/internal_consistency.py)
+  was deleted in PR1) — diagnostic during methodology-building,
+  redundant once regression β catches the same failure modes.
+- `target_conformance_fuzzy` schema placeholder — replaced by the new
+  fuzzy-judge Q1+Q2+Q3 (Q3 lands in PR2).
 
-**Phase 4a — CI + local-LLM (Ollama) path (PR #9, #14) ✓** —
-Two GitHub Actions workflows: `smoke.yml` (deterministic fixture +
-firewall checks on every push) and `integration.yml`
-(`workflow_dispatch` only; one workflow, two provider paths via
-[.github/scripts/setup-provider.sh](.github/scripts/setup-provider.sh)).
-opencode 1.14.50's Ollama support is wired through
-`@ai-sdk/openai-compatible`; `config/models.yaml` carries
-`ollama-qwen-coder-{1_5b,7b}` for key-free CI replication.
+**Acceptance bands derivation chain** (set up in PR1):
 
-**Phase 4b — Observation + kernel-level egress enforcement
-(PR #10, #13) ✓** — Sidecar built from
-[Dockerfile.dnsmasq](Dockerfile.dnsmasq) (alpine + dnsmasq + iptables
-+ ipset). [orchestration/sidecar-init.sh](orchestration/sidecar-init.sh)
-installs iptables OUTPUT rules (default DROP + carve-outs).
-[orchestration/dns_sidecar.sh](orchestration/dns_sidecar.sh) manages
-per-run network + sidecar lifecycle, gates on HEALTHCHECK before
-returning. Agent joins via `--network=container:dnsmasq-<id>`. The
-`firewall-probe` job in `smoke.yml` asserts allow vs reject on four
-hosts every push; reaches into the sidecar's ipset + iptables
-counters to prove enforcement.
-
-**Mid-phase polish landed alongside 4a/4b**: PR #11 rewrote
-`orchestration/generate_run_report.py` around `opencode export` +
-Jinja2 ([orchestration/templates/report.md.j2](orchestration/templates/report.md.j2)).
-PR #12 added the SIDECAR self-test contract (agent must `chmod +x
-run.sh` AND run it once before declaring done). PR #15 publishes
-`report.md` to `$GITHUB_STEP_SUMMARY` for inline GH-UI viewing. PR #16
-consolidated `integration-ollama.yml` and an OpenRouter path into
-one `integration.yml`. PR #17 switched the idle watcher from
-`trajectory.jsonl` size to opencode session-DB mtime (catches
-sub-agent activity).
-
-**Phase 4c — Local parallelism (PR #19, #20) ✓** —
-[orchestration/launch_cell.sh](orchestration/launch_cell.sh) factors
-agent → scorer → report into one unit (same code path under CI and
-the local driver). [orchestration/launch_batch.py](orchestration/launch_batch.py)
-fans out cells via `concurrent.futures.ThreadPoolExecutor`. Two CLI
-forms: `--model M --rung R --target T --runs N` and `--cells cells.csv`.
-Per-batch metadata in `runs/<batch-tag>/` (`worklist.tsv`,
-`joblog.tsv`, `manifest.jsonl`, `summary.txt`, `cell-logs/<run_id>.log`).
-Rich live panel with per-cell lifecycle phase + ETA; auto-degrades to
-line-oriented output in non-TTY. Orphan-resource pre-sweep handles
-SIGKILL recovery. Host deps (`pyyaml`, `rich`) in
-[pyproject.toml](pyproject.toml); `uv sync` provisions them.
-
-**Phase 4c polish**: PR #21 allowed `external_directory` in the
-opencode permission block to fix non-interactive permission stalls.
-PR #22 enhanced the per-cell report. PR #23 distinguished
-presumed-done from genuine stall in the heartbeat. PR #24 grouped
-all per-run dirs under `runs/<batch-tag>/`.
-
-**Phase 4d — Durable upload — DONE (host-side mc).** See *Pending
-engineering work* below for the implementation summary.
-
-### Phase 5 — Scoring revision (5a); recovery loop (5b, retired); multi-invocation flow (5c)
-
-**Phase 5a — Scoring revision (PR #25, #26, #27) ✓** — Three PRs
-that together delivered the post-pilot scoring infrastructure:
-
-- PR #25: scorer JSON bumped to `phase5a-v1`. Added
-  `harness/conformance.py` (mechanical target-conformance check:
-  Mesa imports + Model/Agent subclassing; Josh `*.josh`/`*.jshd`
-  presence + `josh validate` exit zero). Added
-  `harness/internal_consistency.py` (per-(cell, year→year+1)
-  growth-rate stats, age-step, nTrees-change, climate-response
-  Spearmans). Schema validator loosened to subset-match required
-  columns, NaN-tolerant via row filtering (counted as
-  `csv_rows_dropped_nan`). Added `harness/conformance_fuzzy.py` stub.
-  Smoke fixtures updated for new NaN behaviour.
-- PR #26: discovered and fixed that
-  `permission.bash` as a per-pattern object suppressed the bash
-  tool's exposure to the model entirely. Switched to
-  `permission.bash: "allow"` (string form) so bash actually surfaces.
-  Disabled `task` to stop gemma's malformed-call loop. Added
-  `script_was_executable` field; runner self-heals chmod so the agent
-  failing to chmod doesn't gate the measurement. SIDECAR rewritten
-  around the climate-conversion clarification.
-- PR #27: replaced the original Cal-Adapt netCDFs with a synthetic
-  CF-1.8 dataset (`data/maxtemp_synthetic.nc`,
-  `data/precip_synthetic.nc`) generated deterministically from
-  [`data/generate_synthetic_climate.py`](data/generate_synthetic_climate.py)
-  (seed=42, byte-identical across regen runs). Added IOOS
-  `compliance-checker` to `config/requirements.txt` and the
-  [`data/validate_synthetic_climate.py`](data/validate_synthetic_climate.py)
-  validator (31 checks: shape/coord/unit/gradient/no-NaN, spec-growth
-  implication, CF-1.8 conformance). The precip data is a true flux
-  in `kg m⁻² s⁻¹` convertible to mm/year via the standard
-  `× 31_536_000`. Also added
-  [`orchestration/generate_batch_report.py`](orchestration/generate_batch_report.py)
-  (auto-invoked by `launch_batch.py`) producing per-batch
-  `batch_report.md` with at-a-glance matrix, per-cell drill-down,
-  failure-mode tally.
-
-**Phase 5b — Recovery loop — RETIRED.** The multi-invocation flow's
-todos 5–8 (stub → implement → validate → cleanup) bake the iterative
-self-correction into every cell's run, so a separate recovery-prompt
-mechanism is no longer needed. EXPERIMENTAL_DESIGN's H2 hypothesis
-folds into H1.
-
-### Phase 5c — Multi-invocation planning flow ✓
-
-The agent phase now invokes opencode **eight times in a row** against
-the same per-cell workspace, one invocation per todo, with a shared
-`/sandbox/PLAN.md` working document carrying state across steps.
-Sessions are fresh per invocation (no `--continue`) — all continuity
-lives on disk in `PLAN.md` and the workspace.
-
-Motivation: small / local models struggle without explicit planning
-scaffolding. Splitting the work into discrete, plan-anchored steps
-gives them a structured "read PLAN.md → list actions → do one thing →
-mark `[x]` → exit" rhythm and makes their planning artefacts
-inspectable.
-
-**Files**:
-- [prompts/PLAN_TEMPLATE.md](prompts/PLAN_TEMPLATE.md) — seed for
-  `/sandbox/PLAN.md`. Carries the 8 fixed todos and an empty `## Plan`
-  section.
-- [prompts/steps/step_NN_*.md](prompts/steps/) — 8 pre-committed
-  per-step injection files. Static across all runs.
-- [prompts/SIDECAR.md](prompts/SIDECAR.md) — rewritten around the
-  procedure narrative + AI environment / inputs / success criteria /
-  working-document sections.
-- [prompts/](prompts/) — reorganised into `rungs/`, `steps/`,
-  `targets/` subfolders. `prompts/rung5_master.md` retired (rung 5
-  now reads `prompts/BASE_PROMPT.md` directly).
-- [agent-entrypoint.sh](agent-entrypoint.sh) — loops over
-  `/opt/steps/step_*.md`, builds each per-step prompt in-memory as
-  `prompt_body + step_file`, runs opencode, exports per-step session,
-  writes `step_meta.json`. Honours `FAIL_FAST_ON_STEP_ERROR`.
-- [orchestration/launch_run.sh](orchestration/launch_run.sh) — renders
-  `prompt_body.md` once and seeds `workspace/PLAN.md` from the
-  template. No per-step rendering at runtime — the 8 step files are
-  bind-mounted straight from the repo.
-- [orchestration/run_agent.sh](orchestration/run_agent.sh) — new
-  bind mounts (`/opt/prompt_body.md`, `/opt/steps/`); passes
-  `FAIL_FAST_ON_STEP_ERROR` into the agent container.
-
-**Knob (`.env`)**:
-- `FAIL_FAST_ON_STEP_ERROR=false` (default, production) — log per-step
-  failures and continue. Partial completion is data.
-- `FAIL_FAST_ON_STEP_ERROR=true` (dev / CI) — first non-zero step
-  aborts the loop. Used to surface broken plumbing fast.
-
-**Per-step artefacts under `runs/<batch>/<id>/agent_artifacts/steps/step_NN/`**:
-- `trajectory.jsonl` — that step's opencode events
-- `agent_stderr.log` — that step's stderr
-- `session_export.json` — that step's opencode export
-- `step_meta.json` — `{step_n, step_name, started_at, ended_at, exit_code}`
-
-The cell-level rollups (`trajectory.jsonl`, `agent_stderr.log`,
-`agent_artifacts/session_export.json`) remain at their legacy paths
-so downstream consumers (`generate_run_report.py`,
-`extract_transcript.py`, `extract_time_breakdown.py`) keep working;
-they now see the in-order concatenation of all 8 steps and the
-final step's export respectively. Cross-step token / timing
-aggregation is a follow-up.
-
-**Example multi-invocation pattern (operator-level reference)**:
-
-```sh
-# What agent-entrypoint.sh effectively runs, inside one container:
-opencode run "<prompt_body>\n\n<step_01_make_plan_section>"
-opencode run "<prompt_body>\n\n<step_02_describe_geospatial>"
-...
-opencode run "<prompt_body>\n\n<step_08_cleanup_code>"
+```
+data/generate_synthetic_climate.py   # writes the netCDFs (committed)
+    ↓
+data/reference_sim.py                # runs spec dynamics in numpy,
+                                     # writes harness/acceptance_ranges.json
+    ↓
+reference/regenerate_fixtures.py     # samples one replicate for the
+                                     # smoke-test golden fixtures
+    ↓
+docker build --target scorer         # bakes acceptance_ranges.json
+                                     # into fortree:scorer
 ```
 
-Each `<step_NN_*>` file tells the model "your assigned todo is N: …;
-read /sandbox/PLAN.md; list your actions; complete only this todo;
-mark [x]; exit." Cross-step state lives entirely in `PLAN.md` and
-the workspace files.
+Math primitives are factored into [`harness/spec_model.py`](harness/spec_model.py)
+and imported by both `reference_sim.py` (band derivation) and
+`harness/validators/acceptance.py` (gate enforcement) — single source
+of truth, cannot drift.
 
-**Follow-on fixes (same PR):**
+### K8s execution
 
-- **Permissive cell-identity schema.** `harness/validators/output_schema.py`
-  no longer requires `lat`/`lon`/`cell_id` specifically. Cell identity
-  accepts either `cell_id` (string) OR `position.x` + `position.y`
-  (numeric, Josh's default). `load_clean_results` synthesises `cell_id`
-  from the position pair when only the alt is present, so
-  `internal_consistency.py` is unchanged. Removes the "model must
-  rename Josh's native export to match our spec" gymnastics that
-  bricked two recent Josh-target cells. New CI-gated fixture
-  [reference/golden-josh-defaults/](reference/golden-josh-defaults/)
-  exercises the alt path.
-- **`.jshd` LOC bugfix.** `harness/_files.py` no longer counts `.jshd`
-  binary preprocessed data as source. The byte stream contained
-  newlines, so a 112 KB binary was being read as ~2000 lines of code —
-  inflated `src_loc` by 400× on cells that ran `josh preprocess`
-  against the full grid. Conformance still detects `.jshd` presence
-  via the new `find_workspace_files` helper.
-- **Batch-report multi-invocation diagnostics.** `manifest.jsonl` rows
-  gain `steps` (per-step exit codes from `step_meta.json`) and
-  `plan_todos` (count of `[x]` boxes in `workspace/PLAN.md`).
-  `batch_report.md` renders a new "Multi-invocation step status"
-  section: 8-glyph per-cell status string (`✓✗·`), todos-checked
-  count, and links to each cell's `PLAN.md` + `agent_artifacts/steps/`.
-- **Prompt-procedure tightening (gemma nudge).** SIDECAR's Procedure
-  paragraph caps the planning preamble at 1–2 sentences and adds
-  "Then carry them out by calling the available tools — listing the
-  plan is a preamble, not the task itself." Targets the failure mode
-  observed in the panel batch where gemma listed actions and stopped
-  without invoking any tool.
-- **Targets renamed.** `prompts/target_directive_{josh,mesa}.md` →
-  `prompts/targets/{josh,mesa}.md` to match the new subfolder layout.
-- **Review-driven polish.** `launch_batch.py --upload` flag for
-  opportunistic auto-archive after batch completion (non-fatal on
-  failure; the standalone `upload_batch.sh` remains the
-  crash-recovery path). README sweep examples reframed around a
-  committed CSV panel rather than nested bash for-loops. SIDECAR's
-  cell-identity prose tightened to a single legal-identifier
-  sentence (no framework-defaults exposition). EXPERIMENTAL_DESIGN
-  gained the "why force decomposition" methodology paragraph
-  capturing the pre-phase-5c observation that models were getting
-  stuck on orchestration concerns and skipping the
-  ecological-modelling step.
+PR3–5 implement this bucket.
+
+The original blocker for cloud execution was the per-run
+**dnsmasq+iptables egress sidecar** — two containers in a shared
+network namespace with `CAP_NET_ADMIN`, which only k8s (or raw
+Docker) can express. Relaxing egress from *enforced* to *monitored*
+removes that constraint and lets the cell run as a vanilla k8s Pod.
+
+**Target Pod shape** (one k8s Job per cell):
+
+```
+initContainers:
+  - name: agent
+    image: fortree:agent
+    # Runs opencode 8-step flow against /workspace.
+    # Does NOT carry harness/, acceptance_ranges.json, or mc.
+    command: ["/opt/agent-entrypoint.sh"]
+containers:
+  - name: scorer
+    image: fortree:scorer
+    # Runs the scorer against the workspace the agent left behind,
+    # then uploads everything to the bucket via mc. Has harness/,
+    # acceptance_ranges.json, and mc; the agent never sees any of these.
+    command: ["/opt/scorer-and-upload.sh"]
+```
+
+The initContainer pattern is the right fit because the scorer needs
+to wait for the agent's exit before running. **Image separation
+stays** — the agent container does not carry `harness/`,
+`acceptance_ranges.json`, or `mc`, so it literally cannot read the
+scoring criteria or exfiltrate to the bucket. `mc` is added to
+`fortree:scorer` only; bucket credentials are mounted into the
+scorer container via a k8s Secret reference.
+
+**Egress: monitored, not enforced.** opencode's `trajectory.jsonl`
+records every `webfetch` URL the model invoked; that file is exported
+into `/sandbox` and ends up in the bucket via the scorer's `mc
+mirror`. The validity argument leans on it being sufficient post-hoc
+evidence of what the agent reached. The DNS-log sidecar from earlier
+pilots is dropped along with the kernel-level REJECT chain — the Pod
+shape stays minimal, and the methodology delta is acknowledged in
+[EXPERIMENTAL_DESIGN.md §Egress observability](EXPERIMENTAL_DESIGN.md).
+If the headline batch surfaces concerns about indirect egress (an
+agent-authored `run.sh` shelling out to `curl`/`urllib`), a Pod-level
+`NetworkPolicy` or cluster-wide Cloud DNS logging can be added later
+without reverting the rest of the refactor.
+
+**Submission:** A small Python script renders one Job manifest per
+cell from a matrix CSV (`model,target,replicates`), then `kubectl
+apply -f -`s them. Cluster: **GKE Autopilot**, one **Indexed Job**
+per batch (`completions=N, parallelism=K`, K capped to OpenRouter's
+per-key concurrency).
+
+### Repo cleanup
+
+PR6 deleted the local-orchestration surface area in one sweep. 19
+paths removed under `orchestration/`, `.github/`, and the repo root:
+
+- **Local-orchestration shell scripts** — `launch_batch.py`,
+  `launch_cell.sh`, `launch_run.sh`, `run_agent.sh`, `dns_sidecar.sh`,
+  `sidecar-init.sh`
+- **DNS sidecar** — `Dockerfile.dnsmasq`, `orchestration/dnsmasq.conf`
+- **Report generators** — `generate_run_report.py`,
+  `generate_batch_report.py` (replaced by [analysis/headline.ipynb](analysis/headline.ipynb))
+- **Rescore tooling** — `rescore_batch.py`, `rescore_cell.sh`
+  (replaced by a future re-score k8s Job)
+- **Host-side upload** — `upload_batch.sh` (replaced by in-Pod
+  `containers/scorer-and-upload.sh`)
+- **Host-side fuzzy judge** — `run_fuzzy_judge.sh`, `_fuzzy_summary.py`
+  (orphan); replaced by in-Pod [containers/run-judge.sh](containers/run-judge.sh)
+- **Dead helpers** — `extract_time_breakdown.py`
+- **Retired rung ladder** — `prompts/rungs/`
+- **CI** — `.github/workflows/integration.yml` (built `Dockerfile.dnsmasq`
+  and invoked `launch_cell.sh`; will be reintroduced when a CI-accessible
+  k8s test cluster exists) + `.github/scripts/setup-provider.sh`
+  (orphan with it)
+
+**Plan corrections discovered during PR6:** the original delete table
+incorrectly listed `harness/conformance_fuzzy.py` and
+`orchestration/extract_transcript.py`. Both stay:
+- `harness/conformance_fuzzy.py` is the live schema-shape stub that
+  [harness/run_metrics.py:23](harness/run_metrics.py#L23) imports;
+  its docstring was swept to point at `containers/run-judge.sh`.
+- `orchestration/extract_transcript.py` is image-baked at
+  [Dockerfile:135](Dockerfile#L135) and called by
+  [containers/run-judge.sh:89](containers/run-judge.sh#L89) inside
+  the scorer container. The
+  [.github/workflows/build-images.yml](.github/workflows/build-images.yml)
+  path filter already names it explicitly.
+
+**Follow-on fixups (folded into PR6 during smoke-testing):**
+- Devcontainer: the GKE auth-plugin install moved into
+  [.devcontainer/post-create.sh](.devcontainer/post-create.sh); the
+  `dhoeric/google-cloud-cli` feature's `installGkeGcloudAuthPlugin` was
+  disabled because its v1.0.1 plugin step targets the stale legacy
+  `google-cloud-sdk-*` package and silently no-ops against current gcloud.
+- Render path: `uv run` → `python` in
+  [orchestration/k8s_apply.sh](orchestration/k8s_apply.sh) (+ the
+  `render_jobs.py` docstring) so `pixi run apply` works — `uv` isn't in
+  the pixi devcontainer.
+- Lock: regenerated [.devcontainer/devcontainer-lock.json](.devcontainer/devcontainer-lock.json)
+  (the committed copy was missing the `kubectl-helm-minikube` entry).
+
+**Smoke validation:** `sonnet × {josh, mesa}` ran end-to-end against
+images built from the PR6 branch (batch `pr6-smoke-20260526`): both cells
+`did_run`, `target_conformance: true`, regression β≈1.0 / R²≈0.9999,
+fuzzy Q1 = yes. The only hiccup was a stale `openrouter-creds` Secret
+(re-synced from `.env`), unrelated to the cleanup — confirming PR6
+introduces no regression.
+
+**Kept in `orchestration/`:** `render_jobs.py`, `k8s_apply.sh`,
+`pull_artefacts.sh`, `resolve_model.py`, `_fuzzy_parse.py`,
+`extract_transcript.py`, `templates/`, `matrix.csv`.
+
+**Move + tidy:** ✓ landed in PR #44 (devcontainer extension). Five
+container-entrypoint shell scripts plus `agent-run.sh.seed` moved to
+[containers/](containers/); Dockerfile COPY paths updated, image-side
+`/opt/<name>.sh` destinations unchanged, so runtime is a no-op.
+[.github/workflows/build-images.yml](.github/workflows/build-images.yml)
+path filter collapsed to a single `containers/**` glob.
+
+**Surviving CI:**
+- [.github/workflows/smoke.yml](.github/workflows/smoke.yml) — builds
+  `fortree:scorer` and runs it against the reference fixtures on
+  every push.
+- [.github/workflows/build-images.yml](.github/workflows/build-images.yml)
+  — builds + pushes `fortree-agent` and `fortree-scorer` to GHCR.
+
+**What stays exactly the same:**
+- The prompt rendering pipeline (rung body + target directive +
+  SIDECAR + per-step injection) — only content changes, not shape.
+  (The `josh-mcp` arm adds one conditional: the `run.sh` contract,
+  `prompts/RUNSH.md`, is appended for the full-tools arms only — see
+  §The josh-mcp arm.)
+- The 8-step multi-invocation flow — moves into the agent
+  initContainer's entrypoint script untouched.
+- The opencode pin + `config/opencode.template.json` shape.
+- The five-model panel pin and OpenRouter slug resolution.
+- The local `analysis/` workflow: pull bucket → pandas → notebook.
+
+### The `josh-mcp` arm (third target)
+
+A third experiment target, `josh-mcp`, lands on this branch after the
+PR1–6 series. It generates Josh DSL exactly like `josh` but runs the
+agent under a **constrained** opencode palette — no `bash`, with the
+Josh pipeline reachable only through an MCP server. The *methodology*
+(the environment factor, the L-shaped partial factorial, the three
+contrasts, and the "never let `josh-mcp`↔`mesa` be the headline" rule)
+lives in [EXPERIMENTAL_DESIGN.md §Targets](EXPERIMENTAL_DESIGN.md);
+this section is the engineering build-state.
+
+**MCP server (consumed, not built).** The Josh fat jar grows an `mcp`
+stdio subcommand in [SchmidtDSE/josh#440](https://github.com/SchmidtDSE/josh/pull/440)
+(base `dev`, MCP SDK 1.1.3), exposing four tools —
+`validate_simulation`, `discover_config`, `preprocess_data`,
+`run_simulation` (the last gained a `data` arg, a map of
+`external-name.jshd → path`, in commit `6c1e5e9c`). opencode spawns it
+via `command: ["josh", "mcp"]` — the wrapper forwards `mcp` to the jar
+like any other subcommand. The tools surface to the agent as
+`josh_validate_simulation`, `josh_preprocess_data`,
+`josh_run_simulation`, `josh_discover_config`.
+
+**The agent does not author `run.sh`.** Its deliverable is Josh source
+(`simulation.josh`) plus the `.jshd` it builds via
+`josh_preprocess_data`; it self-tests with `josh_run_simulation`
+(2 replicates) since it has no shell to run `./run.sh`. The **scorer
+materializes a canonical `run.sh`** from
+[harness/run_josh_mcp.sh](harness/run_josh_mcp.sh) (baked into
+`fortree:scorer`, copied over the workspace `run.sh` before the timed
+run): `josh preprocess ×2` (`tasmax` as `K`, `pr` as `kg m-2 s-1`)
+then `josh run --replicates N --data temperature.jshd=… --data
+precipitation.jshd=…`. Those commands are byte-identical to the
+agent's MCP self-test, so a green self-test predicts a green scoring
+run. The `--data` key keeps the `.jshd` extension on purpose — it
+selects the deserialization strategy; drop it and josh XZ-decodes a
+plain `.jshd` and dies mid-sim. The harness `run.sh` only works if the
+agent honors the naming convention the directive enforces
+([prompts/targets/josh-mcp.md](prompts/targets/josh-mcp.md)): entry
+`simulation.josh`, simulation `Main`, `external temperature` +
+`precipitation`, in-model `× 31_536_000` precip→mm/yr, output via
+`exportFiles.patch = "file:///sandbox/output/results_{replicate}.csv"`.
+If it doesn't, the run fails → `did_run=false` (still an informative
+cell — conformance and `josh validate` still run).
+
+**Units are known facts, not discovered.** `tasmax`→`K`,
+`pr`→`kg m-2 s-1` come straight from
+[data/generate_synthetic_climate.py](data/generate_synthetic_climate.py);
+the constrained agent reads them from the SIDECAR spec sheet (§AI
+Inputs), not by poking the netCDFs — no dry run needed to learn them.
+
+**Integration touch points (as built):**
+
+| Where | Change |
+|---|---|
+| `config/opencode.josh-mcp.template.json` *(new)* | Constrained palette: `bash:false`, `webfetch:true`, `task:false`, `"josh*":true`, plus the `mcp.josh` local-server block (`timeout:120000`, `JAVA_TOOL_OPTIONS=-Xmx8g` to cap the MCP JVM). |
+| [orchestration/render_jobs.py](orchestration/render_jobs.py) | `VALID_TARGETS=("josh","mesa","josh-mcp")`; `_render_opencode_json` selects the josh-mcp template; memory defaults moved to `request==limit` (agent 16Gi, scorer 24Gi) to avoid the `MaxRAMPercentage` burst-gap eviction. |
+| `prompts/targets/josh-mcp.md` *(new)* | No-bash directive: drive Josh via `josh_*` MCP tools with absolute `/sandbox` paths; do not author `run.sh`; the naming convention above. |
+| [prompts/SIDECAR.md](prompts/SIDECAR.md) §AI Inputs | Descriptive grid/coverage spec sheet (shared by all arms). |
+| [prompts/SIDECAR.md](prompts/SIDECAR.md) §Success criteria + [prompts/RUNSH.md](prompts/RUNSH.md) *(new)* | The `run.sh` contract is factored out of SIDECAR into `RUNSH.md`; `render_jobs.py` appends it for full-tools arms only, so the no-shell `josh-mcp` agent isn't told to author/run `run.sh`. SIDECAR keeps the framework-neutral output/CSV contract. |
+| `prompts/plans/{bash,mcp}/PLAN_TEMPLATE.md` *(split from `prompts/PLAN_TEMPLATE.md`)* | The seeded 8-todo `PLAN.md` is now environment-specific: `bash` (full-tools, todos author + invoke `./run.sh`) vs `mcp` (constrained, todos build + self-test via the MCP tools). `render_jobs.py:_render_plan_md(target)` selects by env. Net effect: the `josh-mcp` agent sees zero `run.sh` anywhere in its prompt + plan (also scrubbed a stray `run.sh`/`N_REPLICATES` mention from BASE_PROMPT). |
+| `harness/run_josh_mcp.sh` *(new, baked into scorer)* | The canonical run script (above). |
+| [harness/run_metrics.py](harness/run_metrics.py) | `--target` += `josh-mcp`; copies `run_josh_mcp.sh` → workspace `run.sh` before `runner.run` when target is josh-mcp. |
+| [harness/conformance.py](harness/conformance.py) | Dispatch `josh-mcp` → `_check_josh` (identical conformance keeps the contrast clean). |
+| [harness/_files.py](harness/_files.py) | `_EXTENSIONS_BY_TARGET["josh-mcp"] = (".josh",)` so LOC/entropy work. |
+
+`job.yaml.j2`, `scorer-and-upload.sh`, and the fuzzy judge need no
+change — `target` flows through as a label and a `--target` arg, and
+the judge reads the (now harness-canonical) `run.sh`, which still
+carries the CLI calls.
+
+**Image dependency: the agent jar must carry `mcp`.** `josh mcp` only
+works if the image bundles a Josh build with the `McpCommand`
+subcommand. #440 targets `dev`, which won't flow to `main` for a
+while, so [scripts/install_josh.sh](scripts/install_josh.sh) and the
+Dockerfile base stage **default to the rolling `dev` jar**
+(`JOSH_JAR_URL`), pinned by `JOSH_JAR_SHA256`. The pin does double
+duty: integrity (fail on mismatch) and **cache-busting** — the `RUN`
+layer is cached by command, not by remote content, so without a
+changing pin a rebuild silently keeps a stale jar (this bit us once: a
+rebuild kept a km-grid-buggy jar). Bump the sha to move to a newer dev
+build; `pixi run get-jars` ([scripts/get_jars.py](scripts/get_jars.py))
+fetches dev+main into `jar/<branch>/` with sha256 sidecars for local
+smoke / re-pinning. Pin back to `main` with
+`--build-arg JOSH_JAR_URL=…/main/joshsim-fat.jar JOSH_JAR_SHA256=<main sha>`.
+
+**Status.** The arm is wired and the pipeline is proven end-to-end on
+the cluster: the harness `run.sh` produces `exit 0`, the full row
+count, no XZ error, and runs in a few minutes at 100 replicates under
+24Gi scorer memory with no OOM; the MCP toolchain runs clean
+(validate/preprocess/run all complete, no bash, no tool timeouts). It
+is staged for a mini-panel —
+[orchestration/matrix-mini.csv](orchestration/matrix-mini.csv):
+`{minimax, claude} × {josh, mesa, josh-mcp} × 5` = 30 cells — gated
+behind a single-cell smoke
+([orchestration/matrix-smoke.csv](orchestration/matrix-smoke.csv)).
+
+**Known stale artifact:** [data/validate_synthetic_climate.py](data/validate_synthetic_climate.py)
+still asserts the phase-5 31-year / 2024–2054 grid; the committed data
+is 101 years (2024–2124) per the generator. It is a human/CI
+maintenance script the agent never runs, so it does not affect runs,
+but it should be refreshed before it is trusted as a spec-sheet
+validator.
+
+### Sequencing
+
+**Branching strategy.** All PRs in this series land on the long-lived
+integration branch **`feat/k8s-refactor`**, *not* directly on `dev`.
+The integration branch was cut from `dev` once at the start of the
+refactor and only merges back to `dev` after the full series has
+been validated end-to-end. This keeps `dev` shippable while the
+refactor is in flight — a partial state (e.g., scoring updated but
+prompt + k8s submission not) would leave the local-orchestration
+path broken on `dev` if landed there directly.
+
+**PR order:**
+
+1. **Scoring drop + regression bands** ✓ (merged, PR #34). Delete
+   `harness/internal_consistency.py`, strip consistency fields from
+   `run_metrics.py`, move acceptance to year-100, switch to
+   `observed ~ predicted` regression gate, derive bands from
+   spec-faithful reference simulator, bump `SCHEMA_VERSION` to
+   `phase6-v1`. SCORING.md rewritten.
+2. **Prompt update** ✓ (merged, PR #36 + follow-ups #37, #38).
+   `run.sh` shape (preprocess + 100×100). Updated BASE_PROMPT /
+   SIDECAR / relevant step files. Added fuzzy Q3 to
+   `prompts/FUZZY_JUDGE.md`. Sub-tasks:
+   - **Disambiguate the year-0 question.** PR1's offline sanity check
+     against the phase-5c batches found a systematic +10% slope on
+     Josh runs vs Mesa runs (β≈1.10 vs β≈1.00). The cause: Josh
+     stdlib grows during step 0 (year-2024 row already shows
+     `meanAge = 1`, post-growth), while Mesa implementations were
+     treating step 0 as init-only against PR1's reference simulator
+     (which originally skipped year 0). The fix in PR2 is to pin
+     **"every year is a growth step, including 2024"** — matches
+     Josh stdlib's natural behaviour and the spec's "per step, age
+     and height change" reading. The reference simulator + validator
+     are updated to sum predicted growth over *all* years (no
+     skip-first-year filter). An N-year simulation gets N growth
+     events. Whichever interpretation we pick has to match the
+     reference, or the regression gate will systematically detect
+     ±10% slope on the "wrong" framework.
+   - 100-year sim: years 2024..2123 inclusive in the CSV (100 rows
+     per cell per replicate), with growth between consecutive years.
+   - `--replicates 100` (or framework equivalent) in `run.sh`.
+   - Preprocess (`.jshd` build for Josh, netCDF→DataFrame for Mesa)
+     inside the same `run.sh` so wall-clock includes data loading.
+   - Fuzzy Q3 question wording asserts the above contract.
+3. **Image consolidation** ✓ (merged, PR #40). `mc` added to
+   `fortree:scorer`. New `scorer-and-upload.sh` wraps
+   `run_metrics.py` + `mc mirror /sandbox` to the bucket. Trust
+   boundary preserved (agent image has no `mc`). No behaviour
+   change for the existing local orchestration (smoke-fixtures still
+   hit `/opt/entrypoint-scorer.sh`).
+4. **Egress relaxation + sidecar drop** ✓ (merged, PR #41).
+   Stripped iptables/ipset from `Dockerfile.dnsmasq`; the image
+   became a passive logger. Dropped the DNS-log sidecar from the
+   target Pod shape entirely — `trajectory.jsonl` is the sole egress
+   observation layer. `firewall-probe` smoke job retired.
+   EXPERIMENTAL_DESIGN.md §Egress observability + §Threats to
+   validity updated. (`Dockerfile.dnsmasq` itself was deleted in
+   PR6.)
+5. **K8s submission path.** ✓ merged (PR #45). Added
+   `orchestration/templates/job.yaml.j2`,
+   `orchestration/render_jobs.py`, `orchestration/k8s_apply.sh`,
+   `orchestration/pull_artefacts.sh`. In-Pod fuzzy judge
+   ([containers/run-judge.sh](containers/run-judge.sh)) folded in
+   (PR #42). [containers/mirror-sidecar.sh](containers/mirror-sidecar.sh)
+   continuously mirrors `/cell-data` so OOM'd cells still leave
+   forensic state. Pixi-based devcontainer + `containers/` move
+   landed alongside (PR #44). Mini-headline batch
+   (`smoke-headline-20260521`, 100 cells) ran end-to-end on GKE
+   Autopilot; artefacts present in the bucket.
+6. **Repo cleanup.** ✓ merged (PR #46). Deleted 19 paths in the
+   local-orchestration tree (per-cell shell scripts + dnsmasq sidecar
+   + host-side report renderers + rescore tooling + host-side fuzzy
+   judge + retired rung ladder + the `integration.yml` workflow that
+   exercised the local path). README + EXPERIMENTAL_DESIGN.md +
+   IMPLEMENTATION_PLAN.md swept. Also folds in two devcontainer/render
+   fixups and was smoke-validated on `sonnet × {josh, mesa}`. See §Repo
+   cleanup above for the full list, the two plan corrections
+   (`conformance_fuzzy.py` and `extract_transcript.py` were kept, not
+   deleted), the fixups, and the smoke result.
+7. **Headline batch.** Submit the full panel as a k8s Indexed Job.
+   Batch-tag suggestion: `headline-k8s-<date>`. This is the
+   reportable batch — phase-5c artefacts are abandoned, not compared
+   against. The panel now spans three targets (`josh`, `mesa`,
+   `josh-mcp`); a held mini-panel (`matrix-mini.csv`, 30 cells)
+   de-risks the josh-mcp plumbing before the full run.
+8. **Merge `feat/k8s-refactor` → `dev`.** Final integration. Done
+   only after PRs 1–7 have all landed on the integration branch,
+   smoke CI is green on it, and the headline batch has produced the
+   artefacts the paper will reference.
+
+### Open questions
+
+1. **Acceptance-band tolerance calibration.** PR1 derived the
+   regression *targets* (β=1, α=0, R²→1) empirically from the
+   spec-faithful reference simulator. The *tolerances* around those
+   targets (β ∈ [0.95, 1.05], α ∈ [−0.5, 0.5], R² > 0.95) are
+   currently hand-picked to give implementation tolerance. Once the
+   headline batch produces a panel of agent runs, re-calibrate
+   against their empirical spread. Tracked as SCORING.md Open
+   methodology question #1.
+2. **Per-model engagement probe.** With 100×100 the cost of a
+   *succeeded* cell goes up materially. Worth a single-cell probe per
+   model under the new prompt + workload before launching the
+   headline batch, to surface "model fails to engage with the new
+   run.sh contract" regressions cheaply. The PR6 smoke
+   (`pr6-smoke-20260526`) covered `sonnet` on both targets — it engaged
+   and scored clean — so this is done for sonnet; `gemma`, `kimi`,
+   `minimax`, and `mistral` still want a probe each before the headline.
+3. **`activeDeadlineSeconds` ceiling.** What's the right Pod-level
+   timeout for 100×100? Empirically TBD; suggest first probe sets
+   `activeDeadlineSeconds: 3600` and the headline batch tunes from
+   there.
 
 ## Current state
 
-Scorer JSON schema: `phase5a-v1` (`harness/run_metrics.py:SCHEMA_VERSION`).
+Scorer JSON schema: `phase6-v1` (`harness/run_metrics.py:SCHEMA_VERSION`)
+on `feat/k8s-refactor`; `phase5a-v1` on `dev`.
 
-Per-cell artefacts under `runs/<batch-tag>/<run_id>/`:
-- `workspace/` — agent-authored files (including `PLAN.md`, the
-  multi-invocation working document)
-- `prompt_body.md` — rendered shared body (rung + target + SIDECAR);
-  `prompt.md` is a back-compat symlink to it
-- `trajectory.jsonl` — in-order concatenation of all 8 steps' opencode
-  events
+**Source of truth:** the GCS bucket. Per-cell artefacts land under
+`<bucket>/<prefix>/<batch-tag>/<run-id>/` directly from the scorer
+container's `mc mirror`. `pixi run pull <batch-tag>` syncs a batch
+back to `runs/<batch-tag>/` for local analysis; `pixi run aggregate
+runs/<batch-tag>` rolls it up into `analysis/aggregated.csv` for
+[analysis/headline.ipynb](analysis/headline.ipynb).
+
+**Per-cell artefacts** (under `<run-id>/` both in the bucket and
+after `pixi run pull`):
+
+- `workspace/` — agent-authored files (including `PLAN.md`)
+- `prompt_body.md` — rendered shared body
+- `trajectory.jsonl` — in-order concatenation of all 8 steps' opencode events
 - `agent_stderr.log` — in-order concatenation of all 8 steps' stderr
-- `agent_artifacts/session_export.json` — final attempted step's
-  opencode export
-- `agent_artifacts/steps/step_NN/` — per-step `trajectory.jsonl`,
-  `agent_stderr.log`, `session_export.json`, `step_meta.json`
-- `dns.log` — every DNS query the agent container made
-- `scorer.json` — full scoring record (`phase5a-v1` schema)
-- `report.md` — Jinja2-rendered per-cell report
-- `transcript.md` — human-readable opencode transcript (from the
-  final step's export)
-- `time_breakdown.json` — phase timings (from the final step's export)
-- `run_meta.json`, `run_meta.cell.json`, `run_meta.final.json` — orchestration metadata
-
-Per-batch artefacts under `runs/<batch-tag>/`:
-- `worklist.tsv` — input cells in seq order
-- `joblog.tsv` — per-cell runtime + exit code
-- `manifest.jsonl` — aggregated `run_meta` + `cell` + `scorer.json`
-- `summary.txt` — totals
-- `batch_report.md` — at-a-glance markdown rollup
-- `cell-logs/<run_id>.log` — per-cell stdout+stderr capture
-
-## Headline-run readiness
-
-What's blocking vs nice-to-have for the headline batch, in order of
-materiality:
-
-| Item | Required? | Status |
-|---|---|---|
-| Multi-invocation flow end-to-end | yes | ✓ verified on claude × {josh,mesa} and minimax × {josh,mesa} (32/32 step exits clean per cell, PLAN.md updated as expected) |
-| Permissive cell-identity schema | yes | ✓ |
-| `.jshd` LOC fix | yes | ✓ |
-| Batch-report diagnostics | yes | ✓ |
-| Durable upload to GCS | yes | ✓ host-side `orchestration/upload_batch.sh` (mc, no container path); `launch_batch.py --upload` auto-invokes it post-batch |
-| `WALL_CLOCK_BACKSTOP_SEC` bump to 3600s | yes | ✓ set in `.env` |
-| Model panel pinned to versioned slugs | yes | ✓ `config/models.yaml` pins the five-family panel (claude-opus-4.7, gemma-4-26b-a4b-it, kimi-k2.6, minimax-m2.7, mistral-medium-3.5) — verified `resolve_model.py` on each short name. The single open item: a one-cell gemma-4 sanity probe under the multi-invocation flow before the headline batch (gemma-3 failed it 0/4 in the phase-5c panel) |
-| Re-scoreable on completed runs | yes | ✓ verified by rescoring a panel-batch cell against its preserved workspace — same metrics modulo Mesa's stochastic O term. Recipe documented in [SCORING.md §Re-analysing completed runs](SCORING.md#re-analysing-completed-runs); a `rescore_batch.sh` wrapper is on the to-author list once a concrete methodology revision is in hand |
-| Acceptance-range methodology (SCORING.md Open Q #1) | post-headline | 📋 intentionally deferred — re-score path lets us revise the gate against frozen workspaces |
-| Predicted-vs-observed r² metric (SCORING.md Open Q #3) | post-headline | 📋 nice-to-have; same re-score-on-completed-runs path |
-| LLM-judge passes (SCORING.md §LLM-judge passes) | post-headline | 📋 not implemented; convenience-tier, not in the experimental yardstick |
-
-## Phase decisions (post-pilot)
-
-Three phase items that were previously listed as "pending" have all
-resolved — kept here so the record of *why* the decision went the
-way it did is preserved for future contributors.
-
-### Phase 4d — Durable upload to GCS via S3 interop ✓
-
-Implemented host-side rather than in the agent container — the agent
-image stays free of `mc` and of any object-storage credentials. The
-upload runs after a batch completes, against the per-batch run dir.
-
-- [orchestration/upload_batch.sh](orchestration/upload_batch.sh) —
-  reads `MINIO_*` env vars from `.env`, runs `mc alias set` then
-  `mc mirror --overwrite` against `runs/<batch-tag>/`. Idempotent
-  (re-mirroring only re-uploads changed objects).
-
-- [orchestration/launch_batch.py](orchestration/launch_batch.py)
-  `--upload` flag — auto-invokes `upload_batch.sh` against the
-  completed batch dir after report generation. Failure writes
-  `upload.log` under the batch dir but does not fail the batch
-  (the artefacts are still on local disk and the standalone script
-  is idempotent, so a host crash or transient upload error is
-  recoverable by rerunning `./orchestration/upload_batch.sh
-  runs/batch-<tag>` directly). Two invocation modes:
-
-  ```sh
-  # auto: upload runs at end of batch driver
-  uv run orchestration/launch_batch.py --cells panel.csv \
-    --batch-tag head-2026-05 --upload
-
-  # manual: any time after the batch finishes / for crash recovery
-  ./orchestration/upload_batch.sh runs/batch-head-2026-05
-  ```
-
-- [.env.example](.env.example) — documents `MINIO_ENDPOINT`,
-  `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`,
-  `MINIO_PREFIX`.
-
-- Host-side `mc` install is a one-liner; not pinned at the image
-  level since the image doesn't carry it.
-
-**Object layout under the bucket:**
-- `<prefix>/<batch-tag>/<run-id>/…` — per-cell artefacts
-- `<prefix>/<batch-tag>/batch_report.md` — per-batch report
-- `<prefix>/<batch-tag>/manifest.jsonl` — aggregated manifest
-
-### Recovery loop — retired
-
-H2 ("Recovery quality") and the phase-5b recovery-prompt mechanism
-have been retired. The multi-invocation flow's todos 5–8 (stub →
-implement → validate → cleanup) bake the same iterative
-self-correction into every cell's run, so a separate second-invocation
-recovery pass is no longer needed. EXPERIMENTAL_DESIGN reflects the
-hypothesis simplification.
-
-### Prompt rungs
-
-The rung-ladder is retired operationally — `RUNG` defaults to 5 in
-both `launch_run.sh` and `launch_batch.py`, and the headline panel is
-`model × target × replicates` only. `prompts/rungs/rung1_minimal.md`
-stays on disk in case a future variant wants to vary prompt detail,
-but is not used in the headline run.
+- `agent_artifacts/session_export.json` — final attempted step's opencode export
+- `agent_artifacts/steps/step_NN/` — per-step `trajectory.jsonl`, `agent_stderr.log`, `session_export.json`, `step_meta.json`
+- `scorer.json` — full scoring record
+- `scorer.fuzzy.json` — Q1/Q2/Q3 in-Pod judge output
+- `transcript.md` — human-readable opencode transcript
+- `run_meta.json` — orchestration metadata (model, target, image digests, timings)

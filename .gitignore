@@ -15,3 +15,17 @@ __pycache__/
 analysis/aggregated.csv
 analysis/figures/
 analysis/.ipynb_checkpoints/
+
+# K8s manifests rendered per-batch by orchestration/render_jobs.py — derived
+# artefacts, regenerable from the templates. Source of truth is the template +
+# CLI args.
+orchestration/rendered/
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# Josh fat jars fetched by `pixi run get-jars` (scripts/get_jars.py). Large
+# rolling binaries; source of truth is joshsim.org/dist/<branch>, pinned by
+# the recorded .sha256.
+jar/

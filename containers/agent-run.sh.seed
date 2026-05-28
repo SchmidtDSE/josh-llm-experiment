@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# ForeverTree simulation entrypoint.
+#
+# Contract: this script runs preprocessing + simulation + CSV emission
+# end-to-end. The scorer invokes it as `./run.sh` (with N_REPLICATES=100
+# set in the env, so the canonical 100-replicate workload runs once),
+# then reads `./output/`. Replicate count is parameterised through the
+# N_REPLICATES env var — default 2 below for fast iteration during
+# development.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+N_REPLICATES="${N_REPLICATES:-2}"
+
+# Fill in your implementation below. Use "$N_REPLICATES" in your
+# simulation invocation so the scorer's 100-replicate run picks up the
+# right scale without further changes.

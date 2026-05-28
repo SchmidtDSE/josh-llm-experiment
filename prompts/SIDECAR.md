@@ -10,7 +10,7 @@ You are running inside a container with the following pre-installed:
 - **Eclipse Temurin 21 JRE**.
 - **The Josh CLI** as `josh` on `PATH`. Subcommands: `run`, `validate`, `preprocess`, `discoverConfig`, `inspectJshd`, `inspect-exports`, `server`, `runRemote`.
 
-You may invoke `./run.sh` freely to self-test. Use what is already installed; do not assume internet access for package installation.
+Use what is already installed; do not assume internet access for package installation.
 
 ### AI workspace
 
@@ -18,10 +18,26 @@ Your working directory is `/sandbox`. Read, write, and edit any file inside it. 
 
 ### AI Inputs
 
-Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings over the bounding box specified in the prompt. Both are indexed by `(calendar_year, lat, lon)` and span 2024–2054; the simulation uses years 2024–2034 inclusive.
+Two CF-1.8 compliant netCDF files in `data/` provide annual climate forcings over the bounding box specified in the prompt. Both are indexed by `(calendar_year, lat, lon)` and span 2024–2124; the simulation uses years 2024–2123 inclusive (100 calendar years).
 
 - `data/maxtemp_synthetic.nc` — data variable `tasmax` (annual maximum air temperature, K).
 - `data/precip_synthetic.nc`  — data variable `pr` (precipitation flux).
+
+#### Grid and coverage
+
+Both files share one regular lat/lon grid (evenly spaced). You do not need to open
+the files to discover their shape — it is fixed and given here:
+
+| Dimension       | Size | Range                              |
+|-----------------|------|------------------------------------|
+| `calendar_year` | 101  | 2024–2124 (integer year, not CF time) |
+| `lat`           | 31   | 35.80 → 36.73 °N                   |
+| `lon`           | 50   | −119.52 → −117.98 °E               |
+
+Native grid = 31 × 50 = 1 550 cells per year. The fields are smooth, separable
+gradients: `tasmax` ≈ 285 K at the northern edge → ≈ 315 K at the southern edge in
+2024, warming +0.05 K/yr (≈ +5 K by 2124); `pr` ≈ 250 mm/yr at the eastern edge →
+≈ 550 mm/yr at the western edge (±40 mm/yr interannual, no long-term trend).
 
 #### Temperature
 
@@ -39,20 +55,9 @@ where `31_536_000` is the number of seconds in a 365-day year.
 
 ### Success criteria
 
-A single executable file `./run.sh` in the workspace root, plus whatever source files it invokes. When invoked:
+Your implementation must produce the output CSV(s) under `./output/`. **How that output is produced and run depends on your environment — see the Implementation directive above.**
 
-```sh
-cd /sandbox && ./run.sh
-```
-
-Your code must exit 0 and write `./output/results.csv`.
-
-Two requirements that are part of the delivery, not optional:
-
-- `./run.sh` must be executable. After writing it, run `chmod +x run.sh`. The scorer invokes the file as `./run.sh`; a script without the executable bit will not run.
-- Before you declare yourself done, execute `./run.sh` at least once yourself. Confirm it exits 0 and writes `./output/results.csv`. If it fails, fix the cause and re-run. A handoff that requires the user to do their own chmod or first-run debug is a failure.
-
-The CSV is UTF-8, comma-separated, with a header row. Required data columns:
+`output/results.csv` (or per-replicate CSVs — see the layouts below) is UTF-8, comma-separated, with a header row. Required data columns:
 
 | Column          | Type   | Unit          |
 |-----------------|--------|---------------|
@@ -65,7 +70,12 @@ The CSV is UTF-8, comma-separated, with a header row. Required data columns:
 
 Plus a per-cell identifier — either a string column `cell_id` or the pair `position.x` and `position.y`. Other columns are accepted and ignored.
 
-One row per (cell, year) for the eleven years 2024–2034 inclusive.
+**Two output layouts are accepted; pick whichever is natural for your framework:**
+
+- **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate (so a 1-replicate dev run still scores).
+- **One CSV per replicate** (Josh's canonical layout) at `output/results_{N}.csv` — `results_0.csv`, `results_1.csv`, and so on. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed. For Josh, set `exportFiles.patch = "file:///sandbox/output/results_{replicate}.csv"` and run with `--replicates` set to the replicate count.
+
+Total row count across whichever layout you pick: `n_cells × 100 years × N_REPLICATES`. Whether the year-2024 row reflects pre-growth state (`meanHeight = 0`) or post-growth state (`meanHeight ≈ Δh`) is up to your framework — pick whichever is natural.
 
 ### Working document
 
