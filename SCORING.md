@@ -128,6 +128,7 @@ JSON schema is `phase6-v1` (`harness/run_metrics.py:SCHEMA_VERSION`).
 | `target_conformance` | bool | Mechanical: Mesa imports + class subclassing, or `josh validate` exit zero. |
 | `conformance.{imports_mesa, subclasses_model, has_josh_files, has_jshd_files, josh_validate_exit_code}` | mixed | Per-target evidence fields backing the `target_conformance` rollup. |
 | `target_conformance_fuzzy` | enum | LLM-judge variant — see §LLM-judge passes below. |
+| `substantive_conformance` *(analysis-time, in `aggregated.csv`)* | bool | Rollup combining mechanical `target_conformance` with the fuzzy judge's Q1 verdict. True iff `target_conformance=True AND (Q1='yes' OR Q1 is missing)`. Q1∈{`no`,`partial`} downgrades the cell out of the conformance bucket. Catches the "near-empty `.josh` shell + Python sidecar does the real work" failure mode that the mechanical grep alone passes. Computed in [analysis/aggregate.py](analysis/aggregate.py); used as the entry gate for the cascade in [analysis/headline.ipynb](analysis/headline.ipynb)'s Panel A / B. |
 | `csv_exists` | bool | `./output/results.csv` was written. |
 | `csv_schema_ok` | bool | Subset-match required columns + target year present + required cols numeric-coercible. |
 | `csv_schema_errors` | list | Specific failure messages when `csv_schema_ok=false`. |
