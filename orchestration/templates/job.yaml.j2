@@ -241,10 +241,21 @@ spec:
               # on a higher-resolution synthetic grid.
               mkdir -p /sandbox/data
               cp /opt/data/*.nc /sandbox/data/
-              # Seed run.sh from the baked template (already x-bit).
-              # Agent fills in the body; N_REPLICATES wiring + default 2
-              # are pre-wired. Scorer overrides N_REPLICATES=100.
+              # Seed the workspace runtime. Bash arms (`josh`, `mesa`) get
+              # a stub run.sh the agent fills in. The constrained josh-mcp
+              # arm has no bash, so the agent doesn't author run.sh —
+              # instead it gets a one-line shim that execs a generic
+              # MCP-call forwarder (runner.py, immutable). The agent's
+              # job for the josh-mcp arm is to author /sandbox/mcp_calls.json
+              # alongside its .josh source; runner.py reads that JSON and
+              # forwards each entry to the `josh mcp` stdio server.
+              # See prompts/targets/josh-mcp.md for the agent contract.
+{% if target == "josh-mcp" %}
+              install -m 0755 /opt/josh-mcp-run.sh /sandbox/run.sh
+              install -m 0644 /opt/josh-mcp-runner.py /sandbox/runner.py
+{% else %}
               install -m 0755 /opt/run.sh.seed /sandbox/run.sh
+{% endif %}
               # Upload-on-failure is owned by the mirror-sidecar (see
               # initContainer below). Agent runs normally and exits with
               # its real code; if it OOMs, the sidecar (different cgroup)

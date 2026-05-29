@@ -111,6 +111,20 @@ COPY data/*.nc /opt/data/
 COPY containers/agent-run.sh.seed /opt/run.sh.seed
 RUN chmod 0755 /opt/run.sh.seed
 
+# josh-mcp arm: the constrained agent (no bash) doesn't author run.sh
+# itself; instead the prelude installs a one-line shim (run.sh) that
+# execs a harness-supplied generic MCP runner (runner.py), which reads
+# agent-authored /sandbox/mcp_calls.json and forwards every entry to
+# the `josh mcp` stdio server via the Python MCP client. The agent's
+# deliverable for this arm is the .josh source + mcp_calls.json;
+# runner.py is the immutable runtime. Both seeds live in the agent
+# image so the setup initContainer can install them target-aware (see
+# orchestration/templates/job.yaml.j2). See prompts/targets/josh-mcp.md
+# for the agent-facing contract.
+COPY containers/josh-mcp-runner.py /opt/josh-mcp-runner.py
+COPY containers/josh-mcp-run.sh /opt/josh-mcp-run.sh
+RUN chmod 0755 /opt/josh-mcp-run.sh
+
 # ---------- scorer stage ----------
 FROM base AS scorer
 COPY harness/ /opt/harness/
