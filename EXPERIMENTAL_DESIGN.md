@@ -365,10 +365,15 @@ sole egress observation layer (see §Egress observability).
 For `josh-mcp` cells the agent runs under the constrained palette
 (§Tool palette): no `bash`, the Josh pipeline via MCP. It self-tests
 by calling `josh_run_simulation` rather than executing `./run.sh`
-(which it cannot), and its deliverable is Josh source plus the `.jshd`
-it builds via `josh_preprocess_data`. The scorer materializes the
-canonical `run.sh` for these cells at scoring time (step 3), so the
-wall-clock cost metric stays measured the same way across all arms.
+(which it cannot), and its deliverable is Josh source plus a
+`mcp_calls.json` file listing the exact MCP tool calls that
+reproduce the simulation end-to-end. At scoring time, a harness-seeded
+generic Python runner (`runner.py`, installed alongside a one-line
+`run.sh` shim by the setup initContainer) reads `mcp_calls.json` and
+forwards every entry to the same `josh mcp` stdio server via the
+Python MCP client — so the scoring run uses the same MCP pathway the
+agent used during iteration, and the wall-clock cost metric stays
+measured the same way across all arms.
 
 A cell-total wall-clock backstop (`WALL_CLOCK_BACKSTOP_SEC`, default
 1800s; bump to 3600s for headline runs given 27–39 min observed cell
@@ -677,14 +682,22 @@ So the model drives the Josh pipeline — validate, preprocess a netCDF
 into a `.jshd`, run a simulation — through a typed tool surface rather
 than a shell, mirroring the real Josh product direction (Josh exposed
 as an MCP tool a model can call). This isolates "just the Josh parts"
-of the agent's loop. Because the constrained agent cannot author or
-execute `./run.sh`, the **harness supplies the canonical `run.sh`** for
-`josh-mcp` cells — the agent's deliverable is Josh source plus the
-`.jshd` it builds via MCP, and the scorer materializes a fixed run
-script keyed to a naming convention the directive enforces
-(`simulation.josh` / simulation `Main` / `external temperature` +
-`precipitation`). See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
-for how that script is built and wired.
+of the agent's loop. Because the constrained agent cannot execute
+`./run.sh`, the deliverable shape differs from the bash arms: instead
+of authoring `run.sh` itself, the agent authors **`mcp_calls.json`** —
+a JSON array of `{"tool": ..., "arguments": {...}}` objects mirroring
+the MCP `tools/call` interface that records the exact sequence of MCP
+calls the agent validated during iteration. At scoring time a
+harness-seeded generic Python runner (`runner.py`) reads that JSON and
+forwards every entry to the `josh mcp` stdio server via the Python MCP
+client. A one-line `run.sh` shim (`exec python /sandbox/runner.py`)
+makes the existing scorer path uniform across all three arms.
+A naming convention the directive enforces (`simulation.josh` /
+simulation `Main` / `external temperature` + `precipitation`) keeps
+the `.josh`-source surface narrow; units, paths, and variable names
+inside `mcp_calls.json` originate with the agent. See
+[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the runner +
+seed wiring.
 
 ## Stopping conditions
 

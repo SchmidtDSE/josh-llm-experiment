@@ -1,0 +1,98 @@
+"""Generic MCP-call forwarder for the josh-mcp arm's scorer-time run.
+
+Installed into /sandbox/runner.py by the per-cell setup initContainer when
+TARGET=josh-mcp (parallel to how agent-run.sh.seed lands at /sandbox/run.sh
+for the bash arms). The agent does not edit this file; the agent authors
+/sandbox/mcp_calls.json instead.
+
+Contract:
+- mcp_calls.json is a JSON array of {"tool": <name>, "arguments": {...}}
+  objects mirroring the MCP `tools/call` interface.
+- This runner opens one `josh mcp` stdio session, forwards every entry to
+  `session.call_tool(name, arguments)` in order, and aborts on the first
+  isError. No translation, no schema validation — what's in the JSON is
+  what gets sent.
+
+Two ergonomic mutations the runner does for the agent:
+
+1. **Strip a leading `josh_` from tool names.** During iteration the
+   agent sees its tools prefixed with the server name (`josh_preprocess_data`
+   etc. — opencode does that). When this runner talks to `josh mcp`
+   directly the server-side names are bare (`preprocess_data` etc.).
+   The agent can record either form in the JSON; the runner strips the
+   prefix if present so both work.
+
+2. **Expand the literal string `"$N_REPLICATES"`** anywhere in any
+   arguments value to `int(env.N_REPLICATES)` (default 2 for the
+   agent's self-test scope; the scorer overrides to 100 in
+   harness/runner.py).
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+WORKSPACE = Path("/sandbox")
+CONFIG_PATH = WORKSPACE / "mcp_calls.json"
+
+
+def _expand(obj, n_replicates: int):
+    """Replace the string sentinel "$N_REPLICATES" with the int env value.
+
+    Recurses through nested dicts + lists so a `data` map containing the
+    sentinel works too — though the canonical use is a top-level
+    `arguments.replicates`.
+    """
+    if obj == "$N_REPLICATES":
+        return n_replicates
+    if isinstance(obj, dict):
+        return {k: _expand(v, n_replicates) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_expand(x, n_replicates) for x in obj]
+    return obj
+
+
+async def main() -> int:
+    if not CONFIG_PATH.is_file():
+        print(f"ERROR: {CONFIG_PATH} not found — agent must author the MCP "
+              f"call list before scoring (see prompts/targets/josh-mcp.md)",
+              file=sys.stderr)
+        return 2
+
+    n_replicates = int(os.environ.get("N_REPLICATES", "2"))
+    raw = json.loads(CONFIG_PATH.read_text())
+    if not isinstance(raw, list):
+        print(f"ERROR: {CONFIG_PATH} must be a JSON array; got {type(raw).__name__}",
+              file=sys.stderr)
+        return 2
+    calls = _expand(raw, n_replicates)
+
+    params = StdioServerParameters(command="josh", args=["mcp"])
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            for i, entry in enumerate(calls, start=1):
+                tool = entry["tool"]
+                if tool.startswith("josh_"):
+                    tool = tool[len("josh_"):]
+                arguments = entry["arguments"]
+                print(f"[{i}/{len(calls)}] call_tool({tool!r})", flush=True)
+                result = await session.call_tool(tool, arguments)
+                if result.isError:
+                    print(f"ERROR: {tool} returned isError=True:", file=sys.stderr)
+                    for block in result.content:
+                        text = getattr(block, "text", repr(block))
+                        print(f"  {text}", file=sys.stderr)
+                    return 1
+    print(f"OK: {len(calls)} calls completed, N_REPLICATES={n_replicates}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))

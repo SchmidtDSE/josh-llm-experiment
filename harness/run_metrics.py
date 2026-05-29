@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import shutil
 import sys
 import traceback
 from pathlib import Path
@@ -30,21 +29,6 @@ from validators import acceptance, output_schema
 SCHEMA_VERSION = "phase6-v1"
 DEFAULT_TIMEOUT_S = 3600
 DEFAULT_ACCEPTANCE_RANGES = Path("/opt/harness/acceptance_ranges.json")
-
-
-def _materialize_josh_mcp_runscript(workspace: Path) -> None:
-    """Drop the harness's canonical run.sh into the workspace for the josh-mcp arm.
-
-    josh-mcp agents are constrained to Josh-via-MCP with no bash: they author only
-    Josh source and build `.jshd` via the MCP preprocess tool, never a run.sh. The
-    harness owns the run, so copy `run_josh_mcp.sh` (preprocess + run) to
-    `<workspace>/run.sh`, overwriting anything present, and the standard
-    `runner.run(./run.sh)` path scores it exactly like the other arms.
-    """
-    src = Path(__file__).resolve().parent / "run_josh_mcp.sh"
-    dst = workspace / "run.sh"
-    shutil.copyfile(src, dst)
-    dst.chmod(0o755)
 
 
 def _ordered_record(
@@ -145,14 +129,11 @@ def main(argv: list[str] | None = None) -> int:
         harness_errors.append(f"acceptance ranges read:\n{traceback.format_exc()}")
         ranges = {}
 
-    # josh-mcp: the agent never authored run.sh — supply the harness's canonical
-    # one (preprocess + run) before the runner times it.
-    if args.target == "josh-mcp":
-        try:
-            _materialize_josh_mcp_runscript(workspace)
-        except Exception:
-            harness_errors.append(f"materialize josh-mcp run.sh:\n{traceback.format_exc()}")
-
+    # The setup initContainer seeds /sandbox/run.sh for every target — bash
+    # arms get the stub the agent fills in; josh-mcp gets a one-line shim
+    # that execs the generic MCP runner (containers/josh-mcp-runner.py.seed,
+    # installed at /sandbox/runner.py) against agent-authored
+    # /sandbox/mcp_calls.json. The scorer's runner.run() path is uniform.
     try:
         runner_out = runner.run(workspace, args.timeout)
     except Exception:

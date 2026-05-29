@@ -12,10 +12,42 @@ script's declared config / externals). Pass absolute `/sandbox/...` paths to the
 `read`/`write`/`edit`/`glob`/`grep` work on your `/sandbox` workspace, and
 `webfetch` reads the Josh docs (below).
 
-Your model is run for you — you don't arrange execution yourself. Build your
-`.jshd` with `josh_preprocess_data` and self-test with `josh_run_simulation` (a
-2-replicate run), iterating on your `.josh` source until the run completes and
-writes the expected CSV(s) under `output/`.
+Your `/sandbox` includes a pre-populated `runner.py` — a generic MCP-call
+forwarder that the scorer invokes via `./run.sh` to time your model under the
+canonical 100-replicate workload. **Do not modify `runner.py`.** Its contract:
+it opens one `josh mcp` stdio session, reads `/sandbox/mcp_calls.json`, and
+forwards every entry to `session.call_tool(<tool>, <arguments>)` in order.
+
+**You must author `/sandbox/mcp_calls.json`** before declaring done. It is a
+JSON array of `{"tool": "...", "arguments": {...}}` objects recording the exact
+sequence of MCP calls that reproduces your model end-to-end: two
+`josh_preprocess_data` calls to build the `.jshd` files, then one
+`josh_run_simulation` call to run the simulation. The `arguments` map for each
+entry must match the MCP tool's input schema exactly — see the schema you saw
+when you invoked the same tool during self-test. As of the current Josh build,
+the relevant fields are:
+
+- `josh_preprocess_data`: `script` (path to your `.josh` file),
+  `simulation` ("Main"), `dataFile` (path to the netCDF),
+  `variable` (the netCDF variable name), `unitsStr` (the units string Josh
+  understands), `outputFile` (where to write the `.jshd`).
+- `josh_run_simulation`: `script` (path to your `.josh` file),
+  `simulation` ("Main"), `replicates` (use the literal string `"$N_REPLICATES"`
+  — `runner.py` substitutes the env var; your self-test runs at 2 replicates,
+  the scorer overrides to 100), `data` (a map of external resource name →
+  `.jshd` path).
+
+Tool names: use either the `josh_`-prefixed form you see in your tool list
+(`josh_preprocess_data`) or the bare server-side form (`preprocess_data`) —
+`runner.py` accepts both.
+
+Authoring `mcp_calls.json` is part of the task — the units, variable names,
+and `.jshd` paths are not provided by the harness; you supply them, matching
+the externals declared in your `.josh` source and the netCDFs in
+`/sandbox/data/`. Build your `.jshd` files with `josh_preprocess_data` and
+self-test the full pipeline with `josh_run_simulation` (a 2-replicate run),
+iterating on your `.josh` source until the run completes and writes the
+expected CSV(s) under `output/`.
 
 Use these fixed names so your model can be run as-is: the entry file
 `/sandbox/simulation.josh` with a simulation named `Main`, and two externals named

@@ -20,7 +20,9 @@ The 8 todos below are the full description of what each step entails. Each step'
 
 - [ ] **7. Validate that the outputs are as expected.** Spot-check `output/results.csv` (or the per-replicate CSVs) against the spec. Verify: (a) one row per `(cell, year, replicate)`, (b) `meanHeight` grows over time within each cell, (c) `nTrees = 10` throughout (no death/reproduction), (d) climate values vary by cell and year as expected, (e) the replicates have independent stochastic draws. Fix any discrepancies you find in the source files and re-run through the MCP tools until the output passes your own checks.
 
-- [ ] **8. Clean up the code to ensure it is readable and clean.** Remove dead code, debug prints, and stub-era placeholders; ensure variable / function names are self-documenting. Re-run the model through the MCP tools one final time to confirm the cleanup did not break anything.
+- [ ] **8. Author `/sandbox/mcp_calls.json` for the scorer's reproducer run.** The harness provides a generic Python runner at `/sandbox/runner.py` that forwards every JSON entry to the `josh mcp` server via the Python MCP client. Write `mcp_calls.json` as a JSON array of `{"tool": "...", "arguments": {...}}` capturing the *exact* MCP tool calls you used to (a) preprocess your two externals into `.jshd` files (two `josh_preprocess_data` entries) and (b) run the simulation (one `josh_run_simulation` entry). Use the literal string `"$N_REPLICATES"` as the value of the `replicates` argument so the scorer can override it to 100 at scoring time. Reuse the exact paths, variable names, and units you passed during your self-test — these are part of the task; the harness does not supply them. You can't execute the runner yourself (no shell), but a consistent `mcp_calls.json` will reproduce your validated self-test.
+
+- [ ] **9. Clean up the code to ensure it is readable and clean.** Remove dead code, debug prints, and stub-era placeholders from your `.josh` source and `mcp_calls.json`; ensure variable / external / file names are self-documenting. Re-run the model through the MCP tools one final time to confirm the cleanup did not break anything.
 
 ## Plan
 

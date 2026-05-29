@@ -181,6 +181,18 @@ this contract. The wall-clock comparison is only apples-to-apples
 when Q3 = `yes`; cells where Q3 = `no` or `partial` are reported
 but flagged in analysis.
 
+**`josh-mcp` arm.** The constrained agent doesn't author `run.sh` itself.
+The setup initContainer seeds two files into `/sandbox/`: a one-line
+`run.sh` shim (`exec python /sandbox/runner.py`) and a generic
+MCP-call forwarder (`runner.py`) that reads agent-authored
+`/sandbox/mcp_calls.json` and forwards every entry to the `josh mcp`
+stdio server via the Python MCP client. The agent's deliverable is
+`.josh` source + `mcp_calls.json`; the JSON is a literal record of
+the MCP tool calls the agent already validated during self-test
+(two `josh_preprocess_data` + one `josh_run_simulation`, with
+`"replicates": "$N_REPLICATES"` as a string sentinel the runner
+expands to 100). Q3 walks into `mcp_calls.json` for this arm.
+
 ## LLM-judge passes (post-hoc)
 
 Three free-form questions answered by Claude against each completed

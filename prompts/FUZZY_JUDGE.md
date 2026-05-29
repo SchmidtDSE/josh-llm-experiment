@@ -92,6 +92,17 @@ mechanical `did_run` field doesn't decompose into these sub-claims.
 Cells flagged `partial` or `no` are not apples-to-apples comparable
 on the wall-clock axis.
 
+For the `josh-mcp` arm, `./run.sh` execs the harness-supplied
+`runner.py` (a generic MCP-call forwarder, not authored by the agent),
+which reads agent-authored `workspace/mcp_calls.json` and forwards
+every entry to the `josh mcp` server via `session.call_tool(...)`.
+Walk `mcp_calls.json` instead of `./run.sh` and judge whether its
+entries carry (1) two `josh_preprocess_data` calls building the
+`.jshd` files; (2) a `josh_run_simulation` call with
+`"replicates": "$N_REPLICATES"` (the literal string sentinel that
+`runner.py` expands to 100 at scoring time); (3) the 100-year window
+inherent in the agent's `.josh` source.
+
 ## Output contract
 
 End your response with exactly one fenced JSON block matching this
