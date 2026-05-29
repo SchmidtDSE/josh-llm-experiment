@@ -34,7 +34,7 @@ This simulation requires operating across both space and time.
 - The region is discretized into a regular grid of square **patches**.
 - Patch size (the edge length of each cell) is a fixed parameter.
 
-| Parameter        | Default value                                    |
+| Parameter        | Value                                            |
 |------------------|--------------------------------------------------|
 | Patch edge length| 16 km                                            |
 | Bounding box low | 35.80° latitude, −119.52° longitude              |

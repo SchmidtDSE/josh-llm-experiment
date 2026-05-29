@@ -18,7 +18,7 @@ The 8 todos below are the full description of what each step entails. Each step'
 
 - [ ] **6. Complete the stubbed simulation with the real growth logic.** Replace the placeholder growth with the full climate-aware behavior requested in the spec. The CSV must now reflect real `meanHeight` / `meanAge` values that vary by cell and year. Re-invoke `./run.sh` to confirm the CSV has the expected shape under multiple replicates.
 
-- [ ] **7. Validate that the outputs are as expected.** Spot-check `./output/results.csv` against the spec. Verify: (a) one row per `(cell, year, replicate)`, (b) `meanHeight` grows over time within each cell, (c) `nTrees = 10` throughout (no death/reproduction), (d) climate values vary by cell and year as expected, (e) the two replicates (0 and 1) have independent stochastic draws. Fix any discrepancies you find in the source files and re-run `./run.sh` until the CSV passes your own checks.
+- [ ] **7. Validate that the outputs are as expected.** Spot-check `./output/results.csv` against the spec. Verify: (a) one row per `(cell, year, replicate)`, (b) `meanHeight` grows over time within each cell, (c) `nTrees = 10` throughout (no death/reproduction), (d) climate values by cell and year, (e) the two replicates (0 and 1) have independent stochastic draws. Fix any discrepancies you find in the source files and re-run `./run.sh` until the CSV passes your own checks.
 
 - [ ] **8. Clean up the code to ensure it is readable and clean.** Remove dead code, debug prints, and stub-era placeholders; ensure variable / function names are self-documenting. Re-run `./run.sh` one final time to confirm the cleanup did not break anything.
 
