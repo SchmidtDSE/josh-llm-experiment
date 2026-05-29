@@ -182,16 +182,18 @@ when Q3 = `yes`; cells where Q3 = `no` or `partial` are reported
 but flagged in analysis.
 
 **`josh-mcp` arm.** The constrained agent doesn't author `run.sh` itself.
-The setup initContainer seeds two files into `/sandbox/`: a one-line
-`run.sh` shim (`exec python /sandbox/runner.py`) and a generic
-MCP-call forwarder (`runner.py`) that reads agent-authored
+The setup initContainer installs two files into `/sandbox/`: a one-line
+`run.sh` shim (`exec python /sandbox/runner.py`) and a generic MCP-call
+forwarder (`runner.py`, immutable) that reads agent-authored
 `/sandbox/mcp_calls.json` and forwards every entry to the `josh mcp`
 stdio server via the Python MCP client. The agent's deliverable is
-`.josh` source + `mcp_calls.json`; the JSON is a literal record of
-the MCP tool calls the agent already validated during self-test
-(two `josh_preprocess_data` + one `josh_run_simulation`, with
-`"replicates": "$N_REPLICATES"` as a string sentinel the runner
-expands to 100). Q3 walks into `mcp_calls.json` for this arm.
+`.josh` source + `mcp_calls.json` — a JSON array of `{"tool": ...,
+"arguments": {...}}` recording the MCP calls it validated during
+self-test. The runner overrides `arguments.replicates` on any
+`run_simulation` call from the `N_REPLICATES` env var (mirrors the
+bash arm's `${N_REPLICATES:-2}` substitution — scorer sets it to 100),
+so the agent never threads env through the JSON. Q3 walks into
+`mcp_calls.json` for this arm.
 
 ## LLM-judge passes (post-hoc)
 

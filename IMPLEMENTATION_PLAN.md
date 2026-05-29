@@ -320,33 +320,36 @@ survive into the scorer's run — `runner.py` rebuilds them from the
 same JSON). It self-tests with `josh_run_simulation` (2 replicates)
 since it has no shell.
 
-**Scoring-time runtime: harness-seeded generic MCP runner.** Two
-files are seeded into `/sandbox/` by the setup initContainer when
+**Scoring-time runtime: harness-shipped generic MCP runner.** Two
+files are installed into `/sandbox/` by the setup initContainer when
 `TARGET=josh-mcp`:
-- [containers/josh-mcp-runner.py.seed](containers/josh-mcp-runner.py.seed) →
-  `/sandbox/runner.py` — generic forwarder, ~70 LOC, immutable. Opens
+- [containers/josh-mcp-runner.py](containers/josh-mcp-runner.py) →
+  `/sandbox/runner.py` — generic forwarder, ~85 LOC, immutable. Opens
   one `josh mcp` stdio session via the Python MCP client SDK, reads
   `/sandbox/mcp_calls.json`, and forwards every entry to
   `session.call_tool(name, arguments)` in order. Aborts on the first
-  `isError`. The only field it mutates is the literal string
-  `"$N_REPLICATES"` inside any `arguments` value, which it substitutes
-  with `int(env.N_REPLICATES)` (default 2; scorer overrides to 100).
-- [containers/josh-mcp-run.sh.seed](containers/josh-mcp-run.sh.seed) →
+  `isError`. Two ergonomic mutations: (a) strips a leading `josh_` from
+  tool names so the agent can record either form; (b) **overrides
+  `arguments.replicates` from the `N_REPLICATES` env var on any
+  `run_simulation` call** — mirrors the bash arm's contract exactly
+  (the scorer's [harness/runner.py:58](harness/runner.py#L58) sets
+  `env["N_REPLICATES"]="100"` before invoking `./run.sh`), so the agent
+  writes the replicate count it self-tested at and the scoring run
+  silently scales without any agent-side env handling.
+- [containers/josh-mcp-run.sh](containers/josh-mcp-run.sh) →
   `/sandbox/run.sh` — one-line shim (`exec python /sandbox/runner.py`)
   so the existing scorer path (`harness/runner.py` invokes `./run.sh`)
   is uniform across all three arms.
 
 **Agent's `mcp_calls.json` shape.** A JSON array of `{"tool": ...,
 "arguments": {...}}` objects mirroring the MCP `tools/call` interface
-verbatim. Canonical shape: two `josh_preprocess_data` entries (build
-`temperature.jshd` + `precipitation.jshd`), one `josh_run_simulation`
-entry with `"replicates": "$N_REPLICATES"`. Units, variable names,
-file paths, and the `data` map are agent-supplied — the harness does
-not provide them; they come from the agent's reading of the
-[SIDECAR](prompts/SIDECAR.md) spec sheet (which lists the netCDF
-metadata) and matching the externals declared in its `.josh` source.
-If the JSON is missing or malformed, the scoring run fails →
-`did_run=false`.
+verbatim — entries execute top-to-bottom in order. The agent records
+the sequence of MCP calls it used during a successful self-test; each
+entry's `arguments` map must match the tool's input schema (which the
+agent reads from its tool list during iteration). Units, variable
+names, file paths, and the `data` map are agent-supplied — the harness
+does not provide them. If the JSON is missing or malformed, the
+scoring run fails → `did_run=false`.
 
 **Naming conventions still enforced** (see
 [prompts/targets/josh-mcp.md](prompts/targets/josh-mcp.md)): entry
@@ -367,16 +370,16 @@ Inputs), not by poking the netCDFs — no dry run needed to learn them.
 | `config/opencode.josh-mcp.template.json` *(new)* | Constrained palette: `bash:false`, `webfetch:true`, `task:false`, `"josh*":true`, plus the `mcp.josh` local-server block (`timeout:120000`, `JAVA_TOOL_OPTIONS=-Xmx8g` to cap the MCP JVM). |
 | `config/requirements.txt` | Added `mcp==1.27.1` so the runner can drive `josh mcp` over stdio from Python. Inherited by both agent + scorer images. |
 | [orchestration/render_jobs.py](orchestration/render_jobs.py) | `VALID_TARGETS=("josh","mesa","josh-mcp")`; `_render_opencode_json` selects the josh-mcp template; memory defaults moved to `request==limit` (agent 16Gi, scorer 24Gi) to avoid the `MaxRAMPercentage` burst-gap eviction. |
-| [orchestration/templates/job.yaml.j2](orchestration/templates/job.yaml.j2) | Setup-initContainer seed install is target-aware: bash arms get `agent-run.sh.seed` → `/sandbox/run.sh`; `josh-mcp` gets `josh-mcp-run.sh.seed` → `/sandbox/run.sh` *and* `josh-mcp-runner.py.seed` → `/sandbox/runner.py`. |
-| `containers/josh-mcp-runner.py.seed` *(new)* | Generic MCP-call forwarder; immutable runtime; reads agent-authored `mcp_calls.json`. |
-| `containers/josh-mcp-run.sh.seed` *(new)* | One-line shim — `exec python /sandbox/runner.py`. |
+| [orchestration/templates/job.yaml.j2](orchestration/templates/job.yaml.j2) | Setup-initContainer install is target-aware: bash arms get `agent-run.sh.seed` → `/sandbox/run.sh` (a fill-in-the-body stub); `josh-mcp` gets `josh-mcp-run.sh` → `/sandbox/run.sh` *and* `josh-mcp-runner.py` → `/sandbox/runner.py` (both shipped artefacts, not templates). |
+| `containers/josh-mcp-runner.py` *(new)* | Generic MCP-call forwarder; immutable runtime; reads agent-authored `mcp_calls.json`; overrides `arguments.replicates` from env for the canonical 100-replicate scoring run. |
+| `containers/josh-mcp-run.sh` *(new)* | One-line shim — `exec python /sandbox/runner.py`. |
 | `prompts/targets/josh-mcp.md` *(updated)* | Directive tells the agent to author `mcp_calls.json`; `runner.py` is immutable; naming convention preserved. |
 | [prompts/SIDECAR.md](prompts/SIDECAR.md) §AI Inputs | Descriptive grid/coverage spec sheet (shared by all arms). |
 | [prompts/SIDECAR.md](prompts/SIDECAR.md) §Success criteria + [prompts/RUNSH.md](prompts/RUNSH.md) | The `run.sh` contract is factored out of SIDECAR into `RUNSH.md`; `render_jobs.py` appends it for full-tools arms only — the no-shell `josh-mcp` agent gets a custom directive that points at `mcp_calls.json`. SIDECAR keeps the framework-neutral output/CSV contract. |
 | `prompts/plans/{bash,mcp}/PLAN_TEMPLATE.md` | `mcp` variant gained a 9th todo asking the agent to author `mcp_calls.json` for the scorer's reproducer; existing cleanup todo renumbered + broadened. |
 | [prompts/FUZZY_JUDGE.md](prompts/FUZZY_JUDGE.md) | Q3 now tells the judge to walk into `mcp_calls.json` for josh-mcp cells (not `./run.sh`, which is a one-line shim). |
 | [harness/run_metrics.py](harness/run_metrics.py) | `--target` += `josh-mcp` (unchanged); the old `_materialize_josh_mcp_runscript` + `shutil` import are gone — the seed install handles every target uniformly. |
-| `harness/run_josh_mcp.sh` *(deleted)* | Replaced by the `josh-mcp-runner.py.seed` + `josh-mcp-run.sh.seed` pair. |
+| `harness/run_josh_mcp.sh` *(deleted)* | Replaced by the `josh-mcp-runner.py` + `josh-mcp-run.sh` pair. |
 | [harness/conformance.py](harness/conformance.py) | Dispatch `josh-mcp` → `_check_josh` (unchanged — identical conformance keeps the contrast clean). |
 | [harness/_files.py](harness/_files.py) | `_EXTENSIONS_BY_TARGET["josh-mcp"] = (".josh",)` (unchanged). |
 

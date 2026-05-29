@@ -367,13 +367,13 @@ For `josh-mcp` cells the agent runs under the constrained palette
 by calling `josh_run_simulation` rather than executing `./run.sh`
 (which it cannot), and its deliverable is Josh source plus a
 `mcp_calls.json` file listing the exact MCP tool calls that
-reproduce the simulation end-to-end. At scoring time, a harness-seeded
-generic Python runner (`runner.py`, installed alongside a one-line
-`run.sh` shim by the setup initContainer) reads `mcp_calls.json` and
-forwards every entry to the same `josh mcp` stdio server via the
-Python MCP client — so the scoring run uses the same MCP pathway the
-agent used during iteration, and the wall-clock cost metric stays
-measured the same way across all arms.
+reproduce the simulation end-to-end. At scoring time, a
+harness-shipped generic Python runner (`runner.py`, installed
+alongside a one-line `run.sh` shim by the setup initContainer) reads
+`mcp_calls.json` and forwards every entry to the same `josh mcp`
+stdio server via the Python MCP client — so the scoring run uses the
+same MCP pathway the agent used during iteration, and the wall-clock
+cost metric stays measured the same way across all arms.
 
 A cell-total wall-clock backstop (`WALL_CLOCK_BACKSTOP_SEC`, default
 1800s; bump to 3600s for headline runs given 27–39 min observed cell
@@ -688,16 +688,22 @@ of authoring `run.sh` itself, the agent authors **`mcp_calls.json`** —
 a JSON array of `{"tool": ..., "arguments": {...}}` objects mirroring
 the MCP `tools/call` interface that records the exact sequence of MCP
 calls the agent validated during iteration. At scoring time a
-harness-seeded generic Python runner (`runner.py`) reads that JSON and
-forwards every entry to the `josh mcp` stdio server via the Python MCP
-client. A one-line `run.sh` shim (`exec python /sandbox/runner.py`)
-makes the existing scorer path uniform across all three arms.
-A naming convention the directive enforces (`simulation.josh` /
-simulation `Main` / `external temperature` + `precipitation`) keeps
-the `.josh`-source surface narrow; units, paths, and variable names
+harness-shipped generic Python runner (`runner.py`) reads that JSON
+and forwards every entry to the `josh mcp` stdio server via the
+Python MCP client. A one-line `run.sh` shim (`exec python
+/sandbox/runner.py`) makes the existing scorer path uniform across
+all three arms. The runner mirrors the bash arms' replicate-count
+contract: it reads `N_REPLICATES` from env (the scorer's
+[harness/runner.py](harness/runner.py) sets it to 100 before invoking
+`./run.sh`) and silently overrides `arguments.replicates` on any
+`run_simulation` call — so the agent writes whatever count it
+self-tested at without threading env through the JSON. A naming
+convention the directive enforces (`simulation.josh` / simulation
+`Main` / `external temperature` + `precipitation`) keeps the
+`.josh`-source surface narrow; units, paths, and variable names
 inside `mcp_calls.json` originate with the agent. See
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the runner +
-seed wiring.
+install wiring.
 
 ## Stopping conditions
 

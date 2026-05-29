@@ -1,13 +1,14 @@
 """Generic MCP-call forwarder for the josh-mcp arm's scorer-time run.
 
 Installed into /sandbox/runner.py by the per-cell setup initContainer when
-TARGET=josh-mcp (parallel to how agent-run.sh.seed lands at /sandbox/run.sh
-for the bash arms). The agent does not edit this file; the agent authors
-/sandbox/mcp_calls.json instead.
+TARGET=josh-mcp (alongside a one-line /sandbox/run.sh shim that execs us).
+The agent does not edit this file; the agent authors /sandbox/mcp_calls.json
+instead.
 
 Contract:
 - mcp_calls.json is a JSON array of {"tool": <name>, "arguments": {...}}
-  objects mirroring the MCP `tools/call` interface.
+  objects mirroring the MCP `tools/call` interface. Entries are executed
+  in order, top to bottom.
 - This runner opens one `josh mcp` stdio session, forwards every entry to
   `session.call_tool(name, arguments)` in order, and aborts on the first
   isError. No translation, no schema validation — what's in the JSON is
@@ -22,10 +23,13 @@ Two ergonomic mutations the runner does for the agent:
    The agent can record either form in the JSON; the runner strips the
    prefix if present so both work.
 
-2. **Expand the literal string `"$N_REPLICATES"`** anywhere in any
-   arguments value to `int(env.N_REPLICATES)` (default 2 for the
-   agent's self-test scope; the scorer overrides to 100 in
-   harness/runner.py).
+2. **Override `arguments.replicates` from the N_REPLICATES env var on any
+   `run_simulation` call.** The scorer's harness/runner.py sets
+   N_REPLICATES=100 on the subprocess env before invoking `./run.sh`;
+   the shim execs us, so we inherit it. Mirrors the bash arms' contract
+   exactly — agents write whatever replicate count they self-tested at
+   (likely 2) and the scoring run silently overrides to 100, so the
+   agent never has to deal with env quoting or sentinel strings.
 """
 from __future__ import annotations
 
@@ -42,22 +46,6 @@ WORKSPACE = Path("/sandbox")
 CONFIG_PATH = WORKSPACE / "mcp_calls.json"
 
 
-def _expand(obj, n_replicates: int):
-    """Replace the string sentinel "$N_REPLICATES" with the int env value.
-
-    Recurses through nested dicts + lists so a `data` map containing the
-    sentinel works too — though the canonical use is a top-level
-    `arguments.replicates`.
-    """
-    if obj == "$N_REPLICATES":
-        return n_replicates
-    if isinstance(obj, dict):
-        return {k: _expand(v, n_replicates) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_expand(x, n_replicates) for x in obj]
-    return obj
-
-
 async def main() -> int:
     if not CONFIG_PATH.is_file():
         print(f"ERROR: {CONFIG_PATH} not found — agent must author the MCP "
@@ -66,12 +54,11 @@ async def main() -> int:
         return 2
 
     n_replicates = int(os.environ.get("N_REPLICATES", "2"))
-    raw = json.loads(CONFIG_PATH.read_text())
-    if not isinstance(raw, list):
-        print(f"ERROR: {CONFIG_PATH} must be a JSON array; got {type(raw).__name__}",
-              file=sys.stderr)
+    calls = json.loads(CONFIG_PATH.read_text())
+    if not isinstance(calls, list):
+        print(f"ERROR: {CONFIG_PATH} must be a JSON array; "
+              f"got {type(calls).__name__}", file=sys.stderr)
         return 2
-    calls = _expand(raw, n_replicates)
 
     params = StdioServerParameters(command="josh", args=["mcp"])
     async with stdio_client(params) as (read, write):
@@ -81,7 +68,13 @@ async def main() -> int:
                 tool = entry["tool"]
                 if tool.startswith("josh_"):
                     tool = tool[len("josh_"):]
-                arguments = entry["arguments"]
+                arguments = dict(entry["arguments"])
+                # Scoring-time replicate override — mirrors the bash arm's
+                # ${N_REPLICATES:-2} substitution in run.sh. Agent's
+                # authored value is replaced silently; the agent never has
+                # to thread an env var through the JSON.
+                if tool == "run_simulation":
+                    arguments["replicates"] = n_replicates
                 print(f"[{i}/{len(calls)}] call_tool({tool!r})", flush=True)
                 result = await session.call_tool(tool, arguments)
                 if result.isError:

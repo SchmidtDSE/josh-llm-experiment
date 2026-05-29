@@ -121,9 +121,9 @@ RUN chmod 0755 /opt/run.sh.seed
 # image so the setup initContainer can install them target-aware (see
 # orchestration/templates/job.yaml.j2). See prompts/targets/josh-mcp.md
 # for the agent-facing contract.
-COPY containers/josh-mcp-runner.py.seed /opt/josh-mcp-runner.py.seed
-COPY containers/josh-mcp-run.sh.seed /opt/josh-mcp-run.sh.seed
-RUN chmod 0755 /opt/josh-mcp-run.sh.seed
+COPY containers/josh-mcp-runner.py /opt/josh-mcp-runner.py
+COPY containers/josh-mcp-run.sh /opt/josh-mcp-run.sh
+RUN chmod 0755 /opt/josh-mcp-run.sh
 
 # ---------- scorer stage ----------
 FROM base AS scorer
