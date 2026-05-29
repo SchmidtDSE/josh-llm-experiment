@@ -26,7 +26,7 @@ import loc
 import runner
 from validators import acceptance, output_schema
 
-SCHEMA_VERSION = "phase6-v1"
+SCHEMA_VERSION = "phase6-v2"
 DEFAULT_TIMEOUT_S = 3600
 DEFAULT_ACCEPTANCE_RANGES = Path("/opt/harness/acceptance_ranges.json")
 

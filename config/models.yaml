@@ -21,12 +21,15 @@
 #   - minimax-m2 → minimax-m2.7 (same shape).
 #   - mistral-large-2411 retired; mistral-medium-3.5 is the current
 #     main-line dense Mistral.
-claude:   openrouter/anthropic/claude-opus-4.7
 sonnet:   openrouter/anthropic/claude-sonnet-4.6
 gemma:    openrouter/google/gemma-4-26b-a4b-it
 kimi:     openrouter/moonshotai/kimi-k2.6
 minimax:  openrouter/minimax/minimax-m2.7
-mistral:  openrouter/mistralai/mistral-medium-3.5
+mistral:  openrouter/mistralai/codestral-2508
+glm:      openrouter/z-ai/glm-5.1
+qwen:     openrouter/qwen/qwen-3.7-max
+nemotron:  openrouter/nvidia/nemotron-3-120b-a12b
+deepseek:  openrouter/deepseek/deepseek-v4-pro
 
 # Judge model: not part of the agent panel; used by
 # containers/run-judge.sh (in-Pod LLM judge). Pinned to a different

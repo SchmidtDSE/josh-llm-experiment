@@ -3,8 +3,8 @@
 
 Invoked from containers/run-judge.sh per cell (inside the scorer
 container). Reads the opencode run stdout transcript, extracts the
-LAST fenced ```json block, validates it against the fuzzy-v2 schema
-(Q1 + Q2 + Q3), and writes scorer.fuzzy.json.
+LAST fenced ```json block, validates it against the fuzzy-v3 schema
+(Q1 + Q2 + Q3 + Q4), and writes scorer.fuzzy.json.
 
 On parse / validation failure, still writes scorer.fuzzy.json with a
 `parse_error` field and a snippet of the raw output, so a missing
@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 VALID_ANSWER = {"yes", "no", "partial"}
+VALID_ANSWER_WITH_NA = {"yes", "no", "partial", "n-a"}
 JSON_FENCE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 
 
@@ -39,14 +40,20 @@ def extract_last_json_block(text: str) -> str | None:
     return matches[-1].strip()
 
 
-def _validate_yes_no_partial(parsed: dict, key: str, errs: list[str]) -> None:
-    """Validate a Q1- or Q3-shaped {answer, justification} block in place."""
+def _validate_answer_block(
+    parsed: dict, key: str, errs: list[str], *, allowed: set[str] = VALID_ANSWER
+) -> None:
+    """Validate an {answer, justification} block in place.
+
+    `allowed` is the set of legal `answer` values for this question — Q1/Q3
+    accept yes/no/partial, Q4 additionally accepts n-a for non-Mesa cells.
+    """
     q = parsed.get(key)
     if not isinstance(q, dict):
         errs.append(f"{key} missing or not an object")
         return
-    if q.get("answer") not in VALID_ANSWER:
-        errs.append(f"{key}.answer not in {sorted(VALID_ANSWER)}: {q.get('answer')!r}")
+    if q.get("answer") not in allowed:
+        errs.append(f"{key}.answer not in {sorted(allowed)}: {q.get('answer')!r}")
     if not isinstance(q.get("justification"), str) or not q.get("justification").strip():
         errs.append(f"{key}.justification missing or empty")
 
@@ -54,14 +61,15 @@ def _validate_yes_no_partial(parsed: dict, key: str, errs: list[str]) -> None:
 def validate(parsed: dict) -> list[str]:
     """Return a list of validation errors. Empty list = valid."""
     errs: list[str] = []
-    _validate_yes_no_partial(parsed, "q1", errs)
+    _validate_answer_block(parsed, "q1", errs)
     q2 = parsed.get("q2")
     if not isinstance(q2, dict):
         errs.append("q2 missing or not an object")
     else:
         if not isinstance(q2.get("observations"), str) or not q2.get("observations").strip():
             errs.append("q2.observations missing or empty")
-    _validate_yes_no_partial(parsed, "q3", errs)
+    _validate_answer_block(parsed, "q3", errs)
+    _validate_answer_block(parsed, "q4", errs, allowed=VALID_ANSWER_WITH_NA)
     return errs
 
 
@@ -80,6 +88,7 @@ def write_error_record(
         "q1": None,
         "q2": None,
         "q3": None,
+        "q4": None,
     }
     out_path.write_text(json.dumps(record, indent=2) + "\n")
 
@@ -161,6 +170,10 @@ def main() -> int:
         "q3": {
             "answer": parsed["q3"]["answer"],
             "justification": parsed["q3"]["justification"].strip(),
+        },
+        "q4": {
+            "answer": parsed["q4"]["answer"],
+            "justification": parsed["q4"]["justification"].strip(),
         },
     }
     args.out.write_text(json.dumps(record, indent=2) + "\n")
