@@ -65,8 +65,13 @@ ROW_FIELDS = [
     "model",
     "target",
     "rep_idx",
-    # scorer headline gates
+    # scorer headline gates. `substantive_conformance` rolls up the
+    # mechanical `target_conformance` AND the fuzzy judge's Q1 verdict —
+    # catches the failure mode where the agent ships an empty .josh
+    # shell that parses cleanly while a sidecar Python script does the
+    # actual work. See _flatten for the truth table.
     "target_conformance",
+    "substantive_conformance",
     "csv_exists",
     "csv_schema_ok",
     "did_run",
@@ -306,6 +311,19 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
     step_totals = _sum_step_exports(cell_dir)
     fuzzy = _load_fuzzy(cell_dir)
 
+    # Substantive-conformance gate. Combines the mechanical
+    # `target_conformance` with the fuzzy judge's Q1 verdict so cells
+    # that ship a near-empty .josh shell + a Python sidecar can no
+    # longer slip through as "conformed". Truth table:
+    #   target_conf=True  + Q1=yes      → True   (substantive use)
+    #   target_conf=True  + Q1=no       → False  (mechanical-only pass)
+    #   target_conf=True  + Q1=partial  → False  (framework scaffolded but not load-bearing)
+    #   target_conf=True  + Q1=None     → True   (no judge data — old batch, give benefit of doubt)
+    #   target_conf=False + anything    → False  (no .josh / mesa import at all)
+    mech = bool(scorer.get("target_conformance"))
+    q1 = _safe_get(fuzzy, "q1", "answer")
+    substantive = mech and (q1 is None or q1 == "yes")
+
     return {
         "batch_tag": batch_tag,
         "run_id": cell_id,
@@ -313,6 +331,7 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
         "target": target_from_id,
         "rep_idx": rep_idx,
         "target_conformance": scorer.get("target_conformance"),
+        "substantive_conformance": substantive,
         "csv_exists": scorer.get("csv_exists"),
         "csv_schema_ok": scorer.get("csv_schema_ok"),
         "did_run": scorer.get("did_run"),
