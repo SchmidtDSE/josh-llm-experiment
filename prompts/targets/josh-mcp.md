@@ -38,13 +38,6 @@ Documentation: https://raw.githubusercontent.com/SchmidtDSE/josh/refs/heads/dev/
 
 ## MCP tool reference
 
-The following is the authoritative `josh mcp` server's tool contract, captured
-verbatim from the `tools/list` response of the Josh build you'll be running
-against. Use this when authoring `mcp_calls.json` — your `arguments` map for
-each call must match these schemas. Tool names are shown with the `josh_`
-prefix you see in your tool list; the bare form (`preprocess_data` etc.) is
-also accepted by the runner.
-
 ### `josh_preprocess_data`
 
 Preprocesses an external geospatial data file into Josh's binary .jshd format, aligned to a simulation grid defined in a .josh script. Run this once per data file before running the simulation that uses it. Supported input formats: NetCDF (.nc), GeoTIFF (.tiff/.tif), or an existing .jshd file. The output .jshd file is referenced from Josh scripts using external data expressions such as 'load "mydata.jshd" as temperature'. Use .jshdz as the output extension for compressed output.
