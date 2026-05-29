@@ -25,7 +25,7 @@ sonnet:   openrouter/anthropic/claude-sonnet-4.6
 gemma:    openrouter/google/gemma-4-26b-a4b-it
 kimi:     openrouter/moonshotai/kimi-k2.6
 minimax:  openrouter/minimax/minimax-m2.7
-mistral:  openrouter/mistralai/mistral-large-2512
+mistral:  openrouter/mistralai/mistral-medium-3-5
 glm:      openrouter/z-ai/glm-5.1
 qwen:     openrouter/qwen/qwen-3.7-max
 nemotron:  openrouter/nvidia/nemotron-3-120b-a12b
