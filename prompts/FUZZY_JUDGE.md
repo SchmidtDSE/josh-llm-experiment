@@ -27,7 +27,7 @@ Mesa cells, `has_josh_files` for Josh cells).
 
 ## Your task
 
-Answer three questions about this specific cell.
+Answer four questions about this specific cell.
 
 **Q1. Did the agent use the named target framework as the primary
 modelling vehicle?**
@@ -105,6 +105,38 @@ overrides `replicates` from the `N_REPLICATES` env var at scoring time,
 so the agent's authored `replicates` value is informational only —
 don't penalise an authored value of `2` (their self-test count) on Q3.
 
+**Q4. Does the Mesa implementation use `decimal.Decimal` for the
+growth dynamics, or fall back to native floats?**
+
+Mesa cells are instructed (see `prompts/targets/mesa.md` §Numerical
+precision) to compute the growth equation — height accumulation, %T,
+%P, the stochastic offset O, and Δh — using `decimal.Decimal` rather
+than native `float`. This matches Josh's default `BigDecimal`
+arithmetic; without it the Josh-vs-Mesa contrast confounds the
+framework comparison with a numeric-representation comparison. The
+CSV output is still float; Decimal is computation-only.
+
+Four-state answer:
+- `yes`: the per-step growth math operates on `Decimal` values. The
+  agent imports `decimal`, instantiates `Decimal` from string literals
+  (`Decimal("0.05")`, not `Decimal(0.05)`), casts the numpy noise draw
+  to `Decimal` before it multiplies into the height, and accumulates
+  in `Decimal`. CSV writes cast back to `float` at the boundary —
+  fine.
+- `partial`: `decimal` is imported and used somewhere, but the actual
+  growth-equation arithmetic still happens in `float` (e.g. constants
+  defined as `Decimal` but multiplied via numpy-vectorised float
+  paths; Decimal used for a single derived quantity but not the full
+  Δh = Δh_max · %T · %P · O chain). Note which.
+- `no`: `decimal` is not imported, or is imported but unused for the
+  dynamics. The agent runs the growth equation in native `float`.
+- `n-a`: this is a Josh or josh-mcp cell. Josh's runtime is already
+  `BigDecimal`-backed; the Decimal directive only applies to Mesa.
+
+Determine the target by reading the `conformance` block in
+`scorer.json` (or `target` if present). For non-Mesa cells, answer
+`n-a` with a one-line justification noting the target.
+
 ## Output contract
 
 End your response with exactly one fenced JSON block matching this
@@ -124,12 +156,17 @@ parse cleanly and validate.
   "q3": {
     "answer": "yes",
     "justification": "<one sentence noting which of preprocess / 100-replicates / 100-years are present>"
+  },
+  "q4": {
+    "answer": "yes",
+    "justification": "<one sentence; for non-Mesa cells use answer 'n-a' and note the target>"
   }
 }
 ```
 
 `q1.answer` and `q3.answer` must each be one of `"yes"`, `"no"`, or `"partial"` exactly (lowercase).
-`q1.justification` and `q3.justification` must each be a single sentence.
+`q4.answer` must be one of `"yes"`, `"no"`, `"partial"`, or `"n-a"` exactly (lowercase) — use `"n-a"` only for non-Mesa (Josh / josh-mcp) cells.
+`q1.justification`, `q3.justification`, and `q4.justification` must each be a single sentence.
 `q2.observations` must be free text, 2–4 sentences.
 
 Do not include any other top-level keys. Do not emit multiple JSON

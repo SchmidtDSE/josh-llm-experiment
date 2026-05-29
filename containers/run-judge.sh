@@ -5,7 +5,7 @@
 # resulting scorer.fuzzy.json ships to the bucket in the same upload as
 # scorer.json.
 #
-# Schema: fuzzy-v2; rubric in FUZZY_JUDGE.md; reviewer agent config in
+# Schema: fuzzy-v3; rubric in FUZZY_JUDGE.md; reviewer agent config in
 # opencode.judge.json; parse logic in _fuzzy_parse.py.
 #
 # Inputs (cell-data tree from the agent initContainer + the scorer):
@@ -35,7 +35,7 @@
 
 set -uo pipefail
 
-SCHEMA_VERSION="fuzzy-v2"
+SCHEMA_VERSION="fuzzy-v3"
 CELL_DATA_DIR="${CELL_DATA_DIR:-/cell-data}"
 JUDGE_MODEL="${JUDGE_MODEL:-codex}"
 

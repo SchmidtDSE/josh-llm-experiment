@@ -8,7 +8,7 @@ flow) and [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 (engineering build state — includes the in-flight Phase 6 k8s
 refactor narrative this scorer shape comes out of).
 
-> **Status (2026-05-20, schema `phase6-v1`).** The scorer gates on
+> **Status (2026-05-29, schema `phase6-v2`).** The scorer gates on
 > schema, fits a per-cell `observed ~ predicted` regression against
 > the spec's deterministic prediction (the headline ecology gate),
 > captures real wall-clock under a 100-replicate × 100-year `./run.sh`
@@ -19,7 +19,12 @@ refactor narrative this scorer shape comes out of).
 > regression at β≈1. The acceptance bands are derived from a
 > spec-faithful Python reference simulator
 > ([data/reference_sim.py](data/reference_sim.py)) run against the
-> committed synthetic climate netCDFs, not hand-picked.
+> committed synthetic climate netCDFs, not hand-picked. As of
+> `phase6-v2` the reference simulator and the Mesa-target directive
+> both run growth dynamics under `decimal.Decimal` to match Josh's
+> native `BigDecimal` precision; the scorer surfaces both a mechanical
+> `conformance.uses_decimal` field and a fuzzy-judge Q4 to verify
+> Mesa cells honoured this.
 
 ## Scoring axes
 
@@ -106,27 +111,28 @@ precondition: without `csv_schema_ok=true` the ecology metrics are
 undefined and recorded as null with `height_in_range=false` /
 `occupancy_in_range=false`.
 
-### What changed vs the previous (phase5a) scorer
+### What changed vs the previous (phase5a / phase6-v1) scorer
 
-| Axis | phase5a-v1 | phase6-v1 |
-|---|---|---|
-| Target conformance | mechanical + fuzzy placeholder | unchanged (fuzzy gets a real implementation in PR2) |
-| Schema gate | as below | unchanged |
-| Internal consistency | Δh sign, Δh ceiling, age step, nTrees change, climate Spearmans — `consistency.*` fields | **dropped entirely** — diagnostic during methodology-building, redundant once regression β catches the same failure modes |
-| Spec-parameter conformance | mean-band on `height_year10` / `occupancy_year10` over an 11-year, single-replicate run | **regression band** β/α/R² on `observed ~ predicted` over a 100-year, 100-replicate run; mean-band kept as a secondary sanity check |
-| Acceptance bands | hand-picked from prior pilot data | **derived empirically** from a spec-faithful Python reference simulator against the committed synthetic climate |
-| Wall clock | reported, not used | **headline metric** — large enough under 100×100 to be meaningful for Josh-vs-Mesa execution-cost comparisons |
-| LOC + entropy | unchanged | unchanged |
+| Axis | phase5a-v1 | phase6-v1 | phase6-v2 |
+|---|---|---|---|
+| Target conformance | mechanical + fuzzy placeholder | mechanical grep + fuzzy Q1 (real implementation) | adds `conformance.uses_decimal` — does the Mesa source import `decimal`? Sibling evidence field; does **not** gate the `target_conformance` rollup. |
+| Schema gate | as below | unchanged | unchanged |
+| Internal consistency | Δh sign, Δh ceiling, age step, nTrees change, climate Spearmans — `consistency.*` fields | **dropped entirely** — diagnostic during methodology-building, redundant once regression β catches the same failure modes | unchanged |
+| Spec-parameter conformance | mean-band on `height_year10` / `occupancy_year10` over an 11-year, single-replicate run | **regression band** β/α/R² on `observed ~ predicted` over a 100-year, 100-replicate run; mean-band kept as a secondary sanity check | unchanged on shape; reference-simulator arithmetic moved from `np.float64` to `decimal.Decimal` so `_reference_observed` β/α/R² in `acceptance_ranges.json` are re-derived under Decimal precision (matching Josh's `BigDecimal` and the Mesa directive). |
+| Acceptance bands | hand-picked from prior pilot data | **derived empirically** from a spec-faithful Python reference simulator against the committed synthetic climate | unchanged on derivation chain; bands regenerated under Decimal precision. Tolerance windows (β ∈ [0.95, 1.05], α ∈ [−0.5, 0.5], R² > 0.95) carry over unchanged. |
+| Wall clock | reported, not used | **headline metric** — large enough under 100×100 to be meaningful for Josh-vs-Mesa execution-cost comparisons | unchanged |
+| LOC + entropy | unchanged | unchanged | unchanged |
+| Fuzzy judge | Q1/Q2 (`fuzzy-v1`) | Q1+Q2+Q3 (`fuzzy-v2`) | **adds Q4** ("Mesa using `decimal.Decimal` for dynamics?"); schema bumps to `fuzzy-v3`; Q4 accepts `n-a` for non-Mesa cells. |
 
 ## Metrics
 
 All scoring is mechanical at experiment time. The current scorer
-JSON schema is `phase6-v1` (`harness/run_metrics.py:SCHEMA_VERSION`).
+JSON schema is `phase6-v2` (`harness/run_metrics.py:SCHEMA_VERSION`).
 
 | Metric | Type | Source |
 | --- | --- | --- |
 | `target_conformance` | bool | Mechanical: Mesa imports + class subclassing, or `josh validate` exit zero. |
-| `conformance.{imports_mesa, subclasses_model, has_josh_files, has_jshd_files, josh_validate_exit_code}` | mixed | Per-target evidence fields backing the `target_conformance` rollup. |
+| `conformance.{imports_mesa, subclasses_model, uses_decimal, has_josh_files, has_jshd_files, josh_validate_exit_code}` | mixed | Per-target evidence fields backing the `target_conformance` rollup. `uses_decimal` is Mesa-only signal (regex on `import decimal` / `from decimal import`); for Josh / josh-mcp it is always `false` (Josh runtime is `BigDecimal`-backed natively, not source-detectable). |
 | `target_conformance_fuzzy` | enum | LLM-judge variant — see §LLM-judge passes below. |
 | `substantive_conformance` *(analysis-time, in `aggregated.csv`)* | bool | Rollup combining mechanical `target_conformance` with the fuzzy judge's Q1 verdict. True iff `target_conformance=True AND (Q1='yes' OR Q1 is missing)`. Q1∈{`no`,`partial`} downgrades the cell out of the conformance bucket. Catches the "near-empty `.josh` shell + Python sidecar does the real work" failure mode that the mechanical grep alone passes. Computed in [analysis/aggregate.py](analysis/aggregate.py); used as the entry gate for the cascade in [analysis/headline.ipynb](analysis/headline.ipynb)'s Panel A / B. |
 | `csv_exists` | bool | `./output/results.csv` was written. |
@@ -198,7 +204,7 @@ so the agent never threads env through the JSON. Q3 walks into
 
 ## LLM-judge passes (post-hoc)
 
-Three free-form questions answered by Claude against each completed
+Four free-form questions answered by Claude against each completed
 cell's workspace + transcript. Purpose: human-organisation and
 contract verification, not headline scoring. The mechanical axes above
 remain the experimental yardstick.
@@ -222,14 +228,26 @@ is the apples-to-apples verification for the wall-clock metric —
 see §The `./run.sh` contract above. Added in phase-6 (PR2 of the
 k8s refactor).
 
+**Q4 — "Does the Mesa implementation use `decimal.Decimal` for
+growth dynamics?"** Mesa-only. Verifies the agent honoured the
+Numerical-precision directive in `prompts/targets/mesa.md`: are the
+per-step growth quantities (Δh, %T, %P, O, height accumulator)
+computed in `Decimal`, or did the implementation fall back to native
+`float`? The mechanical `conformance.uses_decimal` field catches
+"is `decimal` imported", but a substantive check needs the judge to
+walk the dynamics. Answers `yes` / `no` / `partial`, plus `n-a` for
+Josh / josh-mcp cells (Josh's runtime is `BigDecimal`-backed
+natively). Added in phase-6 (post-PR6 refactor); paired with the
+`phase6-v2` mechanical schema bump.
+
 ### Spec
 
 | Field | Value |
 | --- | --- |
-| Input | `workspace/` (source files), `transcript.md` (rendered opencode transcript), `scorer.json` (mechanical outcome) |
+| Input | `workspace/` (source files), `transcript.md` (rendered opencode transcript), `scorer.json` (mechanical outcome — Q4 reads `conformance.target` / `conformance.imports_mesa` to detect Mesa cells) |
 | Output file | `<run-id>/scorer.fuzzy.json` |
 | Judge model | `anthropic/claude-opus-4.7` (same `claude` short name we use elsewhere) |
-| Schema | `{"q1": {...}, "q2": {...}, "q3": {...}, "judge_model_id": "...", "schema_version": "fuzzy-v2"}` |
+| Schema | `{"q1": {...}, "q2": {...}, "q3": {...}, "q4": {...}, "judge_model_id": "...", "schema_version": "fuzzy-v3"}` |
 | When run | Post-hoc — never gates the cell from completing |
 | Cost | ~$0.05–0.20 per cell |
 

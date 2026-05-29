@@ -1,11 +1,11 @@
 {
-  "schema_version": "phase6-v1",
+  "schema_version": "phase6-v2",
   "_generated_by": "data/reference_sim.py",
   "_climate_inputs": [
     "data/maxtemp_synthetic.nc",
     "data/precip_synthetic.nc"
   ],
-  "_note": "Generated artefact \u2014 do NOT hand-edit. Bands derived from a spec-faithful reference simulation against the committed synthetic climate netCDFs. The headline gate is the observed-vs-predicted regression (\u03b2/\u03b1/R\u00b2); the mean band is a coarse secondary sanity check. Re-run data/reference_sim.py and commit both to update.",
+  "_note": "Generated artefact \u2014 do NOT hand-edit. Bands derived from a spec-faithful reference simulation against the committed synthetic climate netCDFs. The headline gate is the observed-vs-predicted regression (\u03b2/\u03b1/R\u00b2); the mean band is a coarse secondary sanity check. As of phase6-v2 the reference accumulation runs under decimal.Decimal (28-digit context) to match Josh's BigDecimal default and the Mesa Numerical-precision directive. Re-run data/reference_sim.py and commit both to update.",
   "start_year": 2024,
   "target_year": 2123,
   "n_replicates_reference": 100,

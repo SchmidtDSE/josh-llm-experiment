@@ -24,12 +24,14 @@ _MESA_SUBCLASS_RE = re.compile(
     r"class\s+\w+\s*\([^)]*\b(?:mesa\.)?(?:Model|Agent)\b[^)]*\)",
     re.M,
 )
+_DECIMAL_IMPORT_RE = re.compile(r"^\s*(?:import\s+decimal|from\s+decimal\s+import)\b", re.M)
 
 
 def _check_mesa(workspace: Path) -> dict:
     py_files = enumerate_source_files(workspace, "mesa")
     imports_mesa = False
     subclasses_model = False
+    uses_decimal = False
     for path in py_files:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -39,9 +41,12 @@ def _check_mesa(workspace: Path) -> dict:
             imports_mesa = True
         if _MESA_SUBCLASS_RE.search(text):
             subclasses_model = True
+        if _DECIMAL_IMPORT_RE.search(text):
+            uses_decimal = True
     return {
         "imports_mesa": imports_mesa,
         "subclasses_model": subclasses_model,
+        "uses_decimal": uses_decimal,
         "has_josh_files": False,
         "has_jshd_files": False,
         "josh_validate_exit_code": None,
@@ -82,6 +87,7 @@ def _check_josh(workspace: Path, parse_timeout_s: int = 30) -> dict:
     return {
         "imports_mesa": False,
         "subclasses_model": False,
+        "uses_decimal": False,
         "has_josh_files": has_josh,
         "has_jshd_files": has_jshd,
         "josh_validate_exit_code": worst_exit,

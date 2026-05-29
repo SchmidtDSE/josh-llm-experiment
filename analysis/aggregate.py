@@ -102,15 +102,24 @@ ROW_FIELDS = [
     "steps_total",
     "steps_all_eight_ok",
     # fuzzy LLM judge — written by containers/run-judge.sh in the scorer
-    # container. Schema: fuzzy-v2. See prompts/FUZZY_JUDGE.md for Q1/Q2/Q3.
+    # container. Schema: fuzzy-v3 (phase6-v2). Q4 is Mesa-only "did the
+    # implementation use decimal.Decimal for the dynamics?" and accepts
+    # `n-a` for Josh / josh-mcp cells. See prompts/FUZZY_JUDGE.md.
     "fuzzy_q1_answer",
     "fuzzy_q1_justification",
     "fuzzy_q2_observations",
     "fuzzy_q3_answer",
     "fuzzy_q3_justification",
+    "fuzzy_q4_answer",
+    "fuzzy_q4_justification",
     "fuzzy_parse_error",
     "fuzzy_judge_model",
     "fuzzy_schema_version",
+    # Mesa-only mechanical Decimal-usage check from harness/conformance.py.
+    # Always False on Josh / josh-mcp cells (Josh's BigDecimal is runtime,
+    # not source-detectable). Sibling evidence to `target_conformance`;
+    # does NOT participate in the `target_conformance` rollup.
+    "conformance_uses_decimal",
     # wall time + agent-phase cost / activity. See module docstring for
     # the sim_wall vs agent_wall distinction.
     "sim_wall_seconds",
@@ -362,9 +371,12 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
         "fuzzy_q2_observations": _safe_get(fuzzy, "q2", "observations"),
         "fuzzy_q3_answer": _safe_get(fuzzy, "q3", "answer"),
         "fuzzy_q3_justification": _safe_get(fuzzy, "q3", "justification"),
+        "fuzzy_q4_answer": _safe_get(fuzzy, "q4", "answer"),
+        "fuzzy_q4_justification": _safe_get(fuzzy, "q4", "justification"),
         "fuzzy_parse_error": fuzzy.get("parse_error"),
         "fuzzy_judge_model": fuzzy.get("judge_model_id"),
         "fuzzy_schema_version": fuzzy.get("schema_version"),
+        "conformance_uses_decimal": _safe_get(scorer, "conformance", "uses_decimal"),
         "sim_wall_seconds": scorer.get("wall_time_seconds"),
         "agent_wall_seconds": steps_summary["agent_wall_seconds"],
         "agent_cost_usd": step_totals.get("cost_usd"),

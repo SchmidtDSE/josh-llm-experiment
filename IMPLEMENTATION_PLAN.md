@@ -535,8 +535,11 @@ path broken on `dev` if landed there directly.
 
 ## Current state
 
-Scorer JSON schema: `phase6-v1` (`harness/run_metrics.py:SCHEMA_VERSION`)
-on `feat/k8s-refactor`; `phase5a-v1` on `dev`.
+Scorer JSON schema: `phase6-v2` (`harness/run_metrics.py:SCHEMA_VERSION`)
+on `feat/josh-mcp-runner` (adds `conformance.uses_decimal` mechanical
+check + `fuzzy-v3` Q4 for Mesa Decimal usage; reference simulator
+moved to `decimal.Decimal`); `phase6-v1` on `feat/k8s-refactor`;
+`phase5a-v1` on `dev`.
 
 **Source of truth:** the GCS bucket. Per-cell artefacts land under
 `<bucket>/<prefix>/<batch-tag>/<run-id>/` directly from the scorer

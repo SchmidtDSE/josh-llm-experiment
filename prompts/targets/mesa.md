@@ -2,4 +2,10 @@ Implement this using the `Mesa` 3.x Python framework (already installed). Use `M
 
 `./run.sh` should take the workspace from its initial state and complete the task end-to-end. Whatever steps your implementation needs must live inside `./run.sh`. The scorer invokes it exactly once and reads `./output/`. Your implementation should use only python or bash in `./run.sh`, but only what is necessary to invoke your `Mesa` implementation. 
 
-Documentation: https://mesa.readthedocs.io/stable
+### Numerical precision
+
+The growth dynamics must be computed using Python's `decimal.Decimal` rather than native `float`. Apply it to all per-step quantities entering the growth equation — `Δh_max`, `%T`, `%P`, the `O ~ N(1, 0.05)` stochastic offset, and the per-tree height accumulator. Instantiate Decimals from string literals (`Decimal("0.05")`, not `Decimal(0.05)`) so binary-float representation error does not leak in at construction time. The `numpy`-drawn Gaussian noise sample must be cast to `Decimal` (via `str()`) before it multiplies the per-step growth. This matches Josh's default `BigDecimal` arithmetic; using native `float` for the dynamics makes the Josh-vs-Mesa contrast a numeric-representation comparison rather than a framework comparison.
+
+The CSV column types in the output contract (see SIDECAR §Success criteria — `meanHeight`, `temperature`, `precipitation` as `float`) are unchanged. Decimal is for in-simulation computation; cast back to `float` only at the CSV write boundary. You are free to keep `numpy` or `pandas` for storage, I/O, and aggregation — the constraint is on the growth-equation arithmetic, not on every line of your codebase.
+
+Documentation: https://mesa.readthedocs.io/stable and https://docs.python.org/3/library/decimal.html
