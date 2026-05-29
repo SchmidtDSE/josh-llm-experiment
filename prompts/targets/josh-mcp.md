@@ -33,3 +33,52 @@ name). Everything else — units, the precipitation conversion, the output CSV
 layout — is specified in the spec sheet and applies to you unchanged.
 
 Documentation: https://raw.githubusercontent.com/SchmidtDSE/josh/refs/heads/dev/llms-full.txt
+
+---
+
+## MCP tool reference
+
+The following is the authoritative `josh mcp` server's tool contract, captured
+verbatim from the `tools/list` response of the Josh build you'll be running
+against. Use this when authoring `mcp_calls.json` — your `arguments` map for
+each call must match these schemas. Tool names are shown with the `josh_`
+prefix you see in your tool list; the bare form (`preprocess_data` etc.) is
+also accepted by the runner.
+
+### `josh_preprocess_data`
+
+Preprocesses an external geospatial data file into Josh's binary .jshd format, aligned to a simulation grid defined in a .josh script. Run this once per data file before running the simulation that uses it. Supported input formats: NetCDF (.nc), GeoTIFF (.tiff/.tif), or an existing .jshd file. The output .jshd file is referenced from Josh scripts using external data expressions such as 'load "mydata.jshd" as temperature'. Use .jshdz as the output extension for compressed output.
+
+Arguments:
+  - `script` (string, **required**) — Path to the .josh simulation script file whose grid definition will be used to align the data.
+  - `simulation` (string, **required**) — Name of the simulation block inside the script that defines the target grid (e.g. 'Main').
+  - `dataFile` (string, **required**) — Path to the input data file. Supported formats: NetCDF (.nc), GeoTIFF (.tiff/.tif), or existing Josh binary (.jshd).
+  - `variable` (string, **required**) — Variable name to extract from the data file, or a band number for GeoTIFF files.
+  - `unitsStr` (string, **required**) — Physical units for the extracted data, as understood by Josh (e.g. 'count', 'meters', 'kg/m^2'). These units will be attached to the values in the output .jshd file and must match what the simulation expects.
+  - `outputFile` (string, **required**) — Path where the preprocessed .jshd file should be written. Use .jshdz extension for compressed output.
+
+### `josh_run_simulation`
+
+Runs a Josh simulation defined in a .josh script file. The simulation name must match the 'start simulation NAME' block in the script. Output files are written to the paths defined in the script's 'exportFiles' configuration — the tool returns a short summary (replicate count and last step) rather than the full output data, which is typically stored as CSV files. Josh simulations define a spatial grid, organism types, and step logic. Each step corresponds to one time unit (typically a year). Run validate_simulation first to catch any script errors before a long simulation.
+
+Arguments:
+  - `script` (string, **required**) — Path to the .josh simulation script file.
+  - `simulation` (string, **required**) — Name of the simulation block to run, exactly as it appears after 'start simulation' in the .josh file (e.g. 'Main').
+  - `replicates` (integer, optional) — Number of independent simulation replicates to run. Each replicate uses a different random seed unless seed is specified. Defaults to 1.
+  - `serialPatches` (boolean, optional) — If true, patches are processed one at a time rather than in parallel. Serial mode is slower but required for reproducibility when using a fixed seed. Automatically set to true when seed is supplied. Defaults to false.
+  - `seed` (integer, optional) — Optional random seed for reproducible simulations. When provided, all random sampling uses this seed, and serial patch processing is automatically enabled to ensure deterministic results.
+  - `data` (object, optional) — Optional map of external data resource names to file paths. Each key is the name the .josh script references via 'external <name>', including its extension (e.g. 'temperature.jshd'). Each value is the path to that .jshd or .jshdz file; relative paths resolve against the server's working directory. Omit to resolve external data by filename from the working directory.
+
+### `josh_validate_simulation`
+
+Validates a Josh simulation script (.josh file) for syntax and semantic errors. Use this before running a simulation to catch parse errors early. Returns a success message if the script is valid, or a list of error details describing exactly where each problem was found (line number and message). Josh scripts define simulations using 'start simulation ... end simulation' blocks containing grid configuration and step ranges.
+
+Arguments:
+  - `script` (string, **required**) — Path to the .josh simulation script file to validate.
+
+### `josh_discover_config`
+
+Discovers all configuration variables referenced in a Josh simulation script. Josh scripts can reference external configuration values using the 'config' keyword — for example, 'config.growthRate' or 'config.maxAge'. This tool returns the names and expected types of all such variables found in the script, which tells you what must be provided in a .jshc configuration file before the simulation can be run. Returns '[No variables found]' if the script uses no configuration variables.
+
+Arguments:
+  - `script` (string, **required**) — Path to the .josh simulation script file.
