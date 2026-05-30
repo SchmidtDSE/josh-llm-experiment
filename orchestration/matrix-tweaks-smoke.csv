@@ -1,0 +1,13 @@
+model,target
+gemma,josh
+gemma,mesa
+gemma,josh-mcp
+minimax,josh
+minimax,mesa
+minimax,josh-mcp
+qwen,josh
+qwen,mesa
+qwen,josh-mcp
+nemotron,josh
+nemotron,mesa
+nemotron,josh-mcp
