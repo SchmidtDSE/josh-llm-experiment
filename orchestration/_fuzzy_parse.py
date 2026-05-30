@@ -40,6 +40,42 @@ def extract_last_json_block(text: str) -> str | None:
     return matches[-1].strip()
 
 
+def extract_bare_json_object(text: str) -> str | None:
+    """Fallback for judge outputs that emit bare JSON (no ```json fence).
+
+    Strict variant of "find the outermost {...}" — walks the string from
+    the first `{` and returns the substring that balances to the matching
+    closing brace, ignoring braces inside strings. Returns None if no
+    balanced object is found. JSON validity is checked later by json.loads
+    in the caller.
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1].strip()
+    return None
+
+
 def _validate_answer_block(
     parsed: dict, key: str, errs: list[str], *, allowed: set[str] = VALID_ANSWER
 ) -> None:
@@ -125,11 +161,16 @@ def main() -> int:
 
     block = extract_last_json_block(raw_text)
     if block is None:
+        # Fallback: some judge model outputs (notably gpt-5-codex) emit
+        # bare JSON with no ```json fence. Try to recover the outermost
+        # JSON object before giving up — same downstream validation.
+        block = extract_bare_json_object(raw_text)
+    if block is None:
         write_error_record(
             args.out,
             args.judge_model_id,
             args.schema_version,
-            "no fenced ```json block found in judge output",
+            "no JSON object found in judge output (no fenced block, no bare object)",
             raw_text,
         )
         return 1

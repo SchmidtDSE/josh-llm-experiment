@@ -191,6 +191,19 @@ def main(argv: list[str] | None = None) -> int:
         and schema_out.get("csv_schema_ok", False)
     )
 
+    # Guard against stale-CSV poisoning: if ./run.sh did not complete
+    # cleanly under the scorer's invocation but earlier self-test
+    # leftovers in workspace/output/ satisfy the schema gate, the
+    # regression fit reads those leftovers and emits a clean β≈1
+    # against a 2-replicate file. The headline ecology gate should be
+    # False unless did_run is True. Fit numbers stay on the record as
+    # diagnostic evidence; only the gate flips.
+    if not did_run and accept_out.get("regression_fit_ok"):
+        accept_out["regression_fit_ok"] = False
+        reasons = list(accept_out.get("regression_fit_reasons") or [])
+        reasons.append("did_run=False; fit computed against pre-existing CSV — not headline")
+        accept_out["regression_fit_reasons"] = reasons
+
     record = _ordered_record(
         target=args.target,
         target_year=target_year,

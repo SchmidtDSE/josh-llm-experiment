@@ -65,6 +65,22 @@ ROW_FIELDS = [
     "model",
     "target",
     "rep_idx",
+    # Engagement classification — distinguishes "agent never wrote a
+    # scorer.json" from "agent ran but wrote nothing" from "full run".
+    # Single ordered enum so it sorts. See _engagement_status for the
+    # truth table. `scorer_ran` is the boolean shortcut for the most
+    # common downstream check (did the scoring pipeline complete?).
+    "engagement_status",
+    "scorer_ran",
+    "files_written_count",
+    # 5-axis report card. Each axis ∈ {pass, caveat, fail, na}. See
+    # _compute_axes for the per-axis rules. The headline figure
+    # (analysis/headline.ipynb Panel B) renders these as a heatmap.
+    "axis_engagement",
+    "axis_conformance",
+    "axis_execution",
+    "axis_ecology",
+    "axis_contract",
     # scorer headline gates. `substantive_conformance` rolls up the
     # mechanical `target_conformance` AND the fuzzy judge's Q1 verdict —
     # catches the failure mode where the agent ships an empty .josh
@@ -303,13 +319,204 @@ def _sum_step_exports(cell_dir: Path) -> dict:
     return totals
 
 
-def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
-    """One scorer.json + sidecar agent_meta/ → one tidy CSV row."""
+# Files that the agent prelude / setup initContainer seeds into
+# /sandbox before the agent runs. Anything else in workspace/ is
+# agent-authored and counts toward `files_written_count` for the
+# engagement gate. Subdirectories (output/, results/, data/) are
+# always excluded — they are scorer / harness products.
+_SEED_FILES_COMMON = {"PLAN.md", "run.sh"}
+_SEED_FILES_BY_TARGET = {
+    "josh": _SEED_FILES_COMMON,
+    "mesa": _SEED_FILES_COMMON,
+    # josh-mcp also gets the harness-immutable MCP forwarder seeded by
+    # the setup initContainer (containers/josh-mcp-runner.py.seed →
+    # /sandbox/runner.py); the agent's deliverable is mcp_calls.json
+    # plus .josh source, not runner.py.
+    "josh-mcp": _SEED_FILES_COMMON | {"runner.py"},
+}
+
+
+def _count_agent_authored_files(cell_dir: Path, target: str) -> int:
+    """Count non-seed files under workspace/, recursively.
+
+    Walks the workspace tree and counts regular files not in the seed
+    set and not under one of the scorer/data subdirectories (`data/`,
+    `output/`, `results/`). Recursive so an agent that puts source in
+    `src/simulate.py` (glm-mesa pattern) is correctly classified as
+    `full_steps_with_files`, not `full_steps_no_files`. The seed set
+    is target-specific because josh-mcp gets `runner.py` pre-installed.
+    """
+    workspace = cell_dir / "workspace"
+    if not workspace.is_dir():
+        return 0
+    seed_files = _SEED_FILES_BY_TARGET.get(target, _SEED_FILES_COMMON)
+    excluded_dirs = {"data", "output", "results"}
+    n = 0
+    for path in workspace.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(workspace)
+        # Top-level seed file (PLAN.md, run.sh, runner.py for josh-mcp).
+        if len(rel.parts) == 1 and rel.parts[0] in seed_files:
+            continue
+        # Anything under data/, output/, results/ is harness-side, not
+        # agent-authored.
+        if rel.parts[0] in excluded_dirs:
+            continue
+        n += 1
+    return n
+
+
+def _engagement_status(
+    scorer_ran: bool,
+    steps_completed: Optional[int],
+    files_written: int,
+) -> str:
+    """Single ordered enum capturing how far the agent got.
+
+    Levels (worst → best):
+      no_scorer            — scorer.json never written (agent OOM/timeout
+                              before scorer, or scorer container itself
+                              failed). Counts as 🔴 on the engagement axis.
+      partial_steps        — scorer.json present but fewer than 8
+                              opencode invocations completed.
+      full_steps_no_files  — 8 steps completed but workspace/ has only
+                              the seed files (qwen / nemotron pattern in
+                              panel-9x3-20260529).
+      full_steps_with_files — 8 steps completed and ≥1 agent-authored
+                              file present.
+
+    The `scorer_no_files` value was considered for cells where the
+    scorer ran with only-seed workspace, but `full_steps_no_files`
+    already covers that pattern; an agent that gives up before step 8
+    AND writes no files is captured by `partial_steps`.
+    """
+    if not scorer_ran:
+        return "no_scorer"
+    if steps_completed is None or steps_completed < 8:
+        return "partial_steps"
+    if files_written < 1:
+        return "full_steps_no_files"
+    return "full_steps_with_files"
+
+
+def _axis_engagement(engagement: str) -> str:
+    if engagement == "full_steps_with_files":
+        return "pass"
+    if engagement == "no_scorer":
+        return "fail"
+    return "caveat"  # partial_steps / full_steps_no_files
+
+
+def _axis_conformance(scorer: dict, fuzzy: dict, parse_error: bool) -> str:
+    mech = bool(scorer.get("target_conformance"))
+    q1 = _safe_get(fuzzy, "q1", "answer")
+    if not mech:
+        # No .josh files / no `import mesa`: conformance fails regardless
+        # of whether the judge had anything to say. parse_error doesn't
+        # rescue this — it only matters as the disambiguator between
+        # "substantive use" and "sidecar fakeout" when mech=True.
+        return "fail"
+    if parse_error:
+        # mech=True but no usable judge data → can't tell sidecar
+        # fakeout from real conformance. ⚪ rather than 🟢 (no
+        # corroboration).
+        return "na"
+    if q1 == "yes":
+        return "pass"
+    if q1 == "partial":
+        return "caveat"
+    return "fail"  # q1 == "no" or missing
+
+
+def _axis_execution(scorer: dict, engagement_axis: str) -> str:
+    if engagement_axis == "fail":
+        return "na"
+    if scorer.get("timed_out"):
+        return "caveat"
+    exit_code = scorer.get("exit_code")
+    csv_exists = bool(scorer.get("csv_exists"))
+    if exit_code == 0 and csv_exists:
+        return "pass"
+    return "fail"
+
+
+def _axis_ecology(scorer: dict, execution_axis: str) -> str:
+    if execution_axis != "pass":
+        return "na"
+    if scorer.get("regression_fit_ok"):
+        return "pass"
+    if scorer.get("height_in_range"):
+        return "caveat"
+    return "fail"
+
+
+def _axis_contract(scorer: dict, fuzzy: dict, parse_error: bool) -> str:
+    schema_ok = bool(scorer.get("csv_schema_ok"))
+    if parse_error:
+        return "na"
+    q3 = _safe_get(fuzzy, "q3", "answer")
+    q4 = _safe_get(fuzzy, "q4", "answer")
+    # All three subordinate gates must pass cleanly for the axis to be
+    # 🟢. Q4=n-a is the normal answer for Josh / josh-mcp cells; only
+    # Mesa cells produce a substantive Q4 verdict.
+    fails = []
+    if not schema_ok:
+        fails.append("schema")
+    if q3 == "no":
+        fails.append("q3")
+    if q4 == "no":
+        fails.append("q4")
+    if fails:
+        return "fail"
+    if not schema_ok:
+        # Defensive — handled above, but kept explicit.
+        return "fail"
+    if q3 == "partial" or q4 == "partial":
+        return "caveat"
+    # All three: schema_ok=True, q3=yes, q4 ∈ {yes, n-a}.
+    if q3 == "yes" and q4 in {"yes", "n-a"}:
+        return "pass"
+    # Anything else (missing q3 / q4, mixed answers) → na rather than
+    # silently pass.
+    return "na"
+
+
+def _compute_axes(scorer: dict, fuzzy: dict, engagement: str) -> dict:
+    parse_error = bool(fuzzy.get("parse_error"))
+    eng = _axis_engagement(engagement)
+    conf = _axis_conformance(scorer, fuzzy, parse_error)
+    exe = _axis_execution(scorer, eng)
+    eco = _axis_ecology(scorer, exe)
+    con = _axis_contract(scorer, fuzzy, parse_error)
+    return {
+        "axis_engagement": eng,
+        "axis_conformance": conf,
+        "axis_execution": exe,
+        "axis_ecology": eco,
+        "axis_contract": con,
+    }
+
+
+def _flatten(batch_tag: str, cell_dir: Path, scorer: Optional[dict]) -> dict:
+    """One cell dir → one tidy CSV row.
+
+    Handles two regimes uniformly:
+      - scorer.json present: real data from harness/run_metrics.py.
+      - scorer.json missing (`scorer is None`): synthetic row marking
+        the cell as engagement=🔴. The 10 missing-scorer cells in
+        panel-9x3-20260529 (gemma×3, qwen×3, nemotron×3, kimi-josh-mcp)
+        were previously dropped silently; emitting them here makes
+        catastrophic non-engagement visible in the headline figure.
+    """
     cell_id = cell_dir.name
     model, target_from_id, rep_idx = _parse_cell_id(batch_tag, cell_id)
+    scorer = scorer or {}
+    scorer_ran = bool(scorer)
+
     # scorer.json's target field should match; if it diverges, the cell-id
     # parse is wrong and we'd rather know than silently disagree.
-    target_from_scorer = scorer.get("target")
+    target_from_scorer = scorer.get("target") if scorer_ran else None
     if target_from_scorer and target_from_scorer != target_from_id:
         raise ValueError(
             f"{cell_id}: target disagreement — cell-id says {target_from_id!r}, "
@@ -320,18 +527,42 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
     step_totals = _sum_step_exports(cell_dir)
     fuzzy = _load_fuzzy(cell_dir)
 
+    files_written = _count_agent_authored_files(cell_dir, target_from_id)
+    engagement = _engagement_status(
+        scorer_ran=scorer_ran,
+        steps_completed=steps_summary.get("steps_completed"),
+        files_written=files_written,
+    )
+    axes = _compute_axes(scorer, fuzzy, engagement)
+
+    # Boolean fields default to False on synthetic rows (no scorer.json).
+    # Without this, CSV round-trip turns None → empty string → NaN on
+    # read, which breaks downstream `.sum()` over the column (pandas
+    # downcasts the mixed bool+NaN column to object dtype). The
+    # synthetic-row contract from TWEAKS.md is explicit: did_run=False,
+    # target_conformance=False, etc. when the cell never produced
+    # scorer output.
+    def _bool(key: str) -> bool:
+        v = scorer.get(key)
+        return False if v is None else bool(v)
+
     # Substantive-conformance gate. Combines the mechanical
     # `target_conformance` with the fuzzy judge's Q1 verdict so cells
     # that ship a near-empty .josh shell + a Python sidecar can no
     # longer slip through as "conformed". Truth table:
-    #   target_conf=True  + Q1=yes      → True   (substantive use)
-    #   target_conf=True  + Q1=no       → False  (mechanical-only pass)
-    #   target_conf=True  + Q1=partial  → False  (framework scaffolded but not load-bearing)
-    #   target_conf=True  + Q1=None     → True   (no judge data — old batch, give benefit of doubt)
-    #   target_conf=False + anything    → False  (no .josh / mesa import at all)
+    #   target_conf=True  + Q1=yes        → True   (substantive use)
+    #   target_conf=True  + Q1=no         → False  (mechanical-only pass)
+    #   target_conf=True  + Q1=partial    → False  (framework scaffolded but not load-bearing)
+    #   target_conf=True  + Q1=parse_err  → False  (fail-closed; no judge corroboration)
+    #   target_conf=True  + Q1=None       → True   (no fuzzy json at all — old batch)
+    #   target_conf=False + anything      → False  (no .josh / mesa import at all)
     mech = bool(scorer.get("target_conformance"))
     q1 = _safe_get(fuzzy, "q1", "answer")
-    substantive = mech and (q1 is None or q1 == "yes")
+    parse_error = bool(fuzzy.get("parse_error"))
+    if parse_error:
+        substantive = False
+    else:
+        substantive = mech and (q1 is None or q1 == "yes")
 
     return {
         "batch_tag": batch_tag,
@@ -339,26 +570,30 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
         "model": model,
         "target": target_from_id,
         "rep_idx": rep_idx,
-        "target_conformance": scorer.get("target_conformance"),
+        "engagement_status": engagement,
+        "scorer_ran": scorer_ran,
+        "files_written_count": files_written,
+        **axes,
+        "target_conformance": _bool("target_conformance"),
         "substantive_conformance": substantive,
-        "csv_exists": scorer.get("csv_exists"),
-        "csv_schema_ok": scorer.get("csv_schema_ok"),
-        "did_run": scorer.get("did_run"),
+        "csv_exists": _bool("csv_exists"),
+        "csv_schema_ok": _bool("csv_schema_ok"),
+        "did_run": _bool("did_run"),
         "exit_code": scorer.get("exit_code"),
-        "timed_out": scorer.get("timed_out"),
+        "timed_out": _bool("timed_out"),
         "script_was_executable": scorer.get("script_was_executable"),
         "csv_row_count": scorer.get("csv_row_count"),
         "csv_rows_dropped_nan": scorer.get("csv_rows_dropped_nan"),
         "csv_source_layout": scorer.get("csv_source_layout"),
         "height_year100_mean": scorer.get("height_year100_mean"),
         "occupancy_year100_mean": scorer.get("occupancy_year100_mean"),
-        "height_in_range": scorer.get("height_in_range"),
-        "occupancy_in_range": scorer.get("occupancy_in_range"),
+        "height_in_range": _bool("height_in_range"),
+        "occupancy_in_range": _bool("occupancy_in_range"),
         "regression_beta": _safe_get(scorer, "regression_fit", "beta"),
         "regression_alpha": _safe_get(scorer, "regression_fit", "alpha"),
         "regression_r2": _safe_get(scorer, "regression_fit", "r2"),
         "regression_n_observations": _safe_get(scorer, "regression_fit", "n_observations"),
-        "regression_fit_ok": scorer.get("regression_fit_ok"),
+        "regression_fit_ok": _bool("regression_fit_ok"),
         "src_loc": scorer.get("src_loc"),
         "comment_loc": scorer.get("comment_loc"),
         "imports_loc": scorer.get("imports_loc"),
@@ -390,29 +625,46 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: dict) -> dict:
 
 
 def aggregate(batch_dirs: Iterable[Path]) -> list[dict]:
+    """Walk every cell directory under each batch, not just those with
+    scorer.json. Cells missing scorer.json get a synthetic row with
+    engagement_status=no_scorer; the previous loop silently dropped
+    them, hiding catastrophic non-engagement from the headline figure.
+    """
     rows: list[dict] = []
     for bd in batch_dirs:
         batch_tag = bd.name
-        scorer_paths = sorted(bd.glob("*/workspace/results/scorer.json"))
-        if not scorer_paths:
-            print(f"  ↷ skip {batch_tag} — no scorer.json under */workspace/results/",
+        # Cell dirs are direct children of the batch dir; filter to
+        # those that look like a cell (have agent_meta/ OR workspace/)
+        # to avoid picking up stray files at the batch root.
+        cell_dirs = sorted(
+            p for p in bd.iterdir()
+            if p.is_dir()
+            and ((p / "agent_meta").is_dir() or (p / "workspace").is_dir())
+        )
+        if not cell_dirs:
+            print(f"  ↷ skip {batch_tag} — no cell directories found",
                   file=sys.stderr)
             continue
         count = 0
-        for sp in scorer_paths:
-            cell_dir = sp.parents[2]  # …/<cell-id>/workspace/results/scorer.json
-            scorer = _load_json(sp)
-            if not scorer:
+        synth = 0
+        for cell_dir in cell_dirs:
+            scorer_path = cell_dir / "workspace" / "results" / "scorer.json"
+            scorer = _load_json(scorer_path) if scorer_path.is_file() else None
+            if scorer is None and scorer_path.is_file():
+                # File present but unreadable — surface it; still emit
+                # a synthetic row so the cell isn't silently lost.
                 print(f"  ⚠ {batch_tag}/{cell_dir.name}: unreadable scorer.json",
                       file=sys.stderr)
-                continue
             try:
                 rows.append(_flatten(batch_tag, cell_dir, scorer))
             except ValueError as exc:
                 print(f"  ⚠ {batch_tag}/{cell_dir.name}: {exc}", file=sys.stderr)
                 continue
             count += 1
-        print(f"  ✓ {batch_tag} → {count} rows", file=sys.stderr)
+            if scorer is None:
+                synth += 1
+        suffix = f" ({synth} synthetic)" if synth else ""
+        print(f"  ✓ {batch_tag} → {count} rows{suffix}", file=sys.stderr)
     return rows
 
 
@@ -459,7 +711,7 @@ def main() -> int:
     print(f"▶ Aggregating {len(batch_dirs)} batch(es) → {args.out}", file=sys.stderr)
     rows = aggregate(batch_dirs)
     if not rows:
-        sys.exit("no rows aggregated — every batch lacked scorer.json under */workspace/results/")
+        sys.exit("no rows aggregated — every batch was empty (no cell directories found)")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", newline="") as f:
