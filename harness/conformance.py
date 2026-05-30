@@ -64,25 +64,33 @@ def _check_josh(workspace: Path, parse_timeout_s: int = 30) -> dict:
     has_josh = len(josh_files) > 0
     has_jshd = len(jshd_files) > 0
 
+    # Permissive conformance: target_conformance passes if at least one
+    # .josh file validates. Catches the "agent left scratch test.josh
+    # files that fail josh validate" failure mode without losing the
+    # signal — the regression gate is the real backstop on whether the
+    # primary model is correct. `josh_validate_exit_code` stays as the
+    # worst exit (so a strict reviewer can still see the litter).
+    per_file_exits: dict[str, int] = {}
     worst_exit: int | None = None
-    if has_josh:
-        worst_exit = 0
-        for path in josh_files:
-            try:
-                proc = subprocess.run(
-                    ["josh", "validate", str(path)],
-                    cwd=str(workspace),
-                    capture_output=True,
-                    timeout=parse_timeout_s,
-                )
-                if proc.returncode != 0:
-                    worst_exit = proc.returncode
-            except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-                worst_exit = -1
-                break
-            except Exception:
-                worst_exit = -1
-                break
+    any_validates = False
+    for path in josh_files:
+        try:
+            proc = subprocess.run(
+                ["josh", "validate", str(path)],
+                cwd=str(workspace),
+                capture_output=True,
+                timeout=parse_timeout_s,
+            )
+            rc = proc.returncode
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            rc = -1
+        except Exception:
+            rc = -1
+        per_file_exits[str(path.relative_to(workspace))] = rc
+        if rc == 0:
+            any_validates = True
+        if worst_exit is None or rc < worst_exit or (rc != 0 and worst_exit == 0):
+            worst_exit = rc
 
     return {
         "imports_mesa": False,
@@ -91,8 +99,9 @@ def _check_josh(workspace: Path, parse_timeout_s: int = 30) -> dict:
         "has_josh_files": has_josh,
         "has_jshd_files": has_jshd,
         "josh_validate_exit_code": worst_exit,
+        "josh_validate_per_file": per_file_exits,
         "josh_files_counted": [str(p.relative_to(workspace)) for p in josh_files],
-        "target_conformance": has_josh and (worst_exit == 0),
+        "target_conformance": has_josh and any_validates,
     }
 
 

@@ -48,6 +48,23 @@ UPLOAD_SOURCE_DIR="${UPLOAD_SOURCE_DIR:-/sandbox}"
 # cgroup) handles post-mortem upload of the partial workspace for us.
 # That's why this script just assumes the workspace is in good shape
 # and runs the canonical scoring + judge + final mc-mirror sequence.
+
+# Scrub any CSV / scorer artefacts the agent's self-tests may have
+# left behind. The scorer-side ./run.sh invocation runs under
+# N_REPLICATES=100; without this wipe a crashed scoring run can leave
+# pre-existing 2-replicate self-test output in the agent's workspace,
+# which the acceptance validator then happily reads and reports as a
+# clean β≈1 fit despite did_run=False. (run_metrics.py also guards
+# regression_fit_ok on did_run; this is belt-and-suspenders so the
+# diagnostic fit numbers themselves come from the scorer's invocation.)
+SCORER_WORKSPACE="/cell-data/workspace"
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--workspace" ]; then SCORER_WORKSPACE="$arg"; fi
+  prev="$arg"
+done
+rm -rf "$SCORER_WORKSPACE/output" "$SCORER_WORKSPACE/results" 2>/dev/null || true
+
 set +e
 python /opt/harness/run_metrics.py "$@"
 SCORER_RC=$?
