@@ -20,7 +20,13 @@ The 8 todos below are the full description of what each step entails. Each step'
 
 - [ ] **7. Author `/sandbox/mcp_calls.json` for the scorer's reproducer.** The harness ships an immutable `runner.py` at `/sandbox/runner.py` that replays the JSON's entries — in order, top to bottom — against the same `josh mcp` server you used during iteration. Capture the sequence of MCP tool calls that reproduces a successful self-test, with each entry's `arguments` map matching the tool's input schema (visible in your tool list). The runner takes care of scaling replicate count for the canonical scoring run, so write the count you self-tested at.
 
-- [ ] **8. Clean up the code to ensure it is readable and clean.** Remove dead code, debug prints, and stub-era placeholders from your `.josh` source and `mcp_calls.json`; ensure variable / external / file names are self-documenting. Re-run the model through the MCP tools one final time to confirm the cleanup did not break anything.
+- [ ] **8. Clean up the code to ensure it is readable and clean.** This is an *edit-in-place* step on the files you authored — **do not delete files from `/sandbox/`**. The files that MUST be present at the end of this step:
+  - `/sandbox/run.sh` *(harness-shipped shim — never delete or edit)*
+  - `/sandbox/runner.py` *(harness-shipped MCP forwarder — never delete or edit)*
+  - your `.josh` source file (the one named in `mcp_calls.json` arguments)
+  - `/sandbox/mcp_calls.json`
+
+  The cleanup scope is **inside** your `.josh` source and `mcp_calls.json`: remove dead code, debug prints, scratch/test variants (e.g. `test.josh`, `doc_example.josh`), and stub-era placeholders; ensure variable / external / file names are self-documenting. Re-run the model through the MCP tools one final time to confirm the cleanup did not break anything.
 
 ## Plan
 

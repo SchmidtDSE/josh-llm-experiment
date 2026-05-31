@@ -20,7 +20,11 @@ The 8 todos below are the full description of what each step entails. Each step'
 
 - [ ] **7. Validate that the outputs are as expected.** Spot-check `./output/results.csv` against the spec. Verify: (a) one row per `(cell, year, replicate)`, (b) `meanHeight` grows over time within each cell, (c) `nTrees = 10` throughout (no death/reproduction), (d) climate values by cell and year, (e) the two replicates (0 and 1) have independent stochastic draws. Fix any discrepancies you find in the source files and re-run `./run.sh` until the CSV passes your own checks.
 
-- [ ] **8. Clean up the code to ensure it is readable and clean.** Remove dead code, debug prints, and stub-era placeholders; ensure variable / function names are self-documenting. Re-run `./run.sh` one final time to confirm the cleanup did not break anything.
+- [ ] **8. Clean up the code to ensure it is readable and clean.** This is an *edit-in-place* step on the files you authored — **do not delete files from `/sandbox/`**. The files that MUST be present at the end of this step:
+  - `/sandbox/run.sh` *(the scorer invokes this directly — never delete; edit only)*
+  - your source files (`.josh` / `.jshd` for Josh; `.py` for Mesa) and anything `run.sh` imports or invokes
+
+  The cleanup scope is **inside** your source and `run.sh`: remove dead code, debug prints, scratch/test variants (e.g. `test.josh`, `scratch.py`), and stub-era placeholders; ensure variable / function names are self-documenting. Re-run `./run.sh` one final time to confirm the cleanup did not break anything.
 
 ## Plan
 
