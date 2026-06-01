@@ -60,6 +60,15 @@ async def main() -> int:
               f"got {type(calls).__name__}", file=sys.stderr)
         return 2
 
+    # Pre-create the output directory the agent's exportFiles.patch
+    # block writes to. Bash arms' agent-authored run.sh does this with
+    # `mkdir -p output`; the constrained josh-mcp agent has no shell
+    # and the harness wipes /sandbox/output before scoring (scorer-and-
+    # upload.sh, anti-stale-CSV scrub), so without this mkdir the Josh
+    # MCP worker fails to open results_<N>.csv near the end of replicate
+    # 1 — surfaced upstream by SchmidtDSE/josh#450.
+    (WORKSPACE / "output").mkdir(parents=True, exist_ok=True)
+
     params = StdioServerParameters(command="josh", args=["mcp"])
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
