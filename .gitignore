@@ -21,6 +21,11 @@ analysis/.ipynb_checkpoints/
 # CLI args.
 orchestration/rendered/
 
+# Matrix CSVs generated interactively by analysis/headline-batch-recipe.ipynb
+# from the aggregated state of each batch. Re-runnable from the notebook.
+orchestration/matrix-rerep.csv
+orchestration/matrix-stage2.csv
+
 # pixi environments
 .pixi/*
 !.pixi/config.toml
