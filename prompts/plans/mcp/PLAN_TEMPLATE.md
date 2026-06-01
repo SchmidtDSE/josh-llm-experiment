@@ -16,7 +16,16 @@ The 8 todos below are the full description of what each step entails. Each step'
 
 - [ ] **5. Complete the stubbed simulation with the real growth logic.** Replace the placeholder growth with the full climate-aware behavior requested in the spec. The CSV must now reflect real `meanHeight` / `meanAge` values that vary by cell and year. Re-run the model through the MCP tools to confirm the CSV has the expected shape under multiple replicates.
 
-- [ ] **6. Validate that the outputs are as expected.** Spot-check `output/results.csv` (or the per-replicate CSVs) against the spec. Verify: (a) one row per `(cell, year, replicate)`, (b) `meanHeight` grows over time within each cell, (c) `nTrees = 10` throughout (no death/reproduction), (d) climate values vary by cell and year as expected, (e) the replicates have independent stochastic draws. Fix any discrepancies you find in the source files and re-run through the MCP tools until the output passes your own checks.
+- [ ] **6. Validate that the outputs are as expected.** Spot-check `output/results.csv` (or the per-replicate CSVs) against the spec. Verify:
+  - **(a) Column names match the contract LITERALLY.** Read the header row and confirm the required data columns are present with these exact names: `year`, `nTrees`, `meanAge`, `meanHeight`, `temperature`, `precipitation`. AND one of the cell-identity options: either `cell_id` (one string column) OR both `position.x` and `position.y`. Replicate identity must be either an integer `replicate` column inside the CSV, or the `results_{N}.csv` file naming. No renames, no synonyms — `calendarYear` ≠ `year`, bare `x`/`y` ≠ `position.x`/`position.y`, `replicate_id` ≠ `replicate`. The scorer's schema gate matches names literally.
+  - **(b) `year` values run 2024..2123 inclusive** — 100 distinct values per replicate, not 0..99 or 1..100.
+  - **(c) one row per `(cell, year, replicate)`** combination.
+  - **(d) `meanHeight` grows over time** within each cell.
+  - **(e) `nTrees = 10` throughout** (no death/reproduction).
+  - **(f) climate values vary by cell and year** as expected.
+  - **(g) replicates have independent stochastic draws** — same `(cell, year)` should differ between replicates by the order of the noise term.
+
+  Fix any discrepancies you find in the source files and re-run through the MCP tools until the output passes your own checks.
 
 - [ ] **7. Author `/sandbox/mcp_calls.json` for the scorer's reproducer.** The harness ships an immutable `runner.py` at `/sandbox/runner.py` that replays the JSON's entries — in order, top to bottom — against the same `josh mcp` server you used during iteration. Capture the sequence of MCP tool calls that reproduces a successful self-test, with each entry's `arguments` map matching the tool's input schema (visible in your tool list). The runner takes care of scaling replicate count for the canonical scoring run, so write the count you self-tested at.
 

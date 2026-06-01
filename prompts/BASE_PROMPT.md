@@ -153,17 +153,31 @@ The resultant code should be self-documenting, wherever possible, with comments 
 
 ## Outputs
 
-The model should export **per cell, per step, per replicate**:
+The model should export **per cell, per step, per replicate**. **Column names are part of the contract — the scorer's schema gate matches them literally.** Do not rename, alias, or substitute synonyms (e.g. `calendarYear` instead of `year`, or bare `x`/`y` instead of `position.x`/`position.y`).
 
-| Variable        | Definition                                              |
-|-----------------|---------------------------------------------------------|
-| `nTrees`        | Count of ForeverTree agents currently on the cell.      |
-| `meanAge`       | Mean `age` of all ForeverTrees on the cell (year).      |
-| `meanHeight`    | Mean `height` of all ForeverTrees on the patch (m).     |
-| `temperature`   | The patch's annual mean temperature this step (K).      |
-| `precipitation` | The patch's annual precipitation this step (mm/year).   |
+### Required columns (exact names)
 
-Each cell is identified either by latitude / longitude or a cell index. Two output layouts are accepted; pick whichever is natural for your framework:
+| Column          | Type / unit         | Definition                                              |
+|-----------------|---------------------|---------------------------------------------------------|
+| `year`          | integer             | Calendar year (2024..2123 inclusive — see §Temporal domain). |
+| `nTrees`        | integer             | Count of ForeverTree agents currently on the cell.      |
+| `meanAge`       | scalar, year        | Mean `age` of all ForeverTrees on the cell.             |
+| `meanHeight`    | scalar, m           | Mean `height` of all ForeverTrees on the patch.         |
+| `temperature`   | scalar, K           | The patch's annual mean temperature this step.          |
+| `precipitation` | scalar, mm/year     | The patch's annual precipitation this step.             |
+
+### Cell identity — pick exactly ONE of these column sets
+
+| Option                          | Notes                                                                  |
+|---------------------------------|------------------------------------------------------------------------|
+| `cell_id`                       | A single string column uniquely naming the patch. Any naming scheme.   |
+| `position.x` + `position.y`     | Integer/float grid coordinates. Both columns required. Josh's default. |
+
+### Replicate identity
+
+Replicate index is provided **either** by an in-file integer `replicate` column (single consolidated CSV) **or** by the per-replicate file name (`results_{N}.csv`) — see layout choice below. Do not invent a synonym (`replicate_id`, `run`, `rep`, …).
+
+Two output layouts are accepted; pick whichever is natural for your framework:
 
 - **Single consolidated CSV** at `output/results.csv` containing all replicates, with an integer `replicate` column distinguishing them. If a `replicate` column is absent the scorer treats the whole file as a single replicate.
 - **One CSV per replicate** at `output/results_{N}.csv` — `results_0.csv`, `results_1.csv`, and so on. The integer in the filename is the authoritative replicate index; no in-file `replicate` column is needed.

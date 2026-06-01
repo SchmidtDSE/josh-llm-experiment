@@ -18,7 +18,16 @@ The 8 todos below are the full description of what each step entails. Each step'
 
 - [ ] **6. Complete the stubbed simulation with the real growth logic.** Replace the placeholder growth with the full climate-aware behavior requested in the spec. The CSV must now reflect real `meanHeight` / `meanAge` values that vary by cell and year. Re-invoke `./run.sh` to confirm the CSV has the expected shape under multiple replicates.
 
-- [ ] **7. Validate that the outputs are as expected.** Spot-check `./output/results.csv` against the spec. Verify: (a) one row per `(cell, year, replicate)`, (b) `meanHeight` grows over time within each cell, (c) `nTrees = 10` throughout (no death/reproduction), (d) climate values by cell and year, (e) the two replicates (0 and 1) have independent stochastic draws. Fix any discrepancies you find in the source files and re-run `./run.sh` until the CSV passes your own checks.
+- [ ] **7. Validate that the outputs are as expected.** Spot-check `./output/results.csv` (or the per-replicate CSVs) against the spec. Verify:
+  - **(a) Column names match the contract LITERALLY.** Read the header row and confirm the required data columns are present with these exact names: `year`, `nTrees`, `meanAge`, `meanHeight`, `temperature`, `precipitation`. AND one of the cell-identity options: either `cell_id` (one string column) OR both `position.x` and `position.y`. Replicate identity must be either an integer `replicate` column inside the CSV, or the `results_{N}.csv` file naming. No renames, no synonyms — `calendarYear` ≠ `year`, bare `x`/`y` ≠ `position.x`/`position.y`, `replicate_id` ≠ `replicate`. The scorer's schema gate matches names literally.
+  - **(b) `year` values run 2024..2123 inclusive** — 100 distinct values per replicate, not 0..99 or 1..100.
+  - **(c) one row per `(cell, year, replicate)`** combination.
+  - **(d) `meanHeight` grows over time** within each cell.
+  - **(e) `nTrees = 10` throughout** (no death/reproduction).
+  - **(f) climate values vary by cell and year** as expected.
+  - **(g) the two replicates (0 and 1) have independent stochastic draws** — same `(cell, year)` should differ between replicates by the order of the noise term.
+
+  Fix any discrepancies you find in the source files and re-run `./run.sh` until the CSV passes your own checks.
 
 - [ ] **8. Clean up the code to ensure it is readable and clean.** This is an *edit-in-place* step on the files you authored — **do not delete files from `/sandbox/`**. The files that MUST be present at the end of this step:
   - `/sandbox/run.sh` *(the scorer invokes this directly — never delete; edit only)*

@@ -22,7 +22,7 @@
 #   - mistral-large-2411 retired; mistral-medium-3.5 is the current
 #     main-line dense Mistral.
 sonnet:   openrouter/anthropic/claude-sonnet-4.6
-gemma:    openrouter/google/gemma-4-26b-a4b-it
+gemma:    openrouter/google/gemma-4-26b-a4b-it:free
 kimi:     openrouter/moonshotai/kimi-k2.6
 minimax:  openrouter/minimax/minimax-m2.7
 mistral:  openrouter/mistralai/mistral-medium-3-5
