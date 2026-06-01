@@ -30,6 +30,7 @@ glm:      openrouter/z-ai/glm-5.1
 qwen:     openrouter/qwen/qwen3.7-max
 nemotron:  openrouter/nvidia/nemotron-3-super-120b-a12b
 deepseek:  openrouter/deepseek/deepseek-v4-pro
+olmo:     openrouter/allenai/olmo-3.1-32b-instruct
 
 # Judge model: not part of the agent panel; used by
 # containers/run-judge.sh (in-Pod LLM judge). Pinned to a different
