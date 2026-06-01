@@ -20,3 +20,9 @@ minimax,josh-mcp
 gemma,josh
 gemma,mesa
 gemma,josh-mcp
+mistral,josh
+mistral,mesa
+mistral,josh-mcp
+nemotron,josh
+nemotron,mesa
+nemotron,josh-mcp
