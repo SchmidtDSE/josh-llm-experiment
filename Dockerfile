@@ -60,7 +60,7 @@ ENV JAVA_TOOL_OPTIONS="-Xmx16g"
 # build (fetch it via `pixi run get-jars`). Pin back to main with
 # --build-arg JOSH_JAR_URL=...main/joshsim-fat.jar JOSH_JAR_SHA256=<main sha>.
 ARG JOSH_JAR_URL=https://joshsim.org/dist/dev/joshsim-fat.jar
-ARG JOSH_JAR_SHA256=866c0834f307a3892df27589ddfbb0ece9089edf65c488f9a8680ae3ee28bbe5
+ARG JOSH_JAR_SHA256=f3713a8baabeec443046980462e9c639f396f665ffb61f9adcd8762506bec6b8
 COPY scripts/install_josh.sh /tmp/install_josh.sh
 RUN JOSH_JAR_URL="$JOSH_JAR_URL" JOSH_JAR_SHA256="$JOSH_JAR_SHA256" /tmp/install_josh.sh && rm /tmp/install_josh.sh
 
