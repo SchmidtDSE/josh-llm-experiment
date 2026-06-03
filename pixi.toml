@@ -69,6 +69,11 @@ r-tidyr = ">=1.3"
 r-readr = ">=2.1"
 r-forcats = ">=1.0"
 r-scales = ">=1.3"
+r-patchwork = ">=1.2"
+r-ggrepel = ">=0.9"
+# Custom-font support for figures (Lato, bundled in analysis/fonts/). showtext
+# loads the TTFs via freetype and renders text as paths — no fontconfig needed.
+r-showtext = ">=0.9"
 # R Jupyter kernel — lets `pixi run lab` open R-kernel notebooks (the
 # ggplot panels above run as native R cells). Register once after install:
 #   pixi run Rscript -e 'IRkernel::installspec(user = FALSE)'
