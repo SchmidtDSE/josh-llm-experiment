@@ -29,6 +29,12 @@ get-jars = "python scripts/get_jars.py"
 render = "python orchestration/render_jobs.py"
 # Render + kubectl apply in one shot. Same args as render.
 apply = "./orchestration/k8s_apply.sh"
+# Re-score saved workspaces in k8s (scorer only, no agent re-run) so cells
+# killed mid-step by the deadline become honest did_run=False rows. Reads
+# orchestration/rescore-manifest.csv (from classify_no_scorer.py). See
+# SCORER_K8S.md. Usage: pixi run rescore -- --batch-tag rescore-YYYYMMDD \
+#   --image-scorer ghcr.io/.../fortree-scorer:SHA
+rescore = "./orchestration/k8s_rescore.sh"
 # Pull a finished batch's artefacts from GCS into runs/<batch-tag>/.
 pull = "./orchestration/pull_artefacts.sh"
 # Re-hydrate one cell for inspection: pull its artefacts (incl. the

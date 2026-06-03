@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import sys
@@ -78,6 +79,11 @@ DEFAULT_MACHINE_FAMILY = "n2"
 # ~2× headroom over sonnet's observed time and lets slower-to-engage
 # models (gemma, mistral) finish. Tune via --active-deadline-seconds.
 DEFAULT_ACTIVE_DEADLINE_SECONDS = 7200
+# Rescore Jobs run only the scorer (no agent), so the long pole is the
+# 100-replicate `./run.sh` (josh sims up to ~30-60 min). 5400s (90 min) is
+# ample and well under the 2h agent default. Applied when --rescore-manifest
+# is set and the user didn't pass --active-deadline-seconds.
+DEFAULT_RESCORE_ACTIVE_DEADLINE_SECONDS = 5400
 DEFAULT_TTL_SECONDS_AFTER_FINISHED = 86400  # 24h — long enough for log fetch
 # These two env vars are inherited from the local-orchestration era;
 # nothing inside the agent container reads them under k8s (the SIGTERM
@@ -268,10 +274,106 @@ def _render_one(env, args, model: str, target: str, rep_idx: int, rep_count: int
     return cell_id, rendered
 
 
+# --- Rescore mode ----------------------------------------------------------
+# Re-run ONLY the scorer against a cell's already-saved workspace (pulled from
+# the bucket), without re-running the agent. Renders rescore-job.yaml.j2. The
+# Job's k8s identity (cell_id/batch_tag) is the NEW rescore batch; the upload
+# is keyed by the ORIGINAL cell's orig_* values so scorer.json lands back at
+# the original bucket key beside the preserved agent_meta. See SCORER_K8S.md.
+
+def _parse_rescore_manifest(path: Path) -> list[dict]:
+    """CSV with columns: orig_batch_tag, run_id, target[, minio_prefix].
+
+    A blank minio_prefix defaults to orig_batch_tag — reproducing the original
+    render's `minio_prefix or batch_tag` resolution, which is how the cells
+    were written to the bucket.
+    """
+    rows: list[dict] = []
+    with path.open(encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            ob = (row.get("orig_batch_tag") or "").strip()
+            rid = (row.get("run_id") or "").strip()
+            tgt = (row.get("target") or "").strip()
+            pfx = (row.get("minio_prefix") or "").strip() or ob
+            if not ob or not rid or not tgt:
+                raise SystemExit(
+                    f"rescore manifest row missing orig_batch_tag/run_id/target: {row}"
+                )
+            if tgt not in VALID_TARGETS:
+                raise SystemExit(f"rescore manifest row bad target {tgt!r}: {row}")
+            rows.append({"orig_batch_tag": ob, "run_id": rid, "target": tgt,
+                         "minio_prefix": pfx})
+    if not rows:
+        raise SystemExit(f"rescore manifest at {path} produced 0 cells")
+    return rows
+
+
+def _rescore_cell_id(rescore_batch: str, run_id: str) -> str:
+    """k8s-safe Job name for a rescore cell. The fresh rescore-batch prefix
+    means it never collides with the original cell's Job (which may still
+    exist under ttlSecondsAfterFinished). Falls back to a run_id hash if the
+    composed name would exceed the 63-char k8s limit."""
+    cid = _slugify(f"{rescore_batch}-{run_id}")
+    if len(cid) > 63:
+        h = hashlib.sha1(run_id.encode()).hexdigest()[:8]
+        cid = _slugify(f"{rescore_batch}-{h}")
+        if len(cid) > 63:
+            raise SystemExit(f"rescore cell_id exceeds 63 chars even after hashing: {cid!r}")
+    return cid
+
+
+def _model_from_run_id(orig_batch_tag: str, run_id: str, target: str) -> str:
+    """Best-effort model short-name for the Job label (cosmetic only —
+    aggregate.py recovers model/target from the uploaded dir name = run_id).
+    run_id = `<orig_batch_tag>-<model>-<target>[-rN]`."""
+    s = run_id
+    if s.startswith(orig_batch_tag + "-"):
+        s = s[len(orig_batch_tag) + 1:]
+    s = re.sub(r"-r\d+$", "", s)            # drop optional -rN
+    if s.endswith("-" + target):
+        s = s[: -(len(target) + 1)]
+    return s or "na"
+
+
+def _render_one_rescore(env, args, row: dict) -> tuple[str, str]:
+    run_id = row["run_id"]
+    target = row["target"]
+    cell_id = _rescore_cell_id(args.batch_tag, run_id)
+    model = _model_from_run_id(row["orig_batch_tag"], run_id, target)
+    template = env.get_template("rescore-job.yaml.j2")
+    rendered = template.render(
+        batch_tag=args.batch_tag,
+        cell_id=cell_id,
+        namespace=args.namespace,
+        service_account=args.service_account,
+        model=model,
+        target=target,
+        scorer_image=args.image_scorer,
+        minio_secret=args.minio_secret,
+        openrouter_secret=args.openrouter_secret,
+        judge_model=args.judge_model,
+        compute_class=args.compute_class,
+        machine_family=args.machine_family,
+        active_deadline_seconds=args.active_deadline_seconds,
+        ttl_seconds_after_finished=args.ttl_seconds_after_finished,
+        scorer_cpu_request=args.scorer_cpu_request,
+        scorer_cpu_limit=args.scorer_cpu_limit,
+        scorer_memory_request=args.scorer_memory_request,
+        scorer_memory_limit=args.scorer_memory_limit,
+        orig_batch_tag=row["orig_batch_tag"],
+        orig_run_id=run_id,
+        orig_minio_prefix=row["minio_prefix"],
+    )
+    return cell_id, rendered
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="render_jobs.py", description=__doc__)
     parser.add_argument("--batch-tag", required=True, help="Batch identifier (used in object key + label).")
-    parser.add_argument("--image-agent", required=True, help="Full image ref for fortree:agent.")
+    parser.add_argument("--image-agent", default=None,
+                        help="Full image ref for fortree:agent. Required unless "
+                             "--rescore-manifest is set (rescore Jobs have no agent).")
     parser.add_argument("--image-scorer", required=True, help="Full image ref for fortree:scorer.")
     parser.add_argument("--out-dir", type=Path, default=None,
                         help="Output directory (default: orchestration/rendered/<batch-tag>/).")
@@ -279,6 +381,11 @@ def main() -> int:
     cells = parser.add_mutually_exclusive_group(required=True)
     cells.add_argument("--single-cell", help="Inline single cell: model=X,target=Y")
     cells.add_argument("--matrix", type=Path, help="CSV with columns 'model','target'.")
+    cells.add_argument("--rescore-manifest", type=Path,
+                       help="RESCORE mode: CSV with columns "
+                            "'orig_batch_tag','run_id','target'[,'minio_prefix']. "
+                            "Renders agent-less rescore Jobs (rescore-job.yaml.j2) "
+                            "that re-score saved workspaces in place.")
 
     parser.add_argument("--namespace", default=DEFAULT_NAMESPACE)
     parser.add_argument("--service-account", default=DEFAULT_SERVICE_ACCOUNT)
@@ -304,7 +411,10 @@ def main() -> int:
     parser.add_argument("--minio-prefix", default="",
                         help="Object-key prefix (default: same as --batch-tag).")
 
-    parser.add_argument("--active-deadline-seconds", type=int, default=DEFAULT_ACTIVE_DEADLINE_SECONDS)
+    parser.add_argument("--active-deadline-seconds", type=int, default=None,
+                        help=f"Pod liveness ceiling. Default: "
+                             f"{DEFAULT_ACTIVE_DEADLINE_SECONDS}s normal, "
+                             f"{DEFAULT_RESCORE_ACTIVE_DEADLINE_SECONDS}s rescore.")
     parser.add_argument("--ttl-seconds-after-finished", type=int, default=DEFAULT_TTL_SECONDS_AFTER_FINISHED)
     parser.add_argument("--wall-clock-backstop-sec", type=int, default=DEFAULT_WALL_CLOCK_BACKSTOP_SEC)
     parser.add_argument("--idle-threshold-sec", type=int, default=DEFAULT_IDLE_THRESHOLD_SEC)
@@ -321,10 +431,15 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    if args.single_cell:
-        cells_list = [_parse_single_cell(args.single_cell)]
-    else:
-        cells_list = _parse_matrix(args.matrix)
+    rescore = args.rescore_manifest is not None
+    if not rescore and not args.image_agent:
+        parser.error("--image-agent is required unless --rescore-manifest is set")
+    # Resolve the deadline default per mode (None sentinel = not overridden).
+    if args.active_deadline_seconds is None:
+        args.active_deadline_seconds = (
+            DEFAULT_RESCORE_ACTIVE_DEADLINE_SECONDS if rescore
+            else DEFAULT_ACTIVE_DEADLINE_SECONDS
+        )
 
     out_dir = args.out_dir or REPO_ROOT / "orchestration" / "rendered" / _slugify(args.batch_tag)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -334,6 +449,22 @@ def main() -> int:
         undefined=StrictUndefined,
         keep_trailing_newline=True,
     )
+
+    if rescore:
+        cells_list = _parse_rescore_manifest(args.rescore_manifest)
+        print(f"▶ Rendering {len(cells_list)} RESCORE cell(s) into {out_dir}")
+        for row in cells_list:
+            cell_id, rendered = _render_one_rescore(env, args, row)
+            path = out_dir / f"{cell_id}.yaml"
+            path.write_text(rendered, encoding="utf-8")
+            print(f"  ✔ {path.relative_to(REPO_ROOT)}  "
+                  f"(rescores {row['orig_batch_tag']}/{row['run_id']})")
+        return 0
+
+    if args.single_cell:
+        cells_list = [_parse_single_cell(args.single_cell)]
+    else:
+        cells_list = _parse_matrix(args.matrix)
 
     # Count how many times each (model, target) appears so we can disambiguate
     # duplicate rows with a `-rN` suffix on the cell_id.

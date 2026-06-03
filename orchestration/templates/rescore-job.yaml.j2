@@ -1,0 +1,199 @@
+---
+# Per-cell k8s RESCORE Job. Re-runs ONLY the scorer against a cell's
+# already-saved workspace (pulled from the bucket), WITHOUT re-running the
+# agent. Used to turn previously-excluded `no_scorer` cells that were killed
+# mid-step by the 2h deadline into honest `did_run=False` rows — the scorer
+# is deterministic over the saved workspace, so this re-scores recorded
+# behavior rather than re-rolling the model. See SCORER_K8S.md.
+#
+# Pod runs:
+#   initContainer setup  — `mc mirror` the ORIGINAL cell tree DOWN from the
+#                          bucket into /cell-data (workspace + agent_meta +
+#                          opencode), using the scorer image (carries mc).
+#   container     scorer — scores /cell-data/workspace, then `mc mirror`s the
+#                          whole tree back to the ORIGINAL bucket key. The
+#                          upload is keyed by orig_* env (BATCH_TAG/RUN_ID/
+#                          MINIO_PREFIX), so scorer.json lands beside the
+#                          preserved agent_meta (mc mirror has no --remove).
+#
+# There is NO ConfigMap, NO agent initContainer, and NO mirror-sidecar here:
+# nothing seeds prompts/opencode (the workspace is pulled whole), no agent
+# runs, and the scorer does the one authoritative upload at the end.
+#
+# NOTE: the `scorer` container block below is duplicated from
+# job.yaml.j2 (the production per-cell template). If the scorer's env,
+# resources, mounts, or command change there, mirror the change here.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ cell_id }}
+  namespace: {{ namespace }}
+  labels:
+    app: fortree
+    batch-tag: {{ batch_tag }}
+    cell-id: {{ cell_id }}
+    model: {{ model }}
+    target: {{ target }}
+    rescore: "true"
+spec:
+  # Retry only on cluster eviction (DisruptionTarget); there is no agent
+  # container, so none of the agent exit-code rules from job.yaml.j2 apply
+  # (referencing an absent container name is rejected by the API).
+  backoffLimit: 3
+  podFailurePolicy:
+    rules:
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
+            status: "True"
+  activeDeadlineSeconds: {{ active_deadline_seconds }}
+  ttlSecondsAfterFinished: {{ ttl_seconds_after_finished }}
+  template:
+    metadata:
+      labels:
+        app: fortree
+        batch-tag: {{ batch_tag }}
+        cell-id: {{ cell_id }}
+        model: {{ model }}
+        target: {{ target }}
+        rescore: "true"
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 120
+      serviceAccountName: {{ service_account }}
+      # Same Performance/n2 placement as the original cell so the scorer's
+      # sim_wall_seconds (a headline metric) is measured on identical
+      # hardware — the whole reason rescoring runs in k8s, not host-side.
+      nodeSelector:
+        cloud.google.com/compute-class: "{{ compute_class }}"
+        {%- if compute_class == "Performance" %}
+        cloud.google.com/machine-family: "{{ machine_family }}"
+        {%- endif %}
+      volumes:
+        - name: cell-data
+          emptyDir:
+            sizeLimit: 5Gi
+      initContainers:
+        - name: setup
+          # Pull the original cell tree down from the bucket into the shared
+          # emptyDir. Uses the scorer image because it carries `mc`. The SRC
+          # path mirrors pull_artefacts.sh / mirror-sidecar.sh exactly, keyed
+          # by the ORIGINAL cell's BATCH_TAG / RUN_ID / MINIO_PREFIX.
+          image: {{ scorer_image }}
+          command:
+            - sh
+            - -ec
+            - |
+              mkdir -p /cell-data/workspace /cell-data/agent_meta /cell-data/opencode
+              mc alias set fortree-archive "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+              if [ -n "$MINIO_PREFIX" ]; then
+                SRC="fortree-archive/$MINIO_BUCKET/${MINIO_PREFIX%/}/$BATCH_TAG/$RUN_ID"
+              else
+                SRC="fortree-archive/$MINIO_BUCKET/$BATCH_TAG/$RUN_ID"
+              fi
+              echo "▶ rescore setup: mc mirror $SRC -> /cell-data"
+              mc mirror --overwrite --quiet --exclude "**/node_modules/**" "$SRC" /cell-data
+              echo "▶ pulled tree:"; ls -la /cell-data /cell-data/workspace 2>/dev/null || true
+          env:
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: endpoint
+            - name: MINIO_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: bucket
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: secret-key
+            - name: MINIO_PREFIX
+              value: "{{ orig_minio_prefix }}"
+            - name: BATCH_TAG
+              value: "{{ orig_batch_tag }}"
+            - name: RUN_ID
+              value: "{{ orig_run_id }}"
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      containers:
+        # --- BEGIN scorer block (duplicated from job.yaml.j2; keep in sync) ---
+        - name: scorer
+          image: {{ scorer_image }}
+          command: ["/opt/scorer-and-upload.sh"]
+          args:
+            - "--target"
+            - "{{ target }}"
+            - "--workspace"
+            - "/cell-data/workspace"
+          env:
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: endpoint
+            - name: MINIO_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: bucket
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ minio_secret }}
+                  key: secret-key
+            # Upload-keying env = the ORIGINAL cell's values, so scorer.json
+            # lands at the original bucket key beside the preserved agent_meta.
+            - name: MINIO_PREFIX
+              value: "{{ orig_minio_prefix }}"
+            - name: BATCH_TAG
+              value: "{{ orig_batch_tag }}"
+            - name: RUN_ID
+              value: "{{ orig_run_id }}"
+            - name: UPLOAD_SOURCE_DIR
+              value: "/cell-data"
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ openrouter_secret }}
+                  key: api-key
+            - name: JUDGE_MODEL
+              value: "{{ judge_model }}"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=50.0"
+          volumeMounts:
+            - name: cell-data
+              mountPath: /cell-data
+            - name: cell-data
+              mountPath: /sandbox
+              subPath: workspace
+          resources:
+            requests:
+              cpu: "{{ scorer_cpu_request }}"
+              memory: "{{ scorer_memory_request }}"
+            limits:
+              cpu: "{{ scorer_cpu_limit }}"
+              memory: "{{ scorer_memory_limit }}"
+        # --- END scorer block ---
