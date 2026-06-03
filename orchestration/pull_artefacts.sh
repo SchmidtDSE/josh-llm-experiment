@@ -5,7 +5,7 @@
 # /cell-data tree to:
 #   <bucket>/<prefix>/<batch-tag>/<cell-id>/...
 # This script pulls that whole tree back to the host for analysis with
-# analysis/headline.ipynb + analysis/aggregate.py.
+# analysis/headline_r.ipynb + analysis/aggregate.py.
 #
 # Usage:
 #   ./orchestration/pull_artefacts.sh <batch-tag>

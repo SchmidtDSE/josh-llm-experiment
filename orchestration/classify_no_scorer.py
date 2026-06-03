@@ -47,7 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "analysis"))
 from aggregate import _parse_cell_id  # noqa: E402
 
-# The active 9-model panel (mirrors headline.ipynb MODEL_ORDER). Olmo was
+# The active 9-model panel (mirrors headline_r.ipynb MODEL_ORDER). Olmo was
 # dropped 2026-06-02 (failed across the board) and is excluded here too.
 PANEL_MODELS = {
     "sonnet", "gemma", "kimi", "minimax", "mistral",

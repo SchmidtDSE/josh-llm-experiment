@@ -211,7 +211,7 @@ paths removed under `orchestration/`, `.github/`, and the repo root:
   `sidecar-init.sh`
 - **DNS sidecar** — `Dockerfile.dnsmasq`, `orchestration/dnsmasq.conf`
 - **Report generators** — `generate_run_report.py`,
-  `generate_batch_report.py` (replaced by [analysis/headline.ipynb](analysis/headline.ipynb))
+  `generate_batch_report.py` (replaced by [analysis/headline_r.ipynb](analysis/headline_r.ipynb))
 - **Rescore tooling** — `rescore_batch.py`, `rescore_cell.sh`
   (replaced by a future re-score k8s Job)
 - **Host-side upload** — `upload_batch.sh` (replaced by in-Pod
@@ -546,7 +546,7 @@ moved to `decimal.Decimal`); `phase6-v1` on `feat/k8s-refactor`;
 container's `mc mirror`. `pixi run pull <batch-tag>` syncs a batch
 back to `runs/<batch-tag>/` for local analysis; `pixi run aggregate
 runs/<batch-tag>` rolls it up into `analysis/aggregated.csv` for
-[analysis/headline.ipynb](analysis/headline.ipynb).
+[analysis/headline_r.ipynb](analysis/headline_r.ipynb).
 
 **Per-cell artefacts** (under `<run-id>/` both in the bucket and
 after `pixi run pull`):
