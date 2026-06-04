@@ -147,6 +147,17 @@ ROW_FIELDS = [
     "agent_tokens_cache_read",
     "agent_tokens_cache_write",
     "agent_tool_calls",
+    # Per-intent tool-call taxonomy (see _classify_tool_call).
+    "toolcat_read",
+    "toolcat_search",
+    "toolcat_edit",
+    "toolcat_model_exec",
+    "toolcat_arbitrary_exec",
+    "toolcat_shell_compute",
+    "toolcat_env_introspect",
+    "toolcat_plan",
+    "toolcat_web",
+    "toolcat_other",
 ]
 
 
@@ -275,12 +286,59 @@ def _summarize_steps(cell_dir: Path) -> dict:
     return out
 
 
+# Tool-call taxonomy: bucket each agent tool call by *intent* so the panel can
+# compare how each arm spent its action budget — e.g. how often the bash-enabled
+# arms (josh, mesa) reached for arbitrary code execution / shell compute vs
+# read-only inspection that the constrained josh-mcp arm (bash:false) has read/
+# grep/glob equivalents for. Heuristic + descriptive, not a security audit.
+#   read           file contents (read tool; bash cat/head/tail)  — MCP has `read`
+#   search         grep/glob/find/ls                              — MCP has grep/glob
+#   edit           edit/write a file
+#   model_exec     run/validate/preprocess the model (./run.sh, josh|mesa run,
+#                  or the josh_* MCP verbs)                        — both arms
+#   arbitrary_exec run arbitrary code: python/node/scratch scripts — bash-only
+#   shell_compute  awk/sed/wc/sort/uniq/jq data munging           — bash-only
+#   env_introspect --help/--version/which/env probing the tooling — bash-only
+#   plan / web / other
+TOOL_CATEGORIES = [
+    "read", "search", "edit", "model_exec", "arbitrary_exec",
+    "shell_compute", "env_introspect", "plan", "web", "other",
+]
+_RE_ENV     = re.compile(r"(--help|--version|\bwhich\b|\bwhereis\b|\btype\s|\bprintenv\b|(^|\s)env(\s|$))")
+_RE_MODEL   = re.compile(r"(\./run\.sh|\bjosh\s+run\b|\bjosh\s+validate\b|\bjosh\s+preprocess\b|\bmesa\b)")
+_RE_ARB     = re.compile(r"(\bpython3?\b|\bnode\s|\bpip\s|\bnpm\s|\bmake\b|\bsh\s+-c\b|\bbash\s)")
+_RE_COMPUTE = re.compile(r"(\bawk\b|\bsed\b|\bwc\b|\bsort\b|\buniq\b|\bcut\b|\bjq\b|\bpaste\b|\bcolumn\b|\bbc\b|\btr\b)")
+_RE_READ    = re.compile(r"(\bcat\b|\bhead\b|\btail\b|\bless\b|\bview\b)")
+_RE_SEARCH  = re.compile(r"(\bgrep\b|\bfind\b|\bls\b|\brg\b)")
+
+
+def _classify_tool_call(tool: str, command: str) -> str:
+    """Bucket one tool call into a TOOL_CATEGORIES intent label."""
+    t = (tool or "").lower()
+    if t == "read":                     return "read"
+    if t in ("grep", "glob"):           return "search"
+    if t in ("edit", "write", "patch"): return "edit"
+    if t == "todowrite":                return "plan"
+    if t == "webfetch":                 return "web"
+    if t.startswith("josh_"):           return "model_exec"
+    if t != "bash":                     return "other"
+    c = command or ""
+    if _RE_ENV.search(c):     return "env_introspect"
+    if _RE_MODEL.search(c):   return "model_exec"
+    if _RE_ARB.search(c):     return "arbitrary_exec"
+    if _RE_COMPUTE.search(c): return "shell_compute"
+    if _RE_READ.search(c):    return "read"
+    if _RE_SEARCH.search(c):  return "search"
+    return "other"
+
+
 def _sum_step_exports(cell_dir: Path) -> dict:
     """Sum cost / tokens / tool-call counts across per-step session exports.
 
     The cell-level agent_meta/session_export.json is final-step-only and
     undercounts whole-cell totals by ~6×, which is why we do the rollup
-    over per-step exports under agent_meta/steps/step_NN/.
+    over per-step exports under agent_meta/steps/step_NN/. Also tallies the
+    per-intent tool-call taxonomy (toolcat_* keys) for the tool-use panel.
     """
     steps_dir = cell_dir / "agent_meta" / "steps"
     totals = {
@@ -292,6 +350,8 @@ def _sum_step_exports(cell_dir: Path) -> dict:
         "tokens_cache_write": 0,
         "tool_calls": 0,
     }
+    for cat in TOOL_CATEGORIES:
+        totals[f"toolcat_{cat}"] = 0
     found_any = False
     if not steps_dir.is_dir():
         return {}
@@ -311,8 +371,17 @@ def _sum_step_exports(cell_dir: Path) -> dict:
         totals["tokens_cache_write"]+= int(cache.get("write") or 0)
         for msg in d.get("messages") or []:
             for part in msg.get("parts") or []:
-                if part.get("type") == "tool":
-                    totals["tool_calls"] += 1
+                if part.get("type") != "tool":
+                    continue
+                totals["tool_calls"] += 1
+                tool = part.get("tool")
+                command = ""
+                if (tool or "").lower() == "bash":
+                    state = part.get("state")
+                    inp = state.get("input") if isinstance(state, dict) else None
+                    if isinstance(inp, dict):
+                        command = str(inp.get("command", "") or "")
+                totals[f"toolcat_{_classify_tool_call(tool, command)}"] += 1
     if not found_any:
         return {}
     totals["cost_usd"] = round(totals["cost_usd"], 6)
@@ -621,6 +690,8 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: Optional[dict]) -> dict:
         "agent_tokens_cache_read": step_totals.get("tokens_cache_read"),
         "agent_tokens_cache_write": step_totals.get("tokens_cache_write"),
         "agent_tool_calls": step_totals.get("tool_calls"),
+        **{f"toolcat_{cat}": step_totals.get(f"toolcat_{cat}")
+           for cat in TOOL_CATEGORIES},
     }
 
 
