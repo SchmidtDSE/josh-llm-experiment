@@ -59,7 +59,7 @@ validity.
 │   └── targets/{josh,mesa,josh-mcp}.md  # Per-target directive
 ├── harness/                      # Scoring entry point (run_metrics.py) + validators + acceptance ranges
 ├── orchestration/                # k8s submission surface — render_jobs.py, k8s_apply.sh, pull_artefacts.sh, templates/job.yaml.j2, matrix.csv
-├── analysis/                     # aggregate.py + numbered notebooks (00_apply_scoring, 01_headline, 02_runtime_outliers); aggregated.csv committed
+├── analysis/                     # aggregate.py + numbered notebooks (00_apply_scoring, 01_analysis, 02_runtime_outliers); aggregated.csv committed
 ├── reference/                    # Golden fixtures consumed by smoke CI
 └── .github/workflows/            # CI: smoke.yml (every push) + build-images.yml (GHCR builds)
 ```
@@ -289,14 +289,14 @@ the three numbered notebooks consume it (`pixi run lab`):
 ```
 pixi run aggregate runs/<batch> [runs/<batch> ...]   # → analysis/aggregated.csv
 analysis/00_apply_scoring.ipynb    # convergence loop: rescore + re-rep to N
-analysis/01_headline.ipynb         # headline figures (Panels A/B, cost, runtime)
+analysis/01_analysis.ipynb         # headline figures (Panels A/B, cost, runtime)
 analysis/02_runtime_outliers.ipynb # narrative diagnosis of the slow-mesa tail
 ```
 
 **The numbers are pipeline *role*, not a strict running order.**
 `00_apply_scoring` is an **idempotent** orchestration loop, not a
 one-shot first step — in the real headline run we aggregated, looked at
-`01_headline`, *then* used `00` to drive the dataset to completeness.
+`01_analysis`, *then* used `00` to drive the dataset to completeness.
 It reads the current `aggregated.csv`, decides what's still needed, and
 **prints** the exact `pixi run rescore` / `pixi run apply` commands to
 paste (it never fires `kubectl`/`pixi` itself). Each pass:
@@ -309,7 +309,7 @@ aggregate ──▶ 00_apply_scoring ──▶ (paste) rescore RUNTIME_KILL cell
             (repeat until: every combo at N, no RUNTIME_KILL pending)
 ```
 
-When `00` reports converged, `01_headline` and `02_runtime_outliers`
+When `00` reports converged, `01_analysis` and `02_runtime_outliers`
 produce the final figures. Because `aggregated.csv` is committed, those
 two notebooks reproduce every figure from a clean checkout without
 bucket access; re-running the loop (or re-deriving the CSV) needs the
@@ -371,7 +371,7 @@ run.
   are the canonical record. The rolled-up
   [`analysis/aggregated.csv`](analysis/aggregated.csv) is committed,
   so the headline notebook
-  ([`analysis/01_headline.ipynb`](analysis/01_headline.ipynb)) and
+  ([`analysis/01_analysis.ipynb`](analysis/01_analysis.ipynb)) and
   [`analysis/02_runtime_outliers.ipynb`](analysis/02_runtime_outliers.ipynb)
   regenerate every figure from a clean checkout without bucket access;
   re-deriving the CSV itself from the raw artefacts needs the bucket.

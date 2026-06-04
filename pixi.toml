@@ -6,7 +6,7 @@ version = "0.1.0"
 
 # Host-side environment for the k8s submission path: render Job manifests,
 # apply them with kubectl, pull per-cell artefacts back from the bucket
-# with mc, aggregate + plot in analysis/01_headline.ipynb. The agent + scorer
+# with mc, aggregate + plot in analysis/01_analysis.ipynb. The agent + scorer
 # images don't go through pixi — they're built from Dockerfile and
 # pushed to GHCR by .github/workflows/build-images.yml.
 #
@@ -66,7 +66,7 @@ matplotlib = ">=3.8,<4"
 jupyterlab = ">=4,<5"
 ipykernel = ">=7.2.0,<8"
 jupyter = ">=1.1.1,<2"
-# R toolchain for the ggplot2 headline notebook analysis/01_headline.ipynb. r-base +
+# R toolchain for the ggplot2 headline notebook analysis/01_analysis.ipynb. r-base +
 # r-irkernel give `pixi run lab` a native R kernel; the tidyverse subset
 # (ggplot2/dplyr/tidyr/readr/forcats/scales) drives the faceted panels.
 r-base = ">=4.3,<4.5"

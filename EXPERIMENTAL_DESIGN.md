@@ -270,7 +270,7 @@ the deficit and re-scoring deadline-killed partials in place — no combo
 is advanced-or-dropped on stage-1 performance. The realised headline
 panel is **8 reps per combo** (a few combos reached 10 from extra fill
 waves), so the aggregated record analysed in
-[`analysis/01_headline.ipynb`](analysis/01_headline.ipynb) is ~216
+[`analysis/01_analysis.ipynb`](analysis/01_analysis.ipynb) is ~216
 active cells across the 27 combos (the 9-model panel; olmo's cells are
 excluded — it was dropped after failing across the board).
 
@@ -575,7 +575,7 @@ undefined and recorded as null with `height_in_range=false`.
 | `target_conformance` | bool | Mechanical: Mesa imports + class subclassing, or `josh validate` exit zero. |
 | `conformance.{imports_mesa, subclasses_model, uses_decimal, has_josh_files, has_jshd_files, josh_validate_exit_code}` | mixed | Per-target evidence fields backing the `target_conformance` rollup. `uses_decimal` is a Mesa-only signal (regex on `import decimal`); for Josh / josh-mcp it is always `false` (Josh runtime is `BigDecimal`-backed natively, not source-detectable). |
 | `target_conformance_fuzzy` | enum | LLM-judge variant — see §LLM-judge passes. |
-| `substantive_conformance` *(analysis-time, in `aggregated.csv`)* | bool | Rollup combining mechanical `target_conformance` with the fuzzy judge's Q1 verdict. True iff `target_conformance=True AND (Q1='yes' OR Q1 missing)`. Catches the "near-empty `.josh` shell + Python sidecar does the real work" failure mode the mechanical grep alone passes. Computed in [`analysis/aggregate.py`](analysis/aggregate.py); the entry gate for the cascade in [`analysis/01_headline.ipynb`](analysis/01_headline.ipynb)'s Panel A / B. |
+| `substantive_conformance` *(analysis-time, in `aggregated.csv`)* | bool | Rollup combining mechanical `target_conformance` with the fuzzy judge's Q1 verdict. True iff `target_conformance=True AND (Q1='yes' OR Q1 missing)`. Catches the "near-empty `.josh` shell + Python sidecar does the real work" failure mode the mechanical grep alone passes. Computed in [`analysis/aggregate.py`](analysis/aggregate.py); the entry gate for the cascade in [`analysis/01_analysis.ipynb`](analysis/01_analysis.ipynb)'s Panel A / B. |
 | `csv_exists` | bool | `./output/results.csv` was written. |
 | `csv_schema_ok` | bool | Subset-match required columns + target year present + required cols numeric-coercible. |
 | `csv_schema_errors` | list | Failure messages when `csv_schema_ok=false`. |

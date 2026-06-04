@@ -75,7 +75,7 @@ ROW_FIELDS = [
     "files_written_count",
     # 5-axis report card. Each axis ∈ {pass, caveat, fail, na}. See
     # _compute_axes for the per-axis rules. The headline figure
-    # (analysis/01_headline.ipynb Panel B) renders these as a heatmap.
+    # (analysis/01_analysis.ipynb Panel B) renders these as a heatmap.
     "axis_engagement",
     "axis_conformance",
     "axis_execution",

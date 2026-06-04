@@ -12,7 +12,7 @@ __pycache__/
 # the notebooks reproduce every figure from a clean checkout without
 # bucket access — it is the rolled-up per-cell record from
 # analysis/aggregate.py. Rendered figures stay derived (regenerable by
-# re-running analysis/01_headline.ipynb + 02_runtime_outliers.ipynb).
+# re-running analysis/01_analysis.ipynb + 02_runtime_outliers.ipynb).
 analysis/figures/
 analysis/.ipynb_checkpoints/
 
