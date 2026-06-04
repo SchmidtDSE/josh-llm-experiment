@@ -17,7 +17,7 @@ Your working directory is the cell's run dir. Read with the `read` /
   `target_conformance` (mechanical grep / `josh validate` result),
   `did_run` (script exited 0 + CSV present + schema OK), and the
   `regression_fit.{beta, alpha, r2}` block (per-cell observed-vs-predicted
-  fit against the spec — see SCORING.md).
+  fit against the spec — see EXPERIMENTAL_DESIGN.md §Scoring).
 - `workspace/PLAN.md` — the agent's working document. Checked items
   show what it considered done.
 

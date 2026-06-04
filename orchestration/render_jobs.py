@@ -89,8 +89,8 @@ DEFAULT_TTL_SECONDS_AFTER_FINISHED = 86400  # 24h — long enough for log fetch
 # nothing inside the agent container reads them under k8s (the SIGTERM
 # handler exists in agent-entrypoint.sh but no external watcher fires
 # the signal). Left in place as inert injection so the headline
-# manifest still records the *intent* — see open question #3 in
-# IMPLEMENTATION_PLAN.md before relying on them as a backstop.
+# manifest still records the *intent* — see EXPERIMENTAL_DESIGN.md
+# §Threats to validity before relying on them as a backstop.
 DEFAULT_WALL_CLOCK_BACKSTOP_SEC = 1800
 DEFAULT_IDLE_THRESHOLD_SEC = 120
 
@@ -117,7 +117,7 @@ DEFAULT_AGENT_MEMORY_LIMIT = "16Gi"
 # Scorer matches the agent exactly — no per-cell sim time / OOM
 # differences from machine-shape mismatch when the sim is what we're
 # actually measuring (sim_wall_seconds is a headline metric per
-# SCORING.md). Also gives the in-Pod fuzzy judge (run-judge.sh) room
+# EXPERIMENTAL_DESIGN.md §Scoring). Also gives the in-Pod fuzzy judge (run-judge.sh) room
 # alongside the Josh JVM + 100×100 sim.
 DEFAULT_SCORER_CPU_REQUEST = "8"
 DEFAULT_SCORER_CPU_LIMIT = "16"
@@ -279,7 +279,8 @@ def _render_one(env, args, model: str, target: str, rep_idx: int, rep_count: int
 # the bucket), without re-running the agent. Renders rescore-job.yaml.j2. The
 # Job's k8s identity (cell_id/batch_tag) is the NEW rescore batch; the upload
 # is keyed by the ORIGINAL cell's orig_* values so scorer.json lands back at
-# the original bucket key beside the preserved agent_meta. See SCORER_K8S.md.
+# the original bucket key beside the preserved agent_meta. See
+# EXPERIMENTAL_DESIGN.md §Scoring (the no_scorer rescore pass).
 
 def _parse_rescore_manifest(path: Path) -> list[dict]:
     """CSV with columns: orig_batch_tag, run_id, target[, minio_prefix].

@@ -8,7 +8,7 @@ name: smoke
 #
 # The Phase 6 refactor retired the firewall-probe job along with the
 # kernel-enforced egress sidecar (see Dockerfile.dnsmasq history and
-# IMPLEMENTATION_PLAN.md §Egress relaxation) — the sidecar is now a
+# EXPERIMENTAL_DESIGN.md §Egress observability) — the sidecar is now a
 # passive query logger, so there are no iptables REJECT rules to probe.
 #
 # Runs on every push and on PRs targeting dev or main. The actual

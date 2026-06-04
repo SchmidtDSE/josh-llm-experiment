@@ -4,8 +4,8 @@ Returns a stable null record so the scorer JSON schema is complete
 and downstream consumers (manifest aggregator, headline notebook)
 don't have to special-case a missing field.
 
-The actual LLM-judge passes (Q1/Q2/Q3 in SCORING.md §LLM-judge
-passes) run **in-Pod** via `containers/run-judge.sh` inside the
+The actual LLM-judge passes (Q1–Q4 in EXPERIMENTAL_DESIGN.md §Scoring
+§LLM-judge passes) run **in-Pod** via `containers/run-judge.sh` inside the
 scorer container, and write a sibling file `scorer.fuzzy.json` next
 to `scorer.json`. They do not flow back through this module — it
 just keeps `scorer.json`'s shape stable. The `target_conformance_fuzzy`

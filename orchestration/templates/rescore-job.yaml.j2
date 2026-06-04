@@ -4,7 +4,8 @@
 # agent. Used to turn previously-excluded `no_scorer` cells that were killed
 # mid-step by the 2h deadline into honest `did_run=False` rows — the scorer
 # is deterministic over the saved workspace, so this re-scores recorded
-# behavior rather than re-rolling the model. See SCORER_K8S.md.
+# behavior rather than re-rolling the model. See EXPERIMENTAL_DESIGN.md
+# §Scoring (the no_scorer rescore pass).
 #
 # Pod runs:
 #   initContainer setup  — `mc mirror` the ORIGINAL cell tree DOWN from the

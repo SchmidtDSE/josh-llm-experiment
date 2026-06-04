@@ -11,16 +11,13 @@ This README covers installation and execution; see
 scoring methodology, egress-observability rationale, and threats to
 validity.
 
-> **Status (Phase 6 in flight).** Per-cell k8s Job submission against
-> GKE Autopilot is the live execution path. The agent and scorer
-> images are built by [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)
+> **Execution path.** Each cell runs as one k8s Job on GKE Autopilot.
+> The agent and scorer images are built by
+> [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)
 > and pulled by the cluster; per-cell artefacts land in the GCS
-> bucket via an in-Pod `mc mirror` from the scorer container, and the
-> headline batch will be submitted as a k8s Indexed Job. The
-> retired local-Docker orchestration (per-cell shell scripts +
-> dnsmasq sidecar + host-side report renderers) was removed in PR6.
-> See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the
-> per-phase build state.
+> bucket via an in-Pod `mc mirror` from the scorer container.
+> Methodology, scoring axes, and threats to validity are in
+> [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md).
 
 [josh]: https://joshsim.org/
 
@@ -29,9 +26,7 @@ validity.
 ```
 .
 ├── README.md                     # This file (install + run)
-├── EXPERIMENTAL_DESIGN.md        # Methodology, scoring, threats to validity
-├── IMPLEMENTATION_PLAN.md        # Phase plan + current build status
-├── SCORING.md                    # Scoring axes, metric definitions, LLM-judge spec
+├── EXPERIMENTAL_DESIGN.md        # Methodology, scoring axes + metrics, LLM-judge, re-scoring, threats to validity
 ├── Dockerfile                    # Unified fortree image (agent + scorer)
 ├── containers/                   # Container-entrypoint shell scripts (baked into the images)
 │   ├── agent-entrypoint.sh       # fortree:agent entry — runs the 8-step opencode flow
@@ -64,7 +59,7 @@ validity.
 │   └── targets/{josh,mesa,josh-mcp}.md  # Per-target directive
 ├── harness/                      # Scoring entry point (run_metrics.py) + validators + acceptance ranges
 ├── orchestration/                # k8s submission surface — render_jobs.py, k8s_apply.sh, pull_artefacts.sh, templates/job.yaml.j2, matrix.csv
-├── analysis/                     # aggregate.py + headline_r.ipynb (the only post-pull workflow)
+├── analysis/                     # aggregate.py + numbered notebooks (00_apply_scoring, 01_headline, 02_runtime_outliers); aggregated.csv committed
 ├── reference/                    # Golden fixtures consumed by smoke CI
 └── .github/workflows/            # CI: smoke.yml (every push) + build-images.yml (GHCR builds)
 ```
@@ -262,12 +257,17 @@ applying — useful for inspection or for re-applying by hand. Pass
 
 The scoring container is target-agnostic and stateless against an
 agent's `workspace/`, so a methodology revision (acceptance ranges,
-new metric, etc.) can be applied to a frozen batch without re-running
-the agents. The path is to submit a re-score k8s Job that pulls the
-target batch from the bucket, runs the new scorer image against each
-`<run-id>/workspace/`, and writes back. The Job manifest is generated
-by the same `render_jobs.py` renderer (template TBD); spec lives in
-[SCORING.md §Re-analysing-completed-runs](SCORING.md#re-analysing-completed-runs).
+new metric, etc.) — or recovering a cell that timed out mid-step —
+can be applied to a frozen batch without re-running the agents.
+`pixi run rescore` renders an agent-less k8s Job
+([`orchestration/templates/rescore-job.yaml.j2`](orchestration/templates/rescore-job.yaml.j2))
+that pulls the target cell from the bucket in-Pod, runs the scorer
+against its `workspace/`, and writes `scorer.json` back to the
+original key. The classifier
+[`orchestration/classify_no_scorer.py`](orchestration/classify_no_scorer.py)
+decides which cells qualify. Full methodology (including why this is
+bias-free) is in
+[EXPERIMENTAL_DESIGN.md §Scoring](EXPERIMENTAL_DESIGN.md#scoring).
 
 #### LLM-judge (Q1/Q2/Q3)
 
@@ -330,10 +330,13 @@ run.
 - Pre-registered acceptance ranges committed to Git
   ([`harness/acceptance_ranges.json`](harness/acceptance_ranges.json)).
 - Per-cell artefacts under `<bucket>/<prefix>/<batch-tag>/<run-id>/`
-  are the canonical record. The headline notebook
-  ([`analysis/headline_r.ipynb`](analysis/headline_r.ipynb)) reads
-  `analysis/aggregate.py`'s aggregated CSV; both inputs and outputs
-  are reproducible from the bucket.
+  are the canonical record. The rolled-up
+  [`analysis/aggregated.csv`](analysis/aggregated.csv) is committed,
+  so the headline notebook
+  ([`analysis/01_headline.ipynb`](analysis/01_headline.ipynb)) and
+  [`analysis/02_runtime_outliers.ipynb`](analysis/02_runtime_outliers.ipynb)
+  regenerate every figure from a clean checkout without bucket access;
+  re-deriving the CSV itself from the raw artefacts needs the bucket.
 - Prompt files versioned in Git; any change forces a new batch tag.
 
 ## License

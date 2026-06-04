@@ -15,8 +15,7 @@ Two builds are fetched:
   - dev  — the rolling `dev` branch build. As of 2026-05 this is the build
            that carries the `mcp` subcommand (SchmidtDSE/josh#440), and it
            is what install_josh.sh / the image build use by default — the
-           experiment runs on `dev` (see IMPLEMENTATION_PLAN.md §The
-           josh-mcp arm).
+           experiment runs on `dev` (see EXPERIMENTAL_DESIGN.md §Targets).
   - main — the rolling stable build, fetched only as a reference / for
            pinning back to `main` if we ever leave `dev`.
 
