@@ -260,28 +260,26 @@ produced (§Run flow, §Tool palette).
 
 ### Sample size
 
-The headline batch uses a **two-stage allocation** so spend
-concentrates on combos that can produce usable data:
-
-- **Stage 1** — [`orchestration/matrix.csv`](orchestration/matrix.csv):
-  9 models × 3 targets × 5 reps = **135 cells**. Every (model × target)
-  combo gets 5 launches.
-- **Stage 2** — built post-hoc from stage-1 outcomes. Combos with ≥1/5
-  pass advance with additional reps (target **N≈8** per surviving
-  combo); combos with 0/5 drop, the 5 cells on record establishing the
-  0% point estimate. The deficit-and-top-up bookkeeping is driven by
-  [`analysis/00_apply_scoring.ipynb`](analysis/00_apply_scoring.ipynb)
-  (the single source of truth for "what to launch").
+The headline target is a **flat N per (model × target) combo**. The
+launch matrix [`orchestration/matrix.csv`](orchestration/matrix.csv)
+fires 9 models × 3 targets × 5 reps = 135 cells as the first wave;
+the **idempotent re-rep loop** in
+[`analysis/00_apply_scoring.ipynb`](analysis/00_apply_scoring.ipynb)
+then tops *every* combo up to the target N by launching fresh cells for
+the deficit and re-scoring deadline-killed partials in place — no combo
+is advanced-or-dropped on stage-1 performance. The realised headline
+panel is **8 reps per combo** (a few combos reached 10 from extra fill
+waves), so the aggregated record analysed in
+[`analysis/01_headline.ipynb`](analysis/01_headline.ipynb) is ~216
+active cells across the 27 combos (the 9-model panel; olmo's cells are
+excluded — it was dropped after failing across the board).
 
 Each generation is itself 8 opencode invocations under the
 multi-invocation flow, plus a separate scoring container pass. The
 headline DSL-vs-framework figure remains the `josh`↔`mesa` contrast
 over the full-tools cells; the `josh-mcp` cells add the
-cost-of-constraint and product contrasts (§Targets). The aggregated
-record analysed in [`analysis/01_headline.ipynb`](analysis/01_headline.ipynb)
-is ~220 active cells (the 9-model panel; olmo's cells are excluded).
-See §Open methodology questions for `target_conformance`-denominator
-accounting.
+cost-of-constraint and product contrasts (§Targets). See §Open
+methodology questions for `target_conformance`-denominator accounting.
 
 Each run is a single agent container hosting the 8-step
 multi-invocation flow, plus a separate scoring container pass (see
