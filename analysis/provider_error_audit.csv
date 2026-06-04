@@ -1,0 +1,13 @@
+run_id,model,target,endpoint,steps_reached,provider_errs,dominant_codes
+headline-rerep-202606020525-gemma-josh-r0,gemma,josh,paid,6,0,none
+headline-stage1-20260601-gemma-josh-r3,gemma,josh,free,1,36,429×36
+headline-stage1-20260601-gemma-josh-r4,gemma,josh,free,1,36,429×36
+headline-rerep-202606020525-gemma-josh-mcp-r2,gemma,josh-mcp,paid,4,0,none
+headline-rerep-202606020525-gemma-josh-mcp-r4,gemma,josh-mcp,paid,4,0,none
+headline-rerep-202606021512-gemma-josh-mcp-r1,gemma,josh-mcp,paid,4,0,none
+headline-stage1-20260601-gemma-mesa-r0,gemma,mesa,free,1,36,429×36
+headline-stage1-20260601-gemma-mesa-r2,gemma,mesa,free,1,36,429×36
+headline-rerep-202606020525-kimi-josh-mcp-r1,kimi,josh-mcp,paid,5,0,none
+headline-rerep-202606021512-kimi-josh-mcp,kimi,josh-mcp,paid,4,0,none
+headline-stage1-20260601-kimi-josh-mcp-r0,kimi,josh-mcp,paid,4,0,none
+headline-stage1-20260601-kimi-josh-mcp-r2,kimi,josh-mcp,paid,4,0,none

@@ -64,7 +64,7 @@ validity.
 │   └── targets/{josh,mesa,josh-mcp}.md  # Per-target directive
 ├── harness/                      # Scoring entry point (run_metrics.py) + validators + acceptance ranges
 ├── orchestration/                # k8s submission surface — render_jobs.py, k8s_apply.sh, pull_artefacts.sh, templates/job.yaml.j2, matrix.csv
-├── analysis/                     # aggregate.py + headline.ipynb (the only post-pull workflow)
+├── analysis/                     # aggregate.py + headline_r.ipynb (the only post-pull workflow)
 ├── reference/                    # Golden fixtures consumed by smoke CI
 └── .github/workflows/            # CI: smoke.yml (every push) + build-images.yml (GHCR builds)
 ```
@@ -331,7 +331,7 @@ run.
   ([`harness/acceptance_ranges.json`](harness/acceptance_ranges.json)).
 - Per-cell artefacts under `<bucket>/<prefix>/<batch-tag>/<run-id>/`
   are the canonical record. The headline notebook
-  ([`analysis/headline.ipynb`](analysis/headline.ipynb)) reads
+  ([`analysis/headline_r.ipynb`](analysis/headline_r.ipynb)) reads
   `analysis/aggregate.py`'s aggregated CSV; both inputs and outputs
   are reproducible from the bucket.
 - Prompt files versioned in Git; any change forces a new batch tag.
