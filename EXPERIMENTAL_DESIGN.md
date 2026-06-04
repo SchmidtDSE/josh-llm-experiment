@@ -274,8 +274,11 @@ waves), so the aggregated record analysed in
 active cells across the 27 combos (the 9-model panel; olmo's cells are
 excluded — it was dropped after failing across the board).
 
-Each generation is itself 8 opencode invocations under the
-multi-invocation flow, plus a separate scoring container pass. The
+Each individual cell (one rep) is itself run as the fixed 8-step
+multi-invocation flow — eight sequential opencode invocations against
+the same workspace (§Run flow) — plus a separate scoring container
+pass. (The two "8"s are unrelated: 8 *reps* per combo, each rep run as
+8 *opencode steps*.) The
 headline DSL-vs-framework figure remains the `josh`↔`mesa` contrast
 over the full-tools cells; the `josh-mcp` cells add the
 cost-of-constraint and product contrasts (§Targets). See §Open
