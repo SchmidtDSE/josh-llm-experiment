@@ -158,6 +158,9 @@ ROW_FIELDS = [
     "toolcat_plan",
     "toolcat_web",
     "toolcat_other",
+    # Did the agent webfetch the Josh `llms-full.txt` documentation at least
+    # once (see _sum_step_exports)? Always 0 for mesa (no Josh docs).
+    "fetched_llms_full",
 ]
 
 
@@ -352,6 +355,7 @@ def _sum_step_exports(cell_dir: Path) -> dict:
     }
     for cat in TOOL_CATEGORIES:
         totals[f"toolcat_{cat}"] = 0
+    totals["fetched_llms_full"] = 0
     found_any = False
     if not steps_dir.is_dir():
         return {}
@@ -376,11 +380,17 @@ def _sum_step_exports(cell_dir: Path) -> dict:
                 totals["tool_calls"] += 1
                 tool = part.get("tool")
                 command = ""
-                if (tool or "").lower() == "bash":
+                tlow = (tool or "").lower()
+                if tlow in ("bash", "webfetch"):
                     state = part.get("state")
                     inp = state.get("input") if isinstance(state, dict) else None
                     if isinstance(inp, dict):
-                        command = str(inp.get("command", "") or "")
+                        if tlow == "bash":
+                            command = str(inp.get("command", "") or "")
+                        else:  # webfetch
+                            url = str(inp.get("url", "") or "")
+                            if "llms-full" in url or "llms_full" in url:
+                                totals["fetched_llms_full"] = 1
                 totals[f"toolcat_{_classify_tool_call(tool, command)}"] += 1
     if not found_any:
         return {}
@@ -692,6 +702,7 @@ def _flatten(batch_tag: str, cell_dir: Path, scorer: Optional[dict]) -> dict:
         "agent_tool_calls": step_totals.get("tool_calls"),
         **{f"toolcat_{cat}": step_totals.get(f"toolcat_{cat}")
            for cat in TOOL_CATEGORIES},
+        "fetched_llms_full": step_totals.get("fetched_llms_full"),
     }
 
 
