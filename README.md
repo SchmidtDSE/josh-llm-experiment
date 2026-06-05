@@ -382,11 +382,7 @@ run.
 
 ## Open Source
 
-This project is built on the work of others, with gratitude. Each
-license below was read from the artefact itself — pixi `conda-meta`
-records, Python `importlib.metadata` in the scorer image, the JDK
-`legal/` notices, the `mc` binary, the Lato name table, and the
-canonical `LICENSE` files for opencode and kubectl.
+This project is built on the work of others, with gratitude:
 
 ### R (analysis figures)
 
