@@ -46,9 +46,12 @@ validity.
 │   ├── opencode.template.json    # Per-run opencode config template
 │   ├── opencode.judge.json       # Read-only judge config used by containers/run-judge.sh
 │   └── docs_categories.yaml      # URL → category tag, analysis-time
-├── data/                         # Climate inputs (Tulare County, FGOALS-g3 / SSP2-4.5)
-│   ├── precip_tulare_annual.nc
-│   └── maxtemp_tulare_annual.nc
+├── data/                         # Synthetic climate inputs + their generator, reference simulator, and CF-validator
+│   ├── generate_synthetic_climate.py  # writes the netCDFs (deterministic, CF-1.8)
+│   ├── maxtemp_synthetic.nc           # temperature forcing (K)
+│   ├── precip_synthetic.nc            # precipitation flux (kg m⁻² s⁻¹)
+│   ├── reference_sim.py               # spec-faithful simulator → harness/acceptance_ranges.json
+│   └── validate_synthetic_climate.py  # IOOS compliance-checker harness
 ├── prompts/
 │   ├── BASE_PROMPT.md            # Full ForeverTree spec (the only rung used by headline runs)
 │   ├── SIDECAR.md                # Boilerplate footer appended to BASE_PROMPT (env, inputs, output contract)
@@ -59,7 +62,7 @@ validity.
 │   └── targets/{josh,mesa,josh-mcp}.md  # Per-target directive
 ├── harness/                      # Scoring entry point (run_metrics.py) + validators + acceptance ranges
 ├── orchestration/                # k8s submission surface — render_jobs.py, k8s_apply.sh, pull_artefacts.sh, templates/job.yaml.j2, matrix.csv
-├── analysis/                     # aggregate.py + numbered notebooks (00_apply_scoring, 01_analysis, 02_runtime_outliers); aggregated.csv committed
+├── analysis/                     # aggregate.py + numbered notebooks (00_apply_scoring, 01_analysis, 02_runtime_outliers, 03_manuscript_claims); aggregated.csv committed
 ├── reference/                    # Golden fixtures consumed by smoke CI
 └── .github/workflows/            # CI: smoke.yml (every push) + build-images.yml (GHCR builds)
 ```
@@ -97,8 +100,7 @@ docker run --rm --network=none fortree:agent python -c "print('offline')"
 
 ### Running a batch on GKE
 
-The Phase 6 refactor replaces the local-Docker launcher with **one
-k8s Job per cell** on GKE Autopilot. Each Job has shape:
+Each cell runs as **one k8s Job** on GKE Autopilot, with shape:
 
 | Container        | Phase       | Role |
 | ---------------- | ----------- | ---- |
@@ -123,7 +125,7 @@ A fork would need to replicate:
   on that bucket; HMAC keys minted off it and stored in Secret Manager
   as `josh-k8s-minio-access-key` + `josh-k8s-minio-secret-key`.
 
-Terraform for the above lives in the infra repo under
+Terraform for the above lives in the infra (`SchmidtDSE/fire-recovery-iac`) repo under
 `environments/josh-k8s/`.
 
 #### Operator setup *(one-time per workstation or dev VM)*
@@ -284,13 +286,14 @@ opencode required.
 Once a batch is pulled, all analysis is host-side: `pixi run aggregate`
 rolls every cell's `scorer.json` + agent metadata into
 [`analysis/aggregated.csv`](analysis/aggregated.csv) (committed), and
-the three numbered notebooks consume it (`pixi run lab`):
+the numbered notebooks consume it (`pixi run lab`):
 
 ```
 pixi run aggregate runs/<batch> [runs/<batch> ...]   # → analysis/aggregated.csv
-analysis/00_apply_scoring.ipynb    # convergence loop: rescore + re-rep to N
-analysis/01_analysis.ipynb         # headline figures (Panels A/B, cost, runtime)
-analysis/02_runtime_outliers.ipynb # narrative diagnosis of the slow-mesa tail
+analysis/00_apply_scoring.ipynb     # convergence loop: rescore + re-rep to N
+analysis/01_analysis.ipynb          # headline figures (Panels A/B, cost, runtime)
+analysis/02_runtime_outliers.ipynb  # narrative diagnosis of the slow-mesa tail
+analysis/03_manuscript_claims.ipynb # every paper number with its provenance
 ```
 
 **The numbers are pipeline *role*, not a strict running order.**
@@ -309,11 +312,11 @@ aggregate ──▶ 00_apply_scoring ──▶ (paste) rescore RUNTIME_KILL cell
             (repeat until: every combo at N, no RUNTIME_KILL pending)
 ```
 
-When `00` reports converged, `01_analysis` and `02_runtime_outliers`
-produce the final figures. Because `aggregated.csv` is committed, those
-two notebooks reproduce every figure from a clean checkout without
-bucket access; re-running the loop (or re-deriving the CSV) needs the
-bucket. Rescore mechanics are in §Re-scoring a completed batch above;
+When `00` reports converged, `01_analysis`, `02_runtime_outliers`, and
+`03_manuscript_claims` produce the final figures and paper numbers.
+Because `aggregated.csv` is committed, those notebooks reproduce every
+figure from a clean checkout without bucket access; re-running the loop
+(or re-deriving the CSV) needs the bucket. Rescore mechanics are in §Re-scoring a completed batch above;
 the bias-free rationale is in
 [EXPERIMENTAL_DESIGN.md §Scoring](EXPERIMENTAL_DESIGN.md#scoring).
 

@@ -3,10 +3,9 @@
 The methodology behind the experiment described in [README.md](README.md).
 For installation and how to run, see the README. The scoring methodology —
 axes, metric definitions, LLM-judge spec, re-analysis recipe, and open
-scoring questions — lives in [§Scoring](#scoring) below (previously a
-separate `SCORING.md`).
+scoring questions — lives in [§Scoring](#scoring) below.
 
-This is the AI-evaluation experiment reported in our USRSE'26 submission on the [Josh][josh] vegetation modeling platform. Two design simplifications are worth flagging up front: (1) the rung-detail prompt ladder is collapsed to a single master prompt — the task at full detail is already hard enough to be a useful Josh-vs-Mesa differentiator, and a second variation axis would dilute the statistical power available within budget; (2) the separate recovery-loop hypothesis is folded into the multi-invocation flow, whose todos already include validate-and-cleanup iterations.
+This is the AI-evaluation experiment reported in our USRSE'26 submission on the [Josh][josh] vegetation modeling platform. Two deliberate simplifications: (1) the prompt is a single master prompt rather than a detail ladder — the task at full detail is already a useful Josh-vs-Mesa differentiator, and a second variation axis would dilute the statistical power available within budget; (2) recovery quality is folded into the multi-invocation flow, whose todos already include validate-and-cleanup iterations, rather than measured as a separate hypothesis.
 
 [josh]: https://joshsim.org/
 
@@ -32,11 +31,9 @@ of constraint** within Josh. That arm and the partial-factorial
 framing it creates are described in §Targets; it is pre-registered as
 a question (a delta vs `josh`), not a competing hypothesis.
 
-Earlier rounds of this design distinguished a separate "recovery
-quality" hypothesis measured via a second-shot prompt with structural
-feedback. That hypothesis is now folded into H1: the multi-invocation
-flow (phase 5c) bakes plan-write → stub → implement → validate →
-cleanup into a single cell, so what the scorer sees at the end is
+Recovery quality is folded into H1 rather than measured separately:
+the multi-invocation flow bakes plan-write → stub → implement →
+validate → cleanup into a single cell, so what the scorer sees is
 already "the agent's best attempt given a chance to self-correct."
 Distinguishing one-shot from recovery would require a second prompt
 infrastructure that doesn't pay for itself in interpretability now
@@ -69,8 +66,8 @@ has to own:
   The tool surface offered to the model is `read`, `write`, `edit`,
   `glob`, `grep`, `bash`, and `webfetch`. **The `task` sub-agent tool
   is explicitly disabled** (`"task": false` in the rendered config) —
-  it was the failure mode in the prior pilot where gemma issued 800
-  malformed `task` calls in a single cell and where claude routed
+  it was a failure mode in piloting, where gemma issued 800
+  malformed `task` calls in a single cell and claude routed
   bash through it as a workaround for an earlier per-pattern bash
   allowlist that turned out to suppress the bash tool entirely. With
   `task` disabled and `permission.bash: "allow"` (string form, no
@@ -88,10 +85,9 @@ an agent initContainer (`fortree:agent`) followed by a scorer
 container (`fortree:scorer`). Egress is **monitored, not enforced**:
 opencode's per-tool `trajectory.jsonl` records every `webfetch` URL
 the model invoked, and that file ends up in the bucket via the
-scorer's `mc mirror`. This is the sole egress observation layer.
-The earlier kernel-enforced allowlist (per-run docker bridge +
-dnsmasq + iptables + ipset) was retired in Phase 6 PR4; see §Egress
-observability for the methodology consequences. A mirror-sidecar
+scorer's `mc mirror`. This is the sole egress observation layer
+(see §Egress observability for the methodology consequences of
+monitoring rather than enforcing). A mirror-sidecar
 runs alongside the agent container and continuously mirrors the
 shared `/cell-data` volume to the bucket so an OOM'd cell still
 leaves forensic state.
@@ -124,13 +120,10 @@ full-tools arms (`josh`, `mesa`); the constrained `josh-mcp` agent has no
 shell and never authors `run.sh` (the scorer runs its model), so it is
 omitted there to avoid contradicting that arm's directive.
 
-Earlier rounds of this design included a 1–5 rung prompt-detail
-ladder. We collapsed it to the single master prompt: at full detail
-the task is already hard enough to be a useful Josh-vs-Mesa
+The prompt is a single master prompt rather than a 1–5 detail ladder:
+at full detail the task is already a useful Josh-vs-Mesa
 differentiator, and a second variation axis would dilute the
-statistical power available within the budget. The rung-ladder
-directory (`prompts/rungs/`) was deleted in Phase 6 PR6; headline
-runs use the master prompt only.
+statistical power available within the budget.
 
 The agent phase splits this single prompt into **8 sequential opencode
 invocations against the same workspace**, one per todo from a fixed
@@ -143,7 +136,7 @@ working document `PLAN.md` is both an output artefact and a working
 reference re-read at the start of every sub-invocation.
 
 **Why force this structure rather than trust the agent framework to
-decompose the task?** Pre-phase-5c trials with both commercial
+decompose the task?** Trials with both commercial
 (claude) and open (gemma, minimax) models surfaced a recurring
 failure mode: agents got caught up in orchestration concerns —
 making `run.sh` executable, parsing the netCDFs, getting filenames
@@ -291,7 +284,7 @@ flow below).
 ### External climate inputs
 
 The spec requires per-cell, per-step temperature and precipitation
-forcings. Two design constraints conflict for the pilot phase:
+forcings. Two design constraints conflict:
 
 1. **Realism.** Real climate data is what we'd use in production, so
    the experiment should look like a realistic data-binding task.
@@ -583,7 +576,7 @@ undefined and recorded as null with `height_in_range=false`.
 | `script_was_executable` | bool | `True` if the agent self-chmod'd; `False` if the scorer's runner had to. |
 | `did_run` | bool | `exit_code == 0 AND csv_exists AND csv_schema_ok`. |
 | `exit_code` | int | `./run.sh` exit status. |
-| `wall_time_seconds` | float | End-to-end wall-clock for `./run.sh`. Under the phase-6 contract `run.sh` carries preprocess + `--replicates 100` × 100 simulated years, so this is the real Josh-vs-Mesa execution-cost comparison. |
+| `wall_time_seconds` | float | End-to-end wall-clock for `./run.sh`. `run.sh` carries preprocess + `--replicates 100` × 100 simulated years, so this is the real Josh-vs-Mesa execution-cost comparison. |
 | `timed_out` | bool | True when `./run.sh` was killed by the scorer's per-invocation timeout. |
 | `height_year100_mean` / `occupancy_year100_mean` | float | Mean `meanHeight` / `nTrees` across `(cell, replicate)` at `target_year`. Secondary sanity checks. |
 | `height_in_range` / `occupancy_in_range` | bool | Within the 3σ mean band (secondary check). |
@@ -603,9 +596,8 @@ headline runs and re-analyses sit side-by-side.
 
 ### The `./run.sh` contract
 
-A cell's `./run.sh` is the unit of work the scorer executes — and
-under phase-6, the unit whose wall-clock counts as the headline cost
-metric. The prompt ([BASE_PROMPT.md](prompts/BASE_PROMPT.md) + the
+A cell's `./run.sh` is the unit of work the scorer executes — and the
+unit whose wall-clock counts as the headline cost metric. The prompt ([BASE_PROMPT.md](prompts/BASE_PROMPT.md) + the
 per-target directives) instructs the agent to produce a `run.sh` that:
 
 1. Performs any preprocessing the target needs (Josh's `.jshd` binary
@@ -742,15 +734,11 @@ One layer — opencode's tool config gates what the model can ask
 URL the model actually invoked. That trajectory is the post-hoc
 evidence record for the headline batch.
 
-> **Phase 6 methodology delta.** Earlier pilots ran behind a
-> kernel-enforced egress firewall (per-run docker bridge + dnsmasq +
-> iptables + ipset, REJECT on anything outside an allowlist of docs
-> hosts) with a passive DNS log as the secondary observation layer.
-> The Phase 6 refactor moves cell execution to k8s Pods, which can't
-> express the `CAP_NET_ADMIN` + shared-netns pattern that kernel
-> enforcement required, and drops the DNS-log sidecar to keep the Pod
-> shape minimal. The egress boundary is now **monitored, not
-> enforced**, and `trajectory.jsonl` is the sole observation record.
+> **Monitored, not enforced.** The egress boundary is observed
+> post-hoc, not blocked at the kernel. Running each cell as a k8s Pod
+> rules out the `CAP_NET_ADMIN` + shared-netns pattern a per-run
+> kernel-enforced allowlist would need, so `trajectory.jsonl` is the
+> sole observation record and there is no DNS-log sidecar.
 > Threats-to-validity implications discussed below.
 
 ### Tool-config layer (soft)
@@ -764,15 +752,14 @@ the only in-process constraint:
   was necessary to stop gemma's malformed-call loop, and surfacing
   `bash` to the model directly removed the need for `task`-routed
   workarounds.
-- `permission.bash: "allow"` (string form). The per-command bash
-  allowlist that earlier versions of this template carried turned out
-  to suppress the `bash` tool's exposure to the model entirely
-  (caught on the phase-5a pilot batch when claude's transcript
-  showed it reasoning "I don't see a bash tool in my function list").
-  With the string form, bash is exposed normally.
+- `permission.bash: "allow"` (string form). A per-command bash
+  allowlist turned out to suppress the `bash` tool's exposure to the
+  model entirely (caught in piloting when claude's transcript showed
+  it reasoning "I don't see a bash tool in my function list"). With
+  the string form, bash is exposed normally.
 - `permission.webfetch: "allow"` for hosts in the docs allowlist
   (table below). opencode enforces this in-process; the network layer
-  no longer re-enforces it at the kernel.
+  does not re-enforce it at the kernel.
 
 ### Observation: opencode trajectory log
 
@@ -797,8 +784,8 @@ validity.
 ### Documentation host allowlist
 
 The hosts the agent is steered toward via `permission.webfetch` in
-[`config/opencode.template.json`](config/opencode.template.json) (no
-longer enforced at the kernel — see the methodology delta above):
+[`config/opencode.template.json`](config/opencode.template.json)
+(steered in-process, not enforced at the kernel — see above):
 
 | Host                                | Purpose |
 | ----------------------------------- | ------- |
@@ -898,7 +885,7 @@ which the orchestrator renders per run. The configured tools are:
 
 The bash surface is intentionally wide because the substantive
 policy boundary is the opencode `webfetch` allowlist and the
-post-hoc `trajectory.jsonl` audit (Phase 6 monitored-egress model).
+post-hoc `trajectory.jsonl` audit (the monitored-egress model).
 Disk writes and syscalls inside the unprivileged Pod are not
 separately gated — the Pod is ephemeral and per-cell, and the
 shared `/cell-data` volume is the only persistent surface.
@@ -995,30 +982,25 @@ paper:
 - The "Mesa must reinvent boilerplate" effect is partly an artifact
   of Mesa being a general framework; a hypothetical
   vegetation-specific Mesa extension would close some of the gap.
-- The five-model panel is a snapshot; the model field moves fast.
-- Pre-registered acceptance ranges were author-set, not empirically
-  derived from a reference simulator. Ranges are chosen to be
-  permissive — they catch obvious failures, not subtle ones.
+- The nine-model panel is a snapshot; the model field moves fast.
+- The acceptance ranges are derived from the spec-faithful reference
+  simulator (§Scoring), but their *tolerance widths* (β ∈ [0.95, 1.05],
+  etc.) are hand-picked rather than calibrated against observed
+  agent-implementation variance — permissive enough to catch obvious
+  dynamics errors, not subtle ones. See §Open methodology questions #1.
 - "Relevant LOC" definition is judgement-encoded once, in
   [`harness/loc.py`](harness/loc.py); a different operationalization
   could shift numbers.
-- **Egress is monitored, not enforced** (Phase 6 methodology delta —
-  see §Egress observability). Earlier pilots ran behind a
-  kernel-enforced REJECT on anything outside the docs allowlist plus
-  a passive DNS log; the k8s refactor dropped both. The Pod model
-  can't express the per-run docker-bridge + `CAP_NET_ADMIN` pattern
-  that kernel enforcement required, and the DNS sidecar was retired
-  alongside it to keep the Pod shape minimal — opencode's
-  `trajectory.jsonl` already records every `webfetch` URL the model
-  invoked. Indirect egress paths (e.g., an agent-authored `./run.sh`
-  shelling out to `curl` or `urllib`) are no longer visible at all:
-  they don't appear in `trajectory.jsonl` (the model didn't call
-  `webfetch`) and there's no DNS log anymore. The validity argument
-  depends on the pilot batches showing agents don't have a habit of
-  shelling out for HTTP; if the headline batch surfaces concerns
-  about indirect paths, a GKE Pod-level egress `NetworkPolicy` or
-  cluster-wide Cloud DNS logging can be added without reverting the
-  rest of the refactor.
+- **Egress is monitored, not enforced** (see §Egress observability).
+  The boundary is observed post-hoc via opencode's `trajectory.jsonl`,
+  not blocked at the kernel, and there is no DNS log. Indirect egress
+  paths (e.g. an agent-authored `./run.sh` shelling out to `curl` or
+  `urllib`) are invisible: the model never calls `webfetch`, so they
+  don't appear in the trajectory. The validity argument depends on the
+  pilot batches showing agents don't have a habit of shelling out for
+  HTTP; if the headline batch surfaces concerns about indirect paths,
+  a GKE Pod-level egress `NetworkPolicy` or cluster-wide Cloud DNS
+  logging can be added.
 - Several methodological choices are still open and will affect
   what the experiment can claim. See §Open methodology questions
   below.
