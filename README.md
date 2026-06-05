@@ -380,6 +380,52 @@ run.
   re-deriving the CSV itself from the raw artefacts needs the bucket.
 - Prompt files versioned in Git; any change forces a new batch tag.
 
-## License
+## Open Source
 
-BSD 3-Clause. See [`LICENSE`](LICENSE).
+This project is built on the work of others, with gratitude. Each
+license below was read from the artefact itself — pixi `conda-meta`
+records, Python `importlib.metadata` in the scorer image, the JDK
+`legal/` notices, the `mc` binary, the Lato name table, and the
+canonical `LICENSE` files for opencode and kubectl.
+
+### R (analysis figures)
+
+- **R** (base) under GPL-2.0-or-later for the statistical environment behind the headline figures ([`analysis/01_analysis.ipynb`](analysis/01_analysis.ipynb)).
+- **ggplot2** under MIT for the faceted headline panels.
+- **dplyr** under MIT for data wrangling in the panels.
+- **tidyr** under MIT for reshaping in the panels.
+- **readr** under MIT for reading `aggregated.csv`.
+- **forcats** under MIT for factor ordering in the panels.
+- **scales** under MIT for axis scales and label formatting.
+- **patchwork** under MIT for composing the multi-panel figures.
+- **ggrepel** under GPL-3.0-only for non-overlapping figure labels.
+- **showtext** under Apache-2.0 for embedding the Lato font into the figures.
+- **IRkernel** under MIT for the R Jupyter kernel that `pixi run lab` uses.
+- **Lato** under the SIL Open Font License 1.1 for chart typography (bundled in [`analysis/fonts/`](analysis/fonts/)).
+
+### Python (agent, scorer, analysis)
+
+- **Mesa** under Apache-2.0 for the agent-based framework that is the general-purpose comparison target.
+- **NumPy** under BSD-3-Clause for numerics in the scorer and the Mesa data path.
+- **pandas** under BSD-3-Clause for tabular handling in the scorer, `aggregate.py`, and the notebooks.
+- **SciPy** under BSD-3-Clause for the OLS `observed ~ predicted` fit in the ecology gate.
+- **xarray** under Apache-2.0 for netCDF access in the Mesa data path.
+- **netCDF4** under MIT for reading the synthetic climate inputs.
+- **rasterio** under BSD-3-Clause for geospatial raster I/O.
+- **tiktoken** under MIT for the token-level entropy code metric.
+- **Jinja2** under BSD-3-Clause for rendering the per-cell k8s Job manifests and opencode configs.
+- **PyYAML** under MIT for parsing `models.yaml` and the config sidecars.
+- **compliance-checker** under Apache-2.0 for CF/ACDD validation of the synthetic dataset.
+- **mcp** (Python SDK) under MIT for the client the `josh-mcp` runner forwards typed tool calls through.
+- **matplotlib** under the Matplotlib (PSF-based) license for plots in the Python notebooks.
+- **JupyterLab** under BSD-3-Clause for the notebook environment.
+- **ipykernel** under BSD-3-Clause for the Python notebook kernel.
+
+### Infrastructure (orchestration & runtime)
+
+- **opencode** under MIT for the agent runtime that drives each model through the 8-step flow.
+- **Eclipse Temurin / OpenJDK 21** under GPLv2 with the Classpath Exception for the JVM the Josh CLI runs on.
+- **kubectl** under Apache-2.0 for applying the per-cell k8s Jobs.
+- **MinIO Client (`mc`)** under GNU AGPLv3 for mirroring per-cell artefacts between the Pod and GCS.
+
+This project's code is available under the [BSD 3-Clause License](LICENSE).
