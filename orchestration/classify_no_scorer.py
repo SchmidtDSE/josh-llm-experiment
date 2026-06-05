@@ -13,7 +13,7 @@ labels each such cell from its saved artifacts:
   THROTTLE       — >=1 'AI_APICallError' in step stderr and zero clean steps
                    (e.g. free-tier 429 lockout). Provider infra, no scorable
                    work → reported here; re-run is covered by the deficit
-                   re-rep that analysis/apply_scoring.ipynb computes.
+                   re-rep that analysis/00_apply_scoring.ipynb computes.
   INFRA_NONSTART — no agent_meta/ at all (e.g. the api-key Secret-key bug):
                    agent container never started → same (deficit re-rep).
   REVIEW         — none of the above (e.g. all 8 steps present but every
@@ -22,7 +22,7 @@ labels each such cell from its saved artifacts:
 
 This script writes only orchestration/rescore-manifest.csv (the RUNTIME_KILL
 cells to re-score in place). The throttle/infra/deficit re-rep matrix is owned
-by analysis/apply_scoring.ipynb so there is a single source of truth for "what
+by analysis/00_apply_scoring.ipynb so there is a single source of truth for "what
 to launch to reach N reps".
 
 Olmo is dropped entirely: any cell whose model is not in PANEL_MODELS is
@@ -47,7 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "analysis"))
 from aggregate import _parse_cell_id  # noqa: E402
 
-# The active 9-model panel (mirrors headline_r.ipynb MODEL_ORDER). Olmo was
+# The active 9-model panel (mirrors 01_analysis.ipynb MODEL_ORDER). Olmo was
 # dropped 2026-06-02 (failed across the board) and is excluded here too.
 PANEL_MODELS = {
     "sonnet", "gemma", "kimi", "minimax", "mistral",
@@ -174,7 +174,7 @@ def main() -> int:
     print()
     print(f"→ {RESCORE_MANIFEST.relative_to(REPO_ROOT)}: {len(rescore_rows)} RUNTIME_KILL cell(s) to re-score")
     print(f"  {len(rerun_rows)} THROTTLE/INFRA cell(s) (no scorable work) — re-run via the "
-          f"apply_scoring.ipynb deficit re-rep, not a separate matrix")
+          f"00_apply_scoring.ipynb deficit re-rep, not a separate matrix")
     if review:
         print()
         print(f"⚠ {len(review)} REVIEW cell(s) need hand inspection (written to neither file):")

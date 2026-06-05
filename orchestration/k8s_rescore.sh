@@ -2,7 +2,7 @@
 # Render + apply a RESCORE batch: re-run only the scorer against cells'
 # already-saved workspaces (pulled in-Pod from the bucket), without re-running
 # the agent. Parallel to k8s_apply.sh but uses the agent-less rescore template.
-# See SCORER_K8S.md.
+# See EXPERIMENTAL_DESIGN.md §Scoring (the no_scorer rescore pass).
 #
 # Usage:
 #   ./orchestration/k8s_rescore.sh \

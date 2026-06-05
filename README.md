@@ -11,16 +11,13 @@ This README covers installation and execution; see
 scoring methodology, egress-observability rationale, and threats to
 validity.
 
-> **Status (Phase 6 in flight).** Per-cell k8s Job submission against
-> GKE Autopilot is the live execution path. The agent and scorer
-> images are built by [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)
+> **Execution path.** Each cell runs as one k8s Job on GKE Autopilot.
+> The agent and scorer images are built by
+> [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)
 > and pulled by the cluster; per-cell artefacts land in the GCS
-> bucket via an in-Pod `mc mirror` from the scorer container, and the
-> headline batch will be submitted as a k8s Indexed Job. The
-> retired local-Docker orchestration (per-cell shell scripts +
-> dnsmasq sidecar + host-side report renderers) was removed in PR6.
-> See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the
-> per-phase build state.
+> bucket via an in-Pod `mc mirror` from the scorer container.
+> Methodology, scoring axes, and threats to validity are in
+> [EXPERIMENTAL_DESIGN.md](EXPERIMENTAL_DESIGN.md).
 
 [josh]: https://joshsim.org/
 
@@ -29,9 +26,7 @@ validity.
 ```
 .
 ├── README.md                     # This file (install + run)
-├── EXPERIMENTAL_DESIGN.md        # Methodology, scoring, threats to validity
-├── IMPLEMENTATION_PLAN.md        # Phase plan + current build status
-├── SCORING.md                    # Scoring axes, metric definitions, LLM-judge spec
+├── EXPERIMENTAL_DESIGN.md        # Methodology, scoring axes + metrics, LLM-judge, re-scoring, threats to validity
 ├── Dockerfile                    # Unified fortree image (agent + scorer)
 ├── containers/                   # Container-entrypoint shell scripts (baked into the images)
 │   ├── agent-entrypoint.sh       # fortree:agent entry — runs the 8-step opencode flow
@@ -64,7 +59,7 @@ validity.
 │   └── targets/{josh,mesa,josh-mcp}.md  # Per-target directive
 ├── harness/                      # Scoring entry point (run_metrics.py) + validators + acceptance ranges
 ├── orchestration/                # k8s submission surface — render_jobs.py, k8s_apply.sh, pull_artefacts.sh, templates/job.yaml.j2, matrix.csv
-├── analysis/                     # aggregate.py + headline_r.ipynb (the only post-pull workflow)
+├── analysis/                     # aggregate.py + numbered notebooks (00_apply_scoring, 01_analysis, 02_runtime_outliers); aggregated.csv committed
 ├── reference/                    # Golden fixtures consumed by smoke CI
 └── .github/workflows/            # CI: smoke.yml (every push) + build-images.yml (GHCR builds)
 ```
@@ -262,12 +257,17 @@ applying — useful for inspection or for re-applying by hand. Pass
 
 The scoring container is target-agnostic and stateless against an
 agent's `workspace/`, so a methodology revision (acceptance ranges,
-new metric, etc.) can be applied to a frozen batch without re-running
-the agents. The path is to submit a re-score k8s Job that pulls the
-target batch from the bucket, runs the new scorer image against each
-`<run-id>/workspace/`, and writes back. The Job manifest is generated
-by the same `render_jobs.py` renderer (template TBD); spec lives in
-[SCORING.md §Re-analysing-completed-runs](SCORING.md#re-analysing-completed-runs).
+new metric, etc.) — or recovering a cell that timed out mid-step —
+can be applied to a frozen batch without re-running the agents.
+`pixi run rescore` renders an agent-less k8s Job
+([`orchestration/templates/rescore-job.yaml.j2`](orchestration/templates/rescore-job.yaml.j2))
+that pulls the target cell from the bucket in-Pod, runs the scorer
+against its `workspace/`, and writes `scorer.json` back to the
+original key. The classifier
+[`orchestration/classify_no_scorer.py`](orchestration/classify_no_scorer.py)
+decides which cells qualify. Full methodology (including why this is
+bias-free) is in
+[EXPERIMENTAL_DESIGN.md §Scoring](EXPERIMENTAL_DESIGN.md#scoring).
 
 #### LLM-judge (Q1/Q2/Q3)
 
@@ -279,6 +279,44 @@ sibling `scorer.fuzzy.json` next to `scorer.json` and is mirrored to
 the bucket alongside the rest of the cell artefacts. No host-side
 opencode required.
 
+#### Analysis flow
+
+Once a batch is pulled, all analysis is host-side: `pixi run aggregate`
+rolls every cell's `scorer.json` + agent metadata into
+[`analysis/aggregated.csv`](analysis/aggregated.csv) (committed), and
+the three numbered notebooks consume it (`pixi run lab`):
+
+```
+pixi run aggregate runs/<batch> [runs/<batch> ...]   # → analysis/aggregated.csv
+analysis/00_apply_scoring.ipynb    # convergence loop: rescore + re-rep to N
+analysis/01_analysis.ipynb         # headline figures (Panels A/B, cost, runtime)
+analysis/02_runtime_outliers.ipynb # narrative diagnosis of the slow-mesa tail
+```
+
+**The numbers are pipeline *role*, not a strict running order.**
+`00_apply_scoring` is an **idempotent** orchestration loop, not a
+one-shot first step — in the real headline run we aggregated, looked at
+`01_analysis`, *then* used `00` to drive the dataset to completeness.
+It reads the current `aggregated.csv`, decides what's still needed, and
+**prints** the exact `pixi run rescore` / `pixi run apply` commands to
+paste (it never fires `kubectl`/`pixi` itself). Each pass:
+
+```
+aggregate ──▶ 00_apply_scoring ──▶ (paste) rescore RUNTIME_KILL cells
+   ▲                │                       + apply fresh re-rep cells
+   │                ▼                                   │
+   └──────── pull new tags ◀───────────────────────────┘
+            (repeat until: every combo at N, no RUNTIME_KILL pending)
+```
+
+When `00` reports converged, `01_analysis` and `02_runtime_outliers`
+produce the final figures. Because `aggregated.csv` is committed, those
+two notebooks reproduce every figure from a clean checkout without
+bucket access; re-running the loop (or re-deriving the CSV) needs the
+bucket. Rescore mechanics are in §Re-scoring a completed batch above;
+the bias-free rationale is in
+[EXPERIMENTAL_DESIGN.md §Scoring](EXPERIMENTAL_DESIGN.md#scoring).
+
 ## Environment variables
 
 The agent and scorer containers consume these. Host-side variables
@@ -287,7 +325,7 @@ into the Pod via k8s Secrets (see "Repo-level one-time setup" above).
 
 | Variable                 | Required | Purpose |
 | ------------------------ | -------- | ------- |
-| `OPENROUTER_API_KEY`     | yes      | API key for the OpenRouter gateway. Single key covers the entire model panel (`claude`, `gemma`, `kimi`, `minimax`, `mistral`). Mounted into the agent + judge containers via the `openrouter-creds` Secret. |
+| `OPENROUTER_API_KEY`     | yes      | API key for the OpenRouter gateway. A single key covers the entire nine-model panel (see [`config/models.yaml`](config/models.yaml)) plus the judge. Mounted into the agent + judge containers via the `openrouter-creds` Secret. |
 | `MODEL`                  | yes      | Short name from [`config/models.yaml`](config/models.yaml). Resolved to a provider slug at render time by [`orchestration/resolve_model.py`](orchestration/resolve_model.py). |
 | `TARGET`                 | yes      | `josh`, `mesa`, or `josh-mcp` (constrained Josh: no bash, Josh pipeline via MCP). |
 | `RUN_ID`                 | yes      | Unique identifier for this cell. Generated by `render_jobs.py`. |
@@ -330,10 +368,13 @@ run.
 - Pre-registered acceptance ranges committed to Git
   ([`harness/acceptance_ranges.json`](harness/acceptance_ranges.json)).
 - Per-cell artefacts under `<bucket>/<prefix>/<batch-tag>/<run-id>/`
-  are the canonical record. The headline notebook
-  ([`analysis/headline_r.ipynb`](analysis/headline_r.ipynb)) reads
-  `analysis/aggregate.py`'s aggregated CSV; both inputs and outputs
-  are reproducible from the bucket.
+  are the canonical record. The rolled-up
+  [`analysis/aggregated.csv`](analysis/aggregated.csv) is committed,
+  so the headline notebook
+  ([`analysis/01_analysis.ipynb`](analysis/01_analysis.ipynb)) and
+  [`analysis/02_runtime_outliers.ipynb`](analysis/02_runtime_outliers.ipynb)
+  regenerate every figure from a clean checkout without bucket access;
+  re-deriving the CSV itself from the raw artefacts needs the bucket.
 - Prompt files versioned in Git; any change forces a new batch tag.
 
 ## License

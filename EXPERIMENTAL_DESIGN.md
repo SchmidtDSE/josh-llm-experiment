@@ -1,23 +1,12 @@
 # Experimental design — ForeverTree LLM Experiments
 
-The methodology behind the experiment described in [README.md](README.md). For installation and how to run, see the README; for the engineering build state and the readiness checklist for the headline batch, see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md); for the scoring axes, metric definitions, LLM-judge spec, re-analysis recipe, and open scoring questions, see [`SCORING.md`](SCORING.md).
+The methodology behind the experiment described in [README.md](README.md).
+For installation and how to run, see the README. The scoring methodology —
+axes, metric definitions, LLM-judge spec, re-analysis recipe, and open
+scoring questions — lives in [§Scoring](#scoring) below (previously a
+separate `SCORING.md`).
 
-> **Status (Phase 6 in flight on `feat/k8s-refactor`).** Phases 1–5c
-> are merged on `dev`. The Phase 6 refactor — scoring simplification
-> + k8s execution + repo cleanup — is being landed as a 7-PR series
-> on the `feat/k8s-refactor` integration branch; see
-> [IMPLEMENTATION_PLAN.md §Phase 6](IMPLEMENTATION_PLAN.md) for the
-> sequencing and status. Two simplifications carried over from
-> earlier design rounds: (1) the rung-detail ladder is collapsed to
-> a single master prompt — the task at full detail is already hard
-> enough to be a useful differentiator and a second variation axis
-> would dilute statistical power; (2) the separate recovery-loop
-> hypothesis (H2) is folded into the multi-invocation flow, whose
-> todos already include validate-and-cleanup iterations. The
-> synthetic-climate dataset described in §External climate inputs
-> is the input for the headline batch.
-
-This is the AI-evaluation experiment reported in our USRSE'26 submission on the [Josh][josh] vegetation modeling platform.
+This is the AI-evaluation experiment reported in our USRSE'26 submission on the [Josh][josh] vegetation modeling platform. Two design simplifications are worth flagging up front: (1) the rung-detail prompt ladder is collapsed to a single master prompt — the task at full detail is already hard enough to be a useful Josh-vs-Mesa differentiator, and a second variation axis would dilute the statistical power available within budget; (2) the separate recovery-loop hypothesis is folded into the multi-invocation flow, whose todos already include validate-and-cleanup iterations.
 
 [josh]: https://joshsim.org/
 
@@ -32,8 +21,9 @@ and pass validation than Mesa implementations.
 fewer free decisions for the model to get wrong, fewer scaffolding
 files to write, and a more direct mapping from spec to executable code.
 The fewer-degrees-of-freedom effect should be visible in both
-first-attempt success rate and in the internal-consistency metrics
-that catch silent spec violations (Δh > Δh_max, age != year, etc.).
+first-attempt success rate and in the regression-based ecology gate
+that catches silent spec violations (a wrong growth ceiling, a missed
+temperature clamp, etc. — see §Scoring).
 
 H1 is the headline. The design also carries a second, controlled
 contrast: a constrained-environment Josh arm (`josh-mcp`) that holds
@@ -148,9 +138,7 @@ list in `prompts/plans/<env>/PLAN_TEMPLATE.md` (seeded into
 `/sandbox/PLAN.md`). The plan comes in two environment-specific variants
 — `bash` for the full-tools arms (todos author and invoke `./run.sh`) and
 `mcp` for the constrained `josh-mcp` arm (todos build and self-test the
-model through the MCP tools, never `run.sh`). This is the
-multi-invocation planning flow described in
-[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) §Phase 5c. The
+model through the MCP tools, never `run.sh`). The
 working document `PLAN.md` is both an output artefact and a working
 reference re-read at the start of every sub-invocation.
 
@@ -176,15 +164,20 @@ variable we care about.
 ### Models
 
 Configured via `MODEL` environment variable. All models are accessed
-through OpenRouter using a single API key.
+through OpenRouter using a single API key. The headline panel is nine
+models spanning commercial and open weights:
 
 | Short name | OpenRouter ID                            |
 | ---------- | ---------------------------------------- |
-| claude     | `anthropic/claude-opus-4.7`              |
+| sonnet     | `anthropic/claude-sonnet-4.6`            |
 | gemma      | `google/gemma-4-26b-a4b-it`              |
 | kimi       | `moonshotai/kimi-k2.6`                   |
 | minimax    | `minimax/minimax-m2.7`                   |
-| mistral    | `mistralai/mistral-medium-3.5`           |
+| mistral    | `mistralai/mistral-medium-3-5`           |
+| glm        | `z-ai/glm-5.1`                           |
+| qwen       | `qwen/qwen3.7-max`                        |
+| nemotron   | `nvidia/nemotron-3-super-120b-a12b`      |
+| deepseek   | `deepseek/deepseek-v4-pro`               |
 
 The mapping lives in [`config/models.yaml`](config/models.yaml).
 Pins are versioned slugs (not rolling `*-latest` aliases) so
@@ -192,6 +185,19 @@ re-running a batch later resolves to the same weights the headline
 saw. The orchestrator logs the resolved `model_id` returned by
 OpenRouter alongside the requested one and flags drift. Bump the
 batch tag if any entry changes.
+
+`olmo` (`allenai/olmo-3.1-32b-instruct`) was on the panel through the
+pilot but **dropped before the headline reading** — it failed across
+all of its cells under the multi-invocation flow (no usable work), so
+it is excluded from `config/models.yaml`'s active panel and from the
+analysis (`classify_no_scorer.py`'s `PANEL_MODELS` filters it out).
+`claude` (opus) remains wired for sensitivity runs but is not in the
+headline panel; `sonnet` is the commercial reference point.
+
+The post-hoc LLM judge (§Scoring) is pinned to a **different model
+family than any agent** — `codex` (`openai/gpt-5-codex`) — so no
+agent cell is judged by its own model. This is what retires the
+same-model self-judging concern from earlier design rounds.
 
 ### Targets
 
@@ -254,18 +260,29 @@ produced (§Run flow, §Tool palette).
 
 ### Sample size
 
-Default `RUNS=3` per (model × target) cell. With three targets the
-full panel is 5 models × 3 targets × 3 runs = **45 generations** —
-the `josh-mcp` arm grows the target axis by 50% over the josh/mesa
-core (each generation is itself 8 opencode invocations under the
-multi-invocation flow, so 360 opencode invocations total). The
+The headline target is a **flat N per (model × target) combo**. The
+launch matrix [`orchestration/matrix.csv`](orchestration/matrix.csv)
+fires 9 models × 3 targets × 5 reps = 135 cells as the first wave;
+the **idempotent re-rep loop** in
+[`analysis/00_apply_scoring.ipynb`](analysis/00_apply_scoring.ipynb)
+then tops *every* combo up to the target N by launching fresh cells for
+the deficit and re-scoring deadline-killed partials in place — no combo
+is advanced-or-dropped on stage-1 performance. The realised headline
+panel is **8 reps per combo** (a few combos reached 10 from extra fill
+waves), so the aggregated record analysed in
+[`analysis/01_analysis.ipynb`](analysis/01_analysis.ipynb) is ~216
+active cells across the 27 combos (the 9-model panel; olmo's cells are
+excluded — it was dropped after failing across the board).
+
+Each individual cell (one rep) is itself run as the fixed 8-step
+multi-invocation flow — eight sequential opencode invocations against
+the same workspace (§Run flow) — plus a separate scoring container
+pass. (The two "8"s are unrelated: 8 *reps* per combo, each rep run as
+8 *opencode steps*.) The
 headline DSL-vs-framework figure remains the `josh`↔`mesa` contrast
 over the full-tools cells; the `josh-mcp` cells add the
-cost-of-constraint and product contrasts (§Targets). N can scale up
-freely within OpenRouter cost budget; the practical ceiling is set by
-the cost of any downstream manual review rather than the runs
-themselves. See §Open methodology questions below for sample-size
-and target_conformance accounting considerations.
+cost-of-constraint and product contrasts (§Targets). See §Open
+methodology questions for `target_conformance`-denominator accounting.
 
 Each run is a single agent container hosting the 8-step
 multi-invocation flow, plus a separate scoring container pass (see
@@ -299,8 +316,8 @@ near their peaks, shortest where either driver is unfavourable. The
 empirical year-100 distribution from the reference simulator
 ([`data/reference_sim.py`](data/reference_sim.py)) drives the
 acceptance bands in [`harness/acceptance_ranges.json`](harness/acceptance_ranges.json);
-see [SCORING.md §Scoring axes](SCORING.md) for the regression-based
-gate built on top of those bands.
+see [§Scoring](#scoring) for the regression-based gate built on top of
+those bands.
 
 Because the `josh-mcp` agent has no shell, it cannot inspect the
 netCDFs interactively (`ncdump`, `xarray.open_dataset`, …). So the
@@ -453,26 +470,270 @@ the agent's responsibility; the scorer judges only the final state.
 
 ## Scoring
 
-Four orthogonal scoring axes — target conformance, schema gate,
-internal consistency, spec-parameter conformance — all evaluated at
-step 3 against the workspace the agent container left behind.
+How the harness decides what a completed agent run is "worth", what
+each scorer field means, and the open scoring choices. All scoring is
+mechanical at experiment time; the current scorer JSON schema is
+`phase6-v2` (`harness/run_metrics.py:SCHEMA_VERSION`). The scorer
+gates on schema, fits a per-cell `observed ~ predicted` regression
+against the spec's deterministic prediction (the headline ecology
+gate), captures real wall-clock under a 100-replicate × 100-year
+`./run.sh` contract, and reports style metrics on the generated code.
+The acceptance bands are derived from a spec-faithful Python reference
+simulator ([`data/reference_sim.py`](data/reference_sim.py)) run
+against the committed synthetic climate netCDFs, not hand-picked. The
+reference simulator and the Mesa-target directive both run growth
+dynamics under `decimal.Decimal` to match Josh's native `BigDecimal`
+precision; the scorer surfaces both a mechanical
+`conformance.uses_decimal` field and a fuzzy-judge Q4 to verify Mesa
+cells honoured this.
+
+The internal-consistency block (negative-growth fraction, age-step ≠
+1, climate Spearmans) that earlier schemas carried is **gone** —
+diagnostic during methodology-building, redundant once cells
+consistently clear regression at β ≈ 1.
+
 Multi-invocation diagnostics (`steps[*].exit_code`,
 `plan_todos.checked/.total`) are reported per-cell alongside the
 scoring metrics so the in-cell self-correction is inspectable.
 
-The full axis-by-axis specification, the metric table, the LLM-judge
-post-hoc passes (a "did it use the right tool?" judge + a "where did
-the agent get confused?" judge, both for our convenience rather than
-headline scoring), and the recipe for re-scoring completed runs after
-methodology revisions live in [SCORING.md](SCORING.md).
+### Scoring axes
 
-The pre-registered acceptance ranges live in
-[`harness/acceptance_ranges.json`](harness/acceptance_ranges.json) and were
+Three axes evaluated against the workspace the agent container left
+behind after the 8-step multi-invocation flow:
+
+**1. Target conformance.** Did the agent use the named framework, or
+sidestep it? Mechanical greps for `import mesa` / Mesa-class
+subclassing on Mesa runs; `josh validate` exit zero on `.josh` files
+for Josh runs. Catches the "agent produces a valid CSV via a plain-
+Python fallback instead of using Josh" loophole.
+
+**2. Spec-parameter conformance (ecology).** Did the agent's
+year-100 outputs reproduce the spec's deterministic prediction under
+a linear-regression fit? For each `(cell, replicate)` pair in the
+agent's CSV, the scorer computes a deterministic *predicted* total
+growth from the spec equation using the agent's own reported climate
+values:
+
+```
+predicted(cell, rep) = Σ_{y = year_1 .. year_target}  Δh_max · %_T(T(y)) · %_P(P(y))
+```
+
+where `%_T` and `%_P` are the parabolic and logistic response curves
+from [BASE_PROMPT.md §Growth Model](prompts/BASE_PROMPT.md). The
+*observed* is the meanHeight at year == `target_year`. An OLS fit
+`observed ~ predicted` yields slope β, intercept α, and R². Under a
+faithful implementation **β → 1.0** (the O ~ N(1, 0.05) noise has mean
+1 → no bias), **α → 0.0**, **R² → 1.0** (the spec equation is
+deterministic; only noise causes residuals).
+
+The acceptance gate is **β ∈ [0.95, 1.05]**, **α ∈ [−0.5, 0.5] m**,
+**R² > 0.95** — loose enough to absorb implementation differences
+(grid choice, climate interpolation, RNG seed), tight enough to catch
+systematic dynamics errors like "agent used Δh_max=0.5" (β=0.5) or
+"agent missed the temperature clamp" (α drifts, R² drops). The
+reference's own fit values (β=1.000013, α=−0.000249, R²=0.999993,
+n=155 000) are persisted in `acceptance_ranges.json` so the gate is
+calibrated against the empirical noise floor of the reference
+simulator. A coarse secondary check — mean meanHeight at year 100
+within a 3σ band from the same reference run (`height_in_range`) —
+catches totally-broken outputs that happen to hit β=1 by accident
+(e.g. constant zeros). Sanity check, not the headline gate.
+
+The chain producing the bands is fully deterministic, and the math
+primitives live in [`harness/spec_model.py`](harness/spec_model.py),
+shared between the reference simulator and the scorer's validator, so
+band derivation and gate enforcement cannot drift:
+
+```
+data/generate_synthetic_climate.py   # writes the netCDFs
+    ↓
+data/reference_sim.py                # runs spec dynamics in Decimal,
+                                     # writes harness/acceptance_ranges.json
+    ↓
+reference/regenerate_fixtures.py     # samples one replicate for the
+                                     # smoke-test golden fixtures
+    ↓
+docker build --target scorer         # bakes acceptance_ranges.json
+                                     # into fortree:scorer
+```
+
+**3. Style / code metrics.** Source LOC, comment LOC, imports LOC,
+and token-level Shannon entropy of the generated code — the
+conciseness-of-implementation signals directly relevant to H1 (DSL
+targets should produce less scaffolding than general-framework
+targets). Reported even when the cell fails to run, since code-shape
+doesn't depend on execution success.
+
+The **schema gate** sits underneath the ecology axis as a
+precondition: without `csv_schema_ok=true` the ecology metrics are
+undefined and recorded as null with `height_in_range=false`.
+
+### Metrics
+
+| Metric | Type | Source |
+| --- | --- | --- |
+| `target_conformance` | bool | Mechanical: Mesa imports + class subclassing, or `josh validate` exit zero. |
+| `conformance.{imports_mesa, subclasses_model, uses_decimal, has_josh_files, has_jshd_files, josh_validate_exit_code}` | mixed | Per-target evidence fields backing the `target_conformance` rollup. `uses_decimal` is a Mesa-only signal (regex on `import decimal`); for Josh / josh-mcp it is always `false` (Josh runtime is `BigDecimal`-backed natively, not source-detectable). |
+| `target_conformance_fuzzy` | enum | LLM-judge variant — see §LLM-judge passes. |
+| `substantive_conformance` *(analysis-time, in `aggregated.csv`)* | bool | Rollup combining mechanical `target_conformance` with the fuzzy judge's Q1 verdict. True iff `target_conformance=True AND (Q1='yes' OR Q1 missing)`. Catches the "near-empty `.josh` shell + Python sidecar does the real work" failure mode the mechanical grep alone passes. Computed in [`analysis/aggregate.py`](analysis/aggregate.py); the entry gate for the cascade in [`analysis/01_analysis.ipynb`](analysis/01_analysis.ipynb)'s Panel A / B. |
+| `csv_exists` | bool | `./output/results.csv` was written. |
+| `csv_schema_ok` | bool | Subset-match required columns + target year present + required cols numeric-coercible. |
+| `csv_schema_errors` | list | Failure messages when `csv_schema_ok=false`. |
+| `csv_row_count` / `csv_rows_dropped_nan` | int | Total rows / rows dropped during NaN-filtering. |
+| `script_was_executable` | bool | `True` if the agent self-chmod'd; `False` if the scorer's runner had to. |
+| `did_run` | bool | `exit_code == 0 AND csv_exists AND csv_schema_ok`. |
+| `exit_code` | int | `./run.sh` exit status. |
+| `wall_time_seconds` | float | End-to-end wall-clock for `./run.sh`. Under the phase-6 contract `run.sh` carries preprocess + `--replicates 100` × 100 simulated years, so this is the real Josh-vs-Mesa execution-cost comparison. |
+| `timed_out` | bool | True when `./run.sh` was killed by the scorer's per-invocation timeout. |
+| `height_year100_mean` / `occupancy_year100_mean` | float | Mean `meanHeight` / `nTrees` across `(cell, replicate)` at `target_year`. Secondary sanity checks. |
+| `height_in_range` / `occupancy_in_range` | bool | Within the 3σ mean band (secondary check). |
+| `regression_fit.{beta, alpha, r2, n_observations}` | float/int | OLS `observed ~ predicted`. Spec-faithful targets: β=1.0, α=0.0, R²≈1.0. |
+| `regression_fit_ok` | bool | **Headline ecology gate.** True iff β, α, R² all inside the bands in `acceptance_ranges.json`. |
+| `regression_fit_reasons` | list[str] | Failure messages when `regression_fit_ok=false`. |
+| `acceptance_ranges_used` | dict | The full `acceptance_ranges.json` as parsed — frozen-evidence record so a re-score is self-describing. |
+| `src_loc`, `comment_loc`, `imports_loc` | int | Lines of generated code per category (`.jshd` binary excluded). |
+| `entropy_bits` | float | Token-level Shannon entropy via `tiktoken` `cl100k_base`. |
+
+The pre-registered acceptance ranges in
+[`harness/acceptance_ranges.json`](harness/acceptance_ranges.json) were
 committed before any experimental runs. **Do not modify this file
 after experiments begin.** Git history is the audit trail; revisions
-land via the re-scoring path documented in
-[SCORING.md](SCORING.md#re-analysing-completed-runs) so headline
-runs and re-analyses sit side-by-side.
+land via the re-scoring path (§Re-analysing completed runs) so
+headline runs and re-analyses sit side-by-side.
+
+### The `./run.sh` contract
+
+A cell's `./run.sh` is the unit of work the scorer executes — and
+under phase-6, the unit whose wall-clock counts as the headline cost
+metric. The prompt ([BASE_PROMPT.md](prompts/BASE_PROMPT.md) + the
+per-target directives) instructs the agent to produce a `run.sh` that:
+
+1. Performs any preprocessing the target needs (Josh's `.jshd` binary
+   preprocessing, Mesa's netCDF-to-Pandas conversion) **inside**
+   `run.sh`.
+2. Invokes the simulation with **`--replicates 100`** (or the
+   framework equivalent — for Mesa, a 100-iteration loop emitting the
+   same CSV schema) over **100 simulated years** from 2024 (target
+   year 2123).
+3. Writes `output/results.csv` with one row per `(cell, year,
+   replicate)` tuple.
+
+The fuzzy judge's Q3 asks whether `run.sh` honours this contract; the
+wall-clock comparison is apples-to-apples only when Q3 = `yes`. Cells
+where Q3 ∈ {`no`, `partial`} are reported but flagged in analysis.
+
+**`josh-mcp` arm.** The constrained agent doesn't author `run.sh`. The
+setup initContainer installs a one-line `run.sh` shim (`exec python
+/sandbox/runner.py`) and a generic MCP-call forwarder (`runner.py`,
+immutable) that reads agent-authored `/sandbox/mcp_calls.json` and
+forwards every entry to the `josh mcp` stdio server via the Python MCP
+client. The runner overrides `arguments.replicates` from the
+`N_REPLICATES` env var (scorer sets it to 100), so the agent never
+threads env through the JSON. Q3 walks into `mcp_calls.json` for this
+arm.
+
+### LLM-judge passes (post-hoc)
+
+Four free-form questions answered against each completed cell's
+workspace + transcript. Purpose: human-organisation and contract
+verification, **not** headline scoring — the mechanical axes above
+remain the experimental yardstick. The judge is pinned to a model
+family distinct from every agent (`codex` = `openai/gpt-5-codex`, per
+[`config/models.yaml`](config/models.yaml)), so no agent cell is
+judged by its own model.
+
+- **Q1 — "Did it use the right tool?"** Source + transcript; `yes` /
+  `no` / `partial` with one sentence. Catches cells where the
+  mechanical check passes (an `import mesa` somewhere) but the meat is
+  in plain numpy.
+- **Q2 — "Where did the agent get confused or devote its reasoning?"**
+  Reads the transcript, names 1–3 specific steps/files/errors with
+  disproportionate effort. Surfaces cross-cell failure patterns.
+- **Q3 — "Does `./run.sh` carry preprocess + `--replicates 100` × 100
+  years?"** The apples-to-apples verification for the wall-clock
+  metric (see §The `./run.sh` contract).
+- **Q4 — "Does the Mesa implementation use `decimal.Decimal` for
+  growth dynamics?"** Mesa-only; verifies the Numerical-precision
+  directive in [`prompts/targets/mesa.md`](prompts/targets/mesa.md).
+  `yes` / `no` / `partial`, plus `n-a` for Josh / josh-mcp cells
+  (Josh's runtime is `BigDecimal`-backed natively).
+
+| Field | Value |
+| --- | --- |
+| Input | `workspace/` source files, `transcript.md`, `scorer.json` (mechanical outcome) |
+| Output file | `<run-id>/scorer.fuzzy.json` |
+| Judge model | `openai/gpt-5-codex` (the `codex` short name; `JUDGE_MODEL` default in [`containers/run-judge.sh`](containers/run-judge.sh)) |
+| Schema | `{"q1", "q2", "q3", "q4", "judge_model_id", "schema_version": "fuzzy-v3"}` |
+| When run | Post-hoc — never gates the cell from completing |
+| Cost | ~$0.05–0.20 per cell |
+
+The judge runs in-Pod inside the scorer container
+([`containers/run-judge.sh`](containers/run-judge.sh)) against the
+preserved `workspace/`, writing `scorer.fuzzy.json` back to the bucket
+alongside the rest of the cell artefacts.
+
+### Re-analysing completed runs
+
+The scoring container is target-agnostic and stateless against an
+agent workspace, so re-scoring against any completed run's
+`workspace/` is one container invocation. As long as a cell's
+`workspace/` is preserved (source files + their
+`./output/results.csv`) and the synthetic-climate netCDFs in `data/`
+are unchanged, scoring is fully reproducible — the `fortree:scorer`
+image pins all harness Python / Java / Josh versions. The local
+recipe (against an already-downloaded run dir):
+
+```sh
+docker run --rm --network=none \
+  -v runs/<batch-tag>/<run-id>/workspace:/sandbox \
+  -v $(pwd)/data:/sandbox/data:ro \
+  fortree:scorer /opt/entrypoint-scorer.sh --target <josh|mesa> \
+  > runs/<batch-tag>/<run-id>/scorer.rescored.json
+```
+
+Persist re-scored output to a distinct filename rather than
+overwriting — the original is the headline-batch evidence, the rescore
+is a methodology delta.
+
+#### Recovering excluded cells: the no_scorer rescore pass
+
+The headline panel initially excluded cells that never produced a
+`scorer.json` (`engagement_status=no_scorer`). A deterministic
+classifier ([`orchestration/classify_no_scorer.py`](orchestration/classify_no_scorer.py))
+labels every such cell from its saved artifacts into three
+populations, so the right remedy is applied to each:
+
+- **`RUNTIME_KILL`** — the agent ran cleanly (≥1 step exit 0) and was
+  killed mid-step by the 2 h `activeDeadlineSeconds` (the slow
+  josh-mcp loop), leaving a partial workspace. A **legitimate timeout
+  failure**, not an exclusion → **re-score the partial** as
+  `did_run=False` so it becomes an honest failure row.
+- **`THROTTLE`** — ≥1 `AI_APICallError` (provider 429 / free-tier
+  lockout) with zero clean steps. No scorable work → **re-run** the
+  agent under clean conditions.
+- **`INFRA_NONSTART`** — no `agent_meta/` at all (the agent container
+  never started) → **re-run**.
+
+The re-score runs only the scorer (no agent) against the saved
+workspace, **in the same k8s Pod spec** so `sim_wall_seconds` and any
+JVM/Decimal timing stay drawn on the same `Performance`/`n2` node as
+the rest of the panel. The agent-phase metrics (`agent_wall_seconds`,
+`agent_cost_usd`, tool calls, tokens) come from the original run's
+preserved `agent_meta/`, so they stay authentic to the real agent run.
+Mechanism, template, and operational flow are in [§Run flow](#run-flow)
+and the [`orchestration/k8s_rescore.sh`](orchestration/k8s_rescore.sh) wrapper;
+`olmo` is filtered out of the classifier up front (`PANEL_MODELS`) and
+reported as `SKIPPED`.
+
+**Why this is bias-free.** No `RUNTIME_KILL` cell is re-run — its
+already-recorded behavior is scored with the *same deterministic
+scorer* applied to every other cell. The only re-runs are
+`THROTTLE`/`INFRA_NONSTART` cells that produced **zero scorable work**
+(the model never attempted the task), which is a standard
+infra-failure replacement, not a selective re-roll of an outcome. Once
+`scorer.json` exists a cell is no longer `no_scorer`, so a rescored
+`did_run=False` row counts in the Panel-A denominator — the exclusion
+that inflated pass rates is closed.
 
 ## Egress observability
 
@@ -701,9 +962,9 @@ self-tested at without threading env through the JSON. A naming
 convention the directive enforces (`simulation.josh` / simulation
 `Main` / `external temperature` + `precipitation`) keeps the
 `.josh`-source surface narrow; units, paths, and variable names
-inside `mcp_calls.json` originate with the agent. See
-[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the runner +
-install wiring.
+inside `mcp_calls.json` originate with the agent. The runner +
+install wiring lives in [`harness/runner.py`](harness/runner.py) and
+[`containers/josh-mcp-runner.py`](containers/josh-mcp-runner.py).
 
 ## Stopping conditions
 
@@ -764,25 +1025,34 @@ paper:
 
 ## Open methodology questions
 
-Scoring-specific open items — acceptance-range methodology,
-target_conformance denominator, predicted-vs-observed r² metric,
-LLM-judge design — live in
-[SCORING.md §Open methodology questions](SCORING.md#open-methodology-questions)
-because we plan to defer them until after the headline runs and
-re-score against frozen workspaces.
+1. **Regression band tolerance calibration.** The β/α/R² tolerances
+   in [`harness/acceptance_ranges.json`](harness/acceptance_ranges.json)
+   (β ∈ [0.95, 1.05], α ∈ [−0.5, 0.5], R² > 0.95) are hand-picked to
+   give implementation tolerance while catching gross dynamics errors.
+   They are not derived from observed agent-implementation variance.
+   With the headline batch now in hand, the tolerances can be
+   re-calibrated against the empirical spread of "clearly faithful"
+   vs "clearly broken" runs. The regression *targets* (β=1, α=0,
+   R²→1) are derived from the reference simulator and are not in
+   question.
 
-The remaining design-level open question:
+2. **`target_conformance=False` in the denominator.** Does a run that
+   produces a valid CSV without using the named framework count toward
+   H1's denominator? Likely answer: report pass-rate conditional on
+   conformance, plus a separate conformance-rate-per-model figure. A
+   reporting convention, no code change needed; the
+   `substantive_conformance` rollup (§Metrics) is the gate the
+   notebooks already apply.
 
-1. **Model panel finalisation.** The phase-5c panel batch surfaced
-   that gemma3-27b-it fails to invoke tools under the multi-invocation
-   procedure prompt (0/4 cells did any work; the model listed
-   actions then stopped). The headline pin in
-   [`config/models.yaml`](config/models.yaml) is now
-   `google/gemma-4-26b-a4b-it` (the gemma-4 26B MoE; previously wired
-   as our `gemma4` short name). gemma-4 has not yet been pilot-tested
-   under the multi-invocation flow specifically; a single-cell
-   `FAIL_FAST=true` probe before the headline batch is the cheap
-   sanity-check to run.
+3. **Single task (generalisation).** ForeverTree is one task; the
+   fewer-degrees-of-freedom effect may not transfer to harder modeling
+   targets. Repeated in Threats to validity.
+
+The earlier **model-panel finalisation** and **same-model
+self-judging** open items are now closed: the headline ran a
+nine-model panel (olmo dropped after failing across the board), and
+the post-hoc judge is `gpt-5-codex` — a family distinct from every
+agent — so no cell is self-judged (§Models, §Scoring).
 
 ## Citation
 
