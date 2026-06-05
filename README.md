@@ -62,7 +62,7 @@ validity.
 │   └── targets/{josh,mesa,josh-mcp}.md  # Per-target directive
 ├── harness/                      # Scoring entry point (run_metrics.py) + validators + acceptance ranges
 ├── orchestration/                # k8s submission surface — render_jobs.py, k8s_apply.sh, pull_artefacts.sh, templates/job.yaml.j2, matrix.csv
-├── analysis/                     # aggregate.py + numbered notebooks (00_apply_scoring, 01_analysis, 02_runtime_outliers, 03_manuscript_claims); aggregated.csv committed
+├── analysis/                     # aggregate.py + numbered notebooks (00_apply_scoring, 01_analysis, 02_runtime_outliers, 03_manuscript_claims, 04_ecology_visualizations); aggregated.csv committed
 ├── reference/                    # Golden fixtures consumed by smoke CI
 └── .github/workflows/            # CI: smoke.yml (every push) + build-images.yml (GHCR builds)
 ```
@@ -294,6 +294,7 @@ analysis/00_apply_scoring.ipynb     # convergence loop: rescore + re-rep to N
 analysis/01_analysis.ipynb          # headline figures (Panels A/B, cost, runtime)
 analysis/02_runtime_outliers.ipynb  # narrative diagnosis of the slow-mesa tail
 analysis/03_manuscript_claims.ipynb # every paper number with its provenance
+analysis/04_ecology_visualizations.ipynb # small spec figures: spatial climate inputs + growth-response domains
 ```
 
 **The numbers are pipeline *role*, not a strict running order.**
@@ -391,6 +392,7 @@ This project is built on the work of others, with gratitude:
 - **dplyr** under MIT for data wrangling in the panels.
 - **tidyr** under MIT for reshaping in the panels.
 - **readr** under MIT for reading `aggregated.csv`.
+- **ncdf4** under GPL-3.0-or-later for reading the synthetic climate netCDFs in the ecology reference figures ([`analysis/04_ecology_visualizations.ipynb`](analysis/04_ecology_visualizations.ipynb)).
 - **forcats** under MIT for factor ordering in the panels.
 - **scales** under MIT for axis scales and label formatting.
 - **patchwork** under MIT for composing the multi-panel figures.
