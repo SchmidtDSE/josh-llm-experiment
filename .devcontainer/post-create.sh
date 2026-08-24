@@ -20,13 +20,6 @@
 #   3. `pixi install` to materialise the orchestrator's Python env from
 #      pixi.lock so the user can run `pixi run ...` without paying the
 #      lazy-install cost on first invocation.
-#   4. An absolute interpreter path in the `ir` (R) Jupyter kernelspec.
-#      IRkernel::installspec writes a bare `R` into argv, which only resolves
-#      inside `pixi run`. VS Code's Jupyter extension launches kernels
-#      directly, so the R kernel fails to start there — and the extension
-#      silently falls back to the Python kernel, which then reports a
-#      SyntaxError on the first line of R. Affects the R notebooks
-#      (01_analysis, 04_ecology_visualizations, 05_hoist_analysis).
 
 set -euo pipefail
 
@@ -53,29 +46,6 @@ fi
 if [ -f pixi.toml ]; then
     echo "Materialising pixi env ..."
     pixi install
-fi
-
-# R kernelspec: rewrite argv[0] to the env's absolute R. Idempotent, and safe
-# to re-run after any `pixi install` / `IRkernel::installspec`, both of which
-# reset it to the bare `R`.
-KERNEL_JSON=".pixi/envs/default/share/jupyter/kernels/ir/kernel.json"
-R_BIN="$(pwd)/.pixi/envs/default/bin/R"
-if [ -f "$KERNEL_JSON" ] && [ -x "$R_BIN" ]; then
-    python3 - "$KERNEL_JSON" "$R_BIN" <<'PYEOF'
-import json, sys
-path, r_bin = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    spec = json.load(f)
-if spec.get("argv", [None])[0] != r_bin:
-    spec["argv"][0] = r_bin
-    with open(path, "w") as f:
-        json.dump(spec, f, indent=1)
-    print(f"  ir kernelspec -> {r_bin}")
-else:
-    print("  ir kernelspec already absolute; leaving as-is")
-PYEOF
-else
-    echo "  ir kernelspec not found (R env not installed?); skipping"
 fi
 
 echo "post-create.sh done."
