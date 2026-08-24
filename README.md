@@ -179,6 +179,19 @@ pixi run aggregate runs/<batch-tag>
 pixi run lab
 ```
 
+> **R notebooks in VS Code.** `01_analysis`, `04_ecology_visualizations` and
+> `05_hoist_analysis` run on the **R** (`ir`) kernel; the rest are Python.
+> Nothing is installed outside `.pixi/envs/default`, so VS Code needs
+> `python.defaultInterpreterPath` pointed there (already set in
+> [`.vscode/settings.json`](.vscode/settings.json)). `IRkernel::installspec`
+> also writes a bare `R` into the `ir` kernelspec's `argv`, which only
+> resolves inside `pixi run` — VS Code launches kernels directly, so the R
+> kernel fails to start and the extension silently falls back to the Python
+> kernel, which reports a `SyntaxError` on the first line of R.
+> [`.devcontainer/post-create.sh`](.devcontainer/post-create.sh) rewrites that
+> path to the env's absolute `R`; re-run it after any `pixi install`, which
+> resets the spec. `pixi run lab` is unaffected either way.
+
 Tasks pass everything after `--` straight through to the underlying
 script. See [pixi.toml](pixi.toml) for the full task list.
 
