@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Push locally-computed scorer.hoist.json records back to the bucket, so the
-# hoist-v1 answers sit alongside scorer.json / scorer.fuzzy.json in the
+# hoist-v2 answers sit alongside scorer.json / scorer.fuzzy.json in the
 # canonical per-cell record.
 #
 # This is the inverse of pull_artefacts.sh, and deliberately narrow: it

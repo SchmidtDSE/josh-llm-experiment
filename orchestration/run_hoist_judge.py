@@ -7,13 +7,13 @@ The expert-authored references exploit that — the Josh one with a patch-scope
 `conditionImpact.step` that organisms read via `here.conditionImpact`, the
 Mesa one with a (cell, timestep)-keyed cache under the climate accessor. The
 question this judge answers, per cell, is whether the agent's implementation
-attempted the same factoring: yes / incomplete / no / n-a.
+attempted the same factoring: yes / partial / no / n-a.
 
 Why this does not ride along on the existing fuzzy judge: that one is
 schema `fuzzy-v3` (Q1..Q4), runs in-Pod from containers/run-judge.sh as part
 of the scorer container, and answering a fifth question there means a schema
 bump plus a full k8s re-judge of every cell. This judge is a separate
-`hoist-v1` record written next to it, computed host-side from the artefacts
+`hoist-v2` record written next to it, computed host-side from the artefacts
 already pulled into runs/. It reuses the repo's model map
 (config/models.yaml via resolve_model.resolve) and the fuzzy judge's
 JSON-extraction helpers, so fence handling cannot drift between the two.

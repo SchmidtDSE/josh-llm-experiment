@@ -4,7 +4,7 @@
 Sibling of _fuzzy_parse.py, same contract and failure philosophy: extract
 the LAST fenced ```json block (falling back to a bare balanced object for
 judge models that skip the fence — gpt-5-codex does), validate against the
-hoist-v1 schema, and on failure still produce a record carrying
+hoist-v2 schema, and on failure still produce a record carrying
 `parse_error` plus a raw snippet, so "judge answered badly" never looks
 like "judge never ran".
 
@@ -20,8 +20,8 @@ from pathlib import Path
 
 from _fuzzy_parse import extract_bare_json_object, extract_last_json_block
 
-SCHEMA_VERSION = "hoist-v1"
-VALID_ANSWER = {"yes", "no", "incomplete", "n-a"}
+SCHEMA_VERSION = "hoist-v2"
+VALID_ANSWER = {"yes", "no", "partial", "n-a"}
 
 
 def validate(parsed: dict) -> list[str]:
@@ -32,7 +32,7 @@ def validate(parsed: dict) -> list[str]:
         return ["hoist missing or not an object"]
     if h.get("answer") not in VALID_ANSWER:
         errs.append(f"hoist.answer not in {sorted(VALID_ANSWER)}: {h.get('answer')!r}")
-    for field in ("mechanism", "evidence", "justification"):
+    for field in ("mechanism", "residual", "evidence", "justification"):
         val = h.get(field)
         if not isinstance(val, str) or not val.strip():
             errs.append(f"hoist.{field} missing or empty")
@@ -77,6 +77,7 @@ def parse(raw_text: str, judge_model_id: str) -> tuple[dict, bool]:
         "hoist": {
             "answer": h["answer"],
             "mechanism": h["mechanism"].strip(),
+            "residual": h["residual"].strip(),
             "evidence": h["evidence"].strip(),
             "justification": h["justification"].strip(),
         },

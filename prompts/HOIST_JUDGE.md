@@ -89,7 +89,15 @@ several layers below the call site.
   the mechanisms above, on the live path. Both the lookup and the
   impact math are covered (or the two are fused into one hoisted
   quantity).
-- `incomplete` — the implementation *attempted* the factoring but only
+
+  A residual that is pure arithmetic over values already hoisted to the
+  patch does **not** disqualify `yes`. An organism that reads two
+  patch-scope scalars and multiplies them itself —
+  `here.pctT * here.pctP` — repeats one multiply per organism where the
+  expert form fuses the pair into a single patch attribute, but it
+  recomputes none of the expensive work: no lookup, no unit conversion,
+  no response curve. Record it in `residual`; keep the answer `yes`.
+- `partial` — the implementation *attempted* the factoring but only
   got part of the way. Examples: the climate lookup is cached per cell
   but `%T`/`%P` are still evaluated per organism; only temperature is
   hoisted and precipitation is not; a cache exists but its key includes
@@ -105,8 +113,13 @@ several layers below the call site.
 Note that `no` is the expected default: a straightforward reading of
 the spec puts the growth equation on the organism, and an
 implementation that does exactly that — cleanly and correctly — is
-`no`, not `incomplete`. Reserve `incomplete` for evidence of an actual
+`no`, not `partial`. Reserve `partial` for evidence of an actual
 partial attempt at sharing the work across organisms.
+
+The most common `partial` by far is the patch that stores the raw
+climate — `temperature.step = external temperature` — while each
+organism still maps `here.temperature` through the response curve
+itself. The lookup is shared; the curves are not.
 
 Judge only what the source shows. Do not credit an implementation for
 an optimisation mentioned in a comment or docstring but not present in
@@ -124,16 +137,28 @@ reasoning is fine, but the final block must parse cleanly and validate.
   "hoist": {
     "answer": "no",
     "mechanism": "<short phrase naming the mechanism used, or 'none'>",
+    "residual": "<invariant work still done once per organism, or 'none'>",
     "evidence": "<file path plus the symbol / construct that carries it>",
     "justification": "<concise and curt description tracing the live path>"
   }
 }
 ```
 
-`hoist.answer` must be exactly one of `"yes"`, `"no"`, `"incomplete"`,
-or `"n-a"` (lowercase). `hoist.mechanism` is a short phrase (use
-`"none"` when the answer is `no` or `n-a`). `hoist.evidence` cites the
-file and construct you based the call on. `hoist.justification` is one
+`hoist.answer` must be exactly one of `"yes"`, `"no"`, `"partial"`, or
+`"n-a"` (lowercase). `hoist.mechanism` is a short phrase (use `"none"`
+when the answer is `no` or `n-a`).
+
+`hoist.residual` names what patch-invariant work the live path *still*
+performs once per organism, whatever the answer — so the answer's
+threshold is not the only thing recorded. Use the vocabulary of the
+work items: `"climate lookup"`, `"unit conversion"`, `"temperature
+curve"`, `"precipitation curve"`, `"product of hoisted patch scalars"`,
+or `"none"`, comma-separated when several apply. A fully hoisted
+implementation whose organism reads one combined patch attribute is
+`"none"`; the `here.pctT * here.pctP` case above is `"product of
+hoisted patch scalars"`.
+
+`hoist.evidence` cites the file and construct you based the call on. `hoist.justification` is one
 or two sentences.
 
 Do not include any other top-level keys. Do not emit multiple JSON
