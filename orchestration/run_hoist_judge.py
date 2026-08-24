@@ -269,13 +269,16 @@ def judge_one(
         "model": model,
         "target": target,
         "rep_idx": rep,
+        "judge_model_id": "",
         "hoist_answer": "",
         "hoist_mechanism": "",
+        "hoist_residual": "",
         "hoist_evidence": "",
         "hoist_justification": "",
         "hoist_parse_error": "",
     }
 
+    row["judge_model_id"] = model_id
     files = collect_source(root, exclude=frozenset({out_name}))
     if not files:
         record = {
@@ -284,6 +287,7 @@ def judge_one(
             "hoist": {
                 "answer": "n-a",
                 "mechanism": "none",
+                "residual": "none",
                 "evidence": "no agent-authored source files under workspace/",
                 "justification": (
                     "Cell has no source to judge — the agent wrote nothing outside "
@@ -295,6 +299,7 @@ def judge_one(
         row.update(
             hoist_answer="n-a",
             hoist_mechanism="none",
+            hoist_residual="none",
             hoist_evidence=record["hoist"]["evidence"],
             hoist_justification=record["hoist"]["justification"],
         )
@@ -320,6 +325,7 @@ def judge_one(
         row.update(
             hoist_answer=h["answer"],
             hoist_mechanism=h["mechanism"],
+            hoist_residual=h["residual"],
             hoist_evidence=h["evidence"],
             hoist_justification=h["justification"],
         )
@@ -366,6 +372,9 @@ def main() -> int:
                     help="Re-judge cells that already have a clean record.")
     ap.add_argument("--dry-run", action="store_true",
                     help="List what would be judged and the prompt size; no API calls.")
+    ap.add_argument("--rebuild-csv", action="store_true",
+                    help="Roll the records already on disk up into --csv and exit. No "
+                         "API calls — for regenerating the CSV after a schema change.")
     ap.add_argument("--env-file", type=Path, default=REPO_ROOT / ".env")
     args = ap.parse_args()
 
@@ -377,6 +386,43 @@ def main() -> int:
         sys.exit(f"no cells found (pattern={args.pattern!r})")
 
     loose = bool(args.loose_dir)
+
+    if args.rebuild_csv:
+        if not args.csv:
+            sys.exit("--rebuild-csv needs --csv")
+        rows = []
+        for c in cells:
+            out = c / args.out_name if loose else c / "workspace" / "results" / args.out_name
+            if not out.is_file():
+                continue
+            try:
+                rec = json.loads(out.read_text())
+            except (json.JSONDecodeError, OSError) as exc:
+                log(f"  ⚠ {c.name}: unreadable record ({exc})")
+                continue
+            h = rec.get("hoist") or {}
+            model, rep = ("expert/reference", "") if loose else parse_cell_id(c)
+            rows.append({
+                "batch_tag": c.parent.name, "run_id": c.name, "model": model,
+                "target": "unknown" if loose else target_of(c), "rep_idx": rep,
+                "judge_model_id": rec.get("judge_model_id", ""),
+                "hoist_answer": h.get("answer", ""),
+                "hoist_mechanism": h.get("mechanism", ""),
+                "hoist_residual": h.get("residual", ""),
+                "hoist_evidence": h.get("evidence", ""),
+                "hoist_justification": h.get("justification", ""),
+                "hoist_parse_error": rec.get("parse_error", "") or "",
+            })
+        if not rows:
+            sys.exit("no records found to roll up")
+        rows.sort(key=lambda r: (r["batch_tag"], r["run_id"]))
+        args.csv.parent.mkdir(parents=True, exist_ok=True)
+        with args.csv.open("w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w.writeheader(); w.writerows(rows)
+        log(f"✔ rebuilt {len(rows)} rows into {args.csv} (no API calls)")
+        return 0
+
     if not args.force:
         pending = []
         for c in cells:

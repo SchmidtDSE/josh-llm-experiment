@@ -1,3 +1,15 @@
 {
-  "python-envs.pythonProjects": []
+  "python-envs.pythonProjects": [],
+  // Everything (python, ipykernel, the R kernel, jupyterlab) lives in the
+  // pixi env; there is no jupyter or ipykernel on the system PATH. Point the
+  // Python/Jupyter extensions at the pixi interpreter so notebooks in
+  // analysis/ can find a kernel without going through `pixi run lab`.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/default/bin/python",
+  "jupyter.kernels.filter": [
+    {
+      "path": "/usr/bin/python3",
+      "type": "pythonEnvironment"
+    }
+  ],
+  "python-envs.defaultEnvManager": "ms-python.python:system"
 }
