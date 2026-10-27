@@ -13,10 +13,10 @@
 #      and install the correctly-named package here instead.
 #   2. The MinIO client `mc`. Used host-side by orchestration/pull_artefacts.sh
 #      to fetch per-cell artefacts from the GCS bucket via the S3 interop API.
-#      (`mc` also lives inside fortree:scorer for the in-Pod upload; that copy
-#      is independent — see scripts/install_mc.sh.) We reuse the same install
-#      script so the host and the scorer image share a single source of truth
-#      for the rolling-latest sha256 anchor.
+#      MinIO no longer publishes mc binaries, so install_mc.sh copies it out
+#      of the bitnamilegacy MinIO image pinned in the Dockerfile's
+#      `mc-source` stage (via DinD) — the same digest fortree:scorer COPYs
+#      from, so host and in-Pod `mc` stay identical.
 #   3. `pixi install` to materialise the orchestrator's Python env from
 #      pixi.lock so the user can run `pixi run ...` without paying the
 #      lazy-install cost on first invocation.

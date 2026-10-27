@@ -49,6 +49,10 @@ echo "rehydrated $n session(s) for $2 -> browse: opencode (session list) | trans
 ' rehydrate {{ BATCH }} {{ CELL }}""", args = [{ arg = "BATCH" }, { arg = "CELL" }] }
 # Roll up per-cell scorer.json + fuzzy outputs into one CSV for analysis.
 aggregate = "python analysis/aggregate.py"
+# Host-side LLM judge over already-pulled cells: did the implementation hoist
+# the per-patch shared climate work up out of the per-organism loop? Writes
+# workspace/results/scorer.hoist.json per cell. Rubric: prompts/HOIST_JUDGE.md.
+hoist-judge = "python orchestration/run_hoist_judge.py"
 # Open the headline notebook for analysis. `--no-browser` because the
 # devcontainer forwards the port out; click the link in the terminal.
 lab = "jupyter lab --no-browser --ip=0.0.0.0 --port=8888 --ServerApp.token=''"

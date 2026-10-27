@@ -39,6 +39,14 @@ olmo:     openrouter/allenai/olmo-3.1-32b-instruct
 # is wanted.
 codex:    openrouter/openai/gpt-5-codex
 
+# OpenRouter catalog re-check on 2026-08-24: gpt-5-codex has been retired
+# from the interactive catalog (only the async `:batch` variant remains),
+# so the `codex` pin above no longer resolves. It is left in place as the
+# provenance record for the committed fuzzy-v3 Q1-Q4 answers, which were
+# produced by it. Post-hoc judge passes use the nearest successor below —
+# same generation, so judge capability stays comparable.
+codex-5_1: openrouter/openai/gpt-5.1-codex
+
 # Local-LLM path for CI smoke + key-free replication. The underscore in
 # 1_5b is to keep YAML from coercing "1.5b" to a float.
 ollama-qwen-coder-7b:   ollama/qwen2.5-coder:7b
