@@ -1,3 +1,9 @@
+# MinIO no longer publishes community images or mc binaries, so `mc` comes
+# from the frozen bitnamilegacy image (which bundles it), pinned by digest —
+# same stopgap as SchmidtDSE/josh#524. scripts/install_mc.sh reads this line
+# so the devcontainer's host-side `mc` matches the scorer image's.
+FROM bitnamilegacy/minio:latest@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c AS mc-source
+
 FROM python:3.11-slim-bookworm AS base
 
 # Multistage build for the agent + scorer roles. Both inherit from
@@ -138,8 +144,7 @@ RUN chmod +x /opt/entrypoint-scorer.sh
 # completed /sandbox to S3-compatible object storage. Installed in the
 # scorer stage only; the agent stage above has no `mc` and no path to
 # bucket credentials.
-COPY scripts/install_mc.sh /tmp/install_mc.sh
-RUN /tmp/install_mc.sh && rm /tmp/install_mc.sh
+COPY --from=mc-source /opt/bitnami/minio-client/bin/mc /usr/local/bin/mc
 
 COPY containers/scorer-and-upload.sh /opt/scorer-and-upload.sh
 RUN chmod +x /opt/scorer-and-upload.sh
