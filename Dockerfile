@@ -53,13 +53,16 @@ RUN /tmp/install_java.sh && rm /tmp/install_java.sh
 ENV JAVA_TOOL_OPTIONS="-Xmx16g"
 
 # Josh CLI: DEV fat jar (carries the `mcp` subcommand, SchmidtDSE/josh#440),
-# pinned by sha256. The jar is a ROLLING artifact at a fixed URL, so the pin
-# is load-bearing: install_josh.sh fails on mismatch (integrity), and bumping
-# JOSH_JAR_SHA256 busts this RUN layer's cache (otherwise a rebuild keeps the
-# stale cached jar). Bump the sha when intentionally moving to a newer dev
-# build (fetch it via `pixi run get-jars`). Pin back to main with
-# --build-arg JOSH_JAR_URL=...main/joshsim-fat.jar JOSH_JAR_SHA256=<main sha>.
-ARG JOSH_JAR_URL=https://joshsim.org/dist/dev/joshsim-fat.jar
+# pinned by sha256. joshsim.org/dist/dev is a ROLLING artifact that has since
+# moved past this build, so the pinned jar is mirrored as a release asset on
+# this repo (tag josh-jar-dev-6e4b389). The pin is still load-bearing:
+# install_josh.sh fails on mismatch (integrity), and bumping JOSH_JAR_SHA256
+# busts this RUN layer's cache (otherwise a rebuild keeps the stale cached
+# jar). To move to a newer dev build, fetch it via `pixi run get-jars`,
+# mirror it as a new release asset, and bump both URL and sha. Pin back to
+# main with --build-arg JOSH_JAR_URL=...main/joshsim-fat.jar
+# JOSH_JAR_SHA256=<main sha>.
+ARG JOSH_JAR_URL=https://github.com/SchmidtDSE/josh-llm-experiment/releases/download/josh-jar-dev-6e4b389/joshsim-fat.jar
 ARG JOSH_JAR_SHA256=6e4b38983854d9e2f64271660153f29204256343318ab9806176981d780646ab
 COPY scripts/install_josh.sh /tmp/install_josh.sh
 RUN JOSH_JAR_URL="$JOSH_JAR_URL" JOSH_JAR_SHA256="$JOSH_JAR_SHA256" /tmp/install_josh.sh && rm /tmp/install_josh.sh

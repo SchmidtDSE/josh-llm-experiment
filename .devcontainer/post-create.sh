@@ -16,7 +16,7 @@
 #      (`mc` also lives inside fortree:scorer for the in-Pod upload; that copy
 #      is independent — see scripts/install_mc.sh.) We reuse the same install
 #      script so the host and the scorer image share a single source of truth
-#      for the rolling-latest sha256 anchor.
+#      for the pinned release + sha256.
 #   3. `pixi install` to materialise the orchestrator's Python env from
 #      pixi.lock so the user can run `pixi run ...` without paying the
 #      lazy-install cost on first invocation.
